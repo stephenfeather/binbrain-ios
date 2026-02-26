@@ -12,7 +12,8 @@ import SwiftData
 struct Bin_BrainApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            PendingUpload.self,
+            PendingAnalysis.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
