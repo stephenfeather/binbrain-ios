@@ -336,7 +336,8 @@ components:
         distance:
           type: number
           minimum: 0
-          description: "Cosine distance (lower = more similar). Score ≈ 1 − distance."
+          maximum: 2
+          description: "Raw pgvector cosine distance (0–2, lower = more similar). To convert to a 0–1 similarity score: score = 1.0 − (distance / 2.0)."
         bins:
           type: array
           items: { type: string }
@@ -861,11 +862,14 @@ paths:
         (`BAAI/bge-small-en-v1.5`, 384 dims) and returns items ordered by
         cosine distance ascending (most similar first).
 
-        The `distance` field in each result is the raw cosine distance.
-        Approximate score = `1 − distance`.
+        The `distance` field in each result is the raw pgvector cosine
+        distance (range 0–2, lower = more similar). To convert to a 0–1
+        similarity score: `score = 1.0 − (distance / 2.0)`.
 
-        Use `min_score` to exclude weak matches (`min_score = 0.6` ≈
-        `distance ≤ 0.4`).
+        Use `min_score` to exclude weak matches. The `min_score` parameter
+        is a 0–1 similarity score; the backend converts it to a distance
+        threshold internally (`max_distance = 1.0 − min_score`).
+        Example: `min_score = 0.6` excludes results with `distance > 0.4`.
       parameters:
         - name: q
           in: query
