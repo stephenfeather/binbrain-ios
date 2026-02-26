@@ -1,0 +1,242 @@
+// APIModels.swift
+// Bin Brain
+//
+// Decodable structs mirroring the Bin Brain OpenAPI response schemas.
+// These are pure data types — no networking logic.
+
+import Foundation
+
+// MARK: - Shared Decoder
+
+extension JSONDecoder {
+    /// A shared decoder configured for Bin Brain API responses.
+    ///
+    /// Uses ISO 8601 date decoding to parse `last_updated` and other date fields.
+    static let binBrain: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+}
+
+// MARK: - Health
+
+/// The response returned by `GET /health`.
+struct HealthResponse: Decodable {
+    let version: String
+    let ok: Bool
+    let dbOk: Bool
+    let embedModel: String
+    let expectedDims: Int
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case ok
+        case dbOk = "db_ok"
+        case embedModel = "embed_model"
+        case expectedDims = "expected_dims"
+    }
+}
+
+// MARK: - Photos
+
+/// A record representing a photo stored on the server.
+struct PhotoRecord: Decodable {
+    let photoId: Int
+    let path: String
+
+    enum CodingKeys: String, CodingKey {
+        case photoId = "photo_id"
+        case path
+    }
+}
+
+// MARK: - Bins
+
+/// Summary information about a single storage bin.
+struct BinSummary: Decodable {
+    let binId: String
+    let itemCount: Int
+    let photoCount: Int
+    let lastUpdated: Date
+
+    enum CodingKeys: String, CodingKey {
+        case binId = "bin_id"
+        case itemCount = "item_count"
+        case photoCount = "photo_count"
+        case lastUpdated = "last_updated"
+    }
+}
+
+/// The response returned by `GET /bins`.
+struct ListBinsResponse: Decodable {
+    let version: String
+    let bins: [BinSummary]
+}
+
+/// A record representing an item associated with a bin.
+struct BinItemRecord: Decodable {
+    let itemId: Int
+    let name: String
+    let category: String?
+    let quantity: Double?
+    let confidence: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case name
+        case category
+        case quantity
+        case confidence
+    }
+}
+
+/// The response returned by `GET /bins/{bin_id}`.
+struct GetBinResponse: Decodable {
+    let version: String
+    let binId: String
+    let items: [BinItemRecord]
+    let photos: [PhotoRecord]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case binId = "bin_id"
+        case items
+        case photos
+    }
+}
+
+// MARK: - Ingest
+
+/// The response returned by `POST /ingest`.
+struct IngestResponse: Decodable {
+    let version: String
+    let binId: String
+    let photos: [PhotoRecord]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case binId = "bin_id"
+        case photos
+    }
+}
+
+// MARK: - Items
+
+/// The response returned by `POST /items` (create or upsert).
+struct UpsertItemResponse: Decodable {
+    let version: String
+    let itemId: Int
+    let fingerprint: String
+    let name: String
+    let category: String?
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case itemId = "item_id"
+        case fingerprint
+        case name
+        case category
+    }
+}
+
+// MARK: - Suggestions
+
+/// A single item suggested by vision inference for a photo.
+///
+/// `itemId` is `nil` when the vision label did not match any existing catalogue item
+/// above the similarity threshold.
+struct SuggestionItem: Decodable {
+    let itemId: Int?
+    let name: String
+    let category: String?
+    let confidence: Double
+    let bins: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case name
+        case category
+        case confidence
+        case bins
+    }
+}
+
+/// The response returned by `GET /photos/{photo_id}/suggest`.
+struct PhotoSuggestResponse: Decodable {
+    let version: String
+    let photoId: Int
+    let model: String
+    let visionElapsedMs: Int
+    let suggestions: [SuggestionItem]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case photoId = "photo_id"
+        case model
+        case visionElapsedMs = "vision_elapsed_ms"
+        case suggestions
+    }
+}
+
+// MARK: - Search
+
+/// A single result item from the semantic search endpoint.
+struct SearchResultItem: Decodable {
+    let itemId: Int
+    let name: String
+    let category: String?
+    let distance: Double
+    /// Bins containing this item. `nil` when the server omits the field; `[]` when present but empty.
+    let bins: [String]?
+
+    /// A 0–1 similarity score derived from the raw pgvector cosine distance.
+    ///
+    /// pgvector cosine distance is in the range 0–2 (lower = more similar).
+    /// Converted to a 0–1 similarity score: `score = 1.0 - (distance / 2.0)`.
+    var score: Double { 1.0 - (distance / 2.0) }
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case name
+        case category
+        case distance
+        case bins
+    }
+}
+
+/// The response returned by `GET /search`.
+struct SearchResponse: Decodable {
+    let q: String
+    let limit: Int
+    let offset: Int
+    let minScore: Double?
+    let results: [SearchResultItem]
+
+    enum CodingKeys: String, CodingKey {
+        case q
+        case limit
+        case offset
+        case minScore = "min_score"
+        case results
+    }
+}
+
+// MARK: - Errors
+
+/// An API error decoded from the server's `ErrorResponse` envelope.
+///
+/// Conforms to `LocalizedError` so it can be surfaced directly in UI error messages.
+struct APIError: Decodable, LocalizedError {
+    let version: String
+    let error: ErrorDetail
+
+    /// The detail payload nested inside an `APIError` response.
+    struct ErrorDetail: Decodable {
+        let code: String
+        let message: String
+    }
+
+    /// A human-readable description of the error, suitable for display to the user.
+    var errorDescription: String? { error.message }
+}
