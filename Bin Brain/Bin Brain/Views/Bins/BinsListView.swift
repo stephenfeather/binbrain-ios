@@ -6,21 +6,6 @@
 
 import SwiftUI
 
-// MARK: - APIClient Environment Key
-
-// Temporary until Task 13 wires the full @Environment keys
-private struct APIClientKey: EnvironmentKey {
-    static let defaultValue = APIClient()
-}
-
-extension EnvironmentValues {
-    /// The shared `APIClient` instance injected via the environment.
-    var apiClient: APIClient {
-        get { self[APIClientKey.self] }
-        set { self[APIClientKey.self] = newValue }
-    }
-}
-
 // MARK: - BinsListView
 
 /// The main screen listing all storage bins.

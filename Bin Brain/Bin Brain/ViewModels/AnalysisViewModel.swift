@@ -7,6 +7,7 @@
 import Foundation
 import UIKit
 import UserNotifications
+import SwiftData
 import Observation
 
 // MARK: - AnalysisPhase
@@ -54,7 +55,8 @@ final class AnalysisViewModel {
     ///   - jpegData: Raw JPEG bytes to upload (compressed before sending).
     ///   - binId: The bin identifier to associate the photo with.
     ///   - apiClient: The `APIClient` instance to use for network calls.
-    func run(jpegData: Data, binId: String, apiClient: APIClient) async {
+    ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
+    func run(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
         phase = .uploading
 
         let compressedData = compress(jpegData)
@@ -102,6 +104,12 @@ final class AnalysisViewModel {
                 trigger: nil
             )
             UNUserNotificationCenter.current().add(request)
+
+            if let context {
+                let entry = PendingAnalysis(photoId: photoId, binId: binId)
+                context.insert(entry)
+                try? context.save()
+            }
 
             self?.phase = .failed("Analysis interrupted — tap to retry")
 

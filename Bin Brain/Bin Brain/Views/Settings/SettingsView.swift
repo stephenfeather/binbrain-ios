@@ -5,20 +5,7 @@
 // and managing the offline upload queue.
 
 import SwiftUI
-
-// MARK: - UploadQueueManager Environment Key
-
-private struct UploadQueueManagerKey: EnvironmentKey {
-    static let defaultValue = UploadQueueManager()
-}
-
-extension EnvironmentValues {
-    /// The shared `UploadQueueManager` instance injected via the environment.
-    var uploadQueueManager: UploadQueueManager {
-        get { self[UploadQueueManagerKey.self] }
-        set { self[UploadQueueManagerKey.self] = newValue }
-    }
-}
+import SwiftData
 
 // MARK: - SettingsView
 
@@ -30,6 +17,7 @@ struct SettingsView: View {
     @State private var viewModel = SettingsViewModel()
     @Environment(\.apiClient) private var apiClient
     @Environment(\.uploadQueueManager) private var uploadQueueManager
+    @Environment(\.modelContext) private var modelContext
 
     // MARK: - Body
 
@@ -102,11 +90,11 @@ struct SettingsView: View {
             Text("Pending uploads: \(uploadQueueManager.pendingCount)")
 
             Button("Upload Now") {
-                // TODO: Task 13 wires ModelContext via @Environment
+                Task { await uploadQueueManager.drain(context: modelContext, using: apiClient) }
             }
 
             Button("Clear Queue", role: .destructive) {
-                // TODO: Task 13 wires ModelContext via @Environment
+                uploadQueueManager.clearQueue(context: modelContext)
             }
         }
     }

@@ -1,15 +1,9 @@
+// ContentView.swift
+// Bin Brain
 //
-//  ContentView.swift
-//  Bin Brain
-//
-//  Created by Stephen Feather on 2/25/26.
-//
+// Superseded by RootView (Task 13). Retained to avoid project.pbxproj changes.
 
 import SwiftUI
 
-/// Temporary placeholder — will be replaced by RootView in Task 13.
-struct ContentView: View {
-    var body: some View {
-        Text("Bin Brain")
-    }
-}
+@available(*, deprecated, renamed: "RootView")
+typealias ContentView = RootView
