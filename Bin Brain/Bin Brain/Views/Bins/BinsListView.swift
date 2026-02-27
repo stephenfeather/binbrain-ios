@@ -3,8 +3,18 @@
 //
 // Entry point for the Bins list screen.
 // Displays all bins and navigates to BinDetailView on selection.
+// The camera toolbar button launches the full cataloging flow:
+// Scanner → Analysis → Suggestion Review.
 
+import AVFoundation
 import SwiftUI
+
+// MARK: - CatalogingStep
+
+private enum CatalogingStep: Hashable {
+    case analysis
+    case review
+}
 
 // MARK: - BinsListView
 
@@ -12,14 +22,26 @@ import SwiftUI
 ///
 /// Loads bins on appear and supports pull-to-refresh.
 /// Navigates to `BinDetailView` when a bin row is tapped.
+/// The camera toolbar button launches the scanner sheet, which walks
+/// through QR scan → photo capture → AI analysis → suggestion review.
 struct BinsListView: View {
 
     // MARK: - State
 
     @State private var viewModel = BinsListViewModel()
     @Environment(\.apiClient) private var apiClient
-    @State private var showScanner = false
+    @Environment(\.modelContext) private var modelContext
+
+    // Cataloging flow
+    @State private var showCataloging = false
     @State private var showShutterButton = false
+    @State private var catalogingPath: [CatalogingStep] = []
+    @State private var scannerViewModel = ScannerViewModel()
+    @State private var analysisViewModel = AnalysisViewModel()
+    @State private var reviewViewModel = SuggestionReviewViewModel()
+    @State private var captureAction: (() -> Void)?
+    @State private var capturedPhotoData: Data?
+    @State private var capturedBinId: String?
 
     // MARK: - Body
 
@@ -28,9 +50,9 @@ struct BinsListView: View {
             content
                 .navigationTitle("Bins")
                 .toolbar {
-                    ToolbarItem(placement: .bottomBar) {
+                    ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
-                            showScanner = true
+                            showCataloging = true
                         } label: {
                             Image(systemName: "camera.fill")
                                 .font(.title2)
@@ -39,14 +61,130 @@ struct BinsListView: View {
                 }
                 .task { await viewModel.load(apiClient: apiClient) }
                 .refreshable { await viewModel.load(apiClient: apiClient) }
-                .sheet(isPresented: $showScanner) {
-                    ScannerView(
-                        showShutterButton: $showShutterButton,
-                        onQRCode: { _ in },
-                        onPhotoCapture: { _ in }
-                    )
+                .sheet(isPresented: $showCataloging, onDismiss: resetCataloging) {
+                    catalogingSheet
                 }
         }
+    }
+
+    // MARK: - Cataloging Sheet
+
+    @ViewBuilder
+    private var catalogingSheet: some View {
+        NavigationStack(path: $catalogingPath) {
+            ZStack {
+                ScannerView(
+                    showShutterButton: $showShutterButton,
+                    onQRCode: { code in
+                        scannerViewModel.qrDetected(code)
+                    },
+                    onPhotoCapture: { photo in
+                        guard let binId = scannerViewModel.scannedBinId,
+                              let rawData = photo.fileDataRepresentation() else { return }
+                        scannerViewModel.photoCaptured(photo)
+                        capturedPhotoData = rawData
+                        capturedBinId = binId
+                        catalogingPath.append(.analysis)
+                    },
+                    onCaptureReady: { action in
+                        captureAction = action
+                    }
+                )
+                .ignoresSafeArea()
+
+                if showShutterButton {
+                    VStack {
+                        Spacer()
+                        Button(action: { captureAction?() }) {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 72, height: 72)
+                                .overlay(Circle().stroke(Color.gray.opacity(0.4), lineWidth: 2))
+                                .shadow(radius: 4)
+                        }
+                        .padding(.bottom, 50)
+                    }
+                }
+            }
+            .navigationTitle("Scan Bin")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showCataloging = false }
+                }
+            }
+            .navigationDestination(for: CatalogingStep.self) { step in
+                switch step {
+                case .analysis:
+                    analysisView
+                case .review:
+                    reviewView
+                }
+            }
+        }
+    }
+
+    // MARK: - Analysis View
+
+    @ViewBuilder
+    private var analysisView: some View {
+        if let data = capturedPhotoData, let binId = capturedBinId {
+            AnalysisProgressView(
+                viewModel: analysisViewModel,
+                onComplete: { suggestions in
+                    reviewViewModel.loadSuggestions(suggestions)
+                    catalogingPath.append(.review)
+                },
+                onRetry: {
+                    Task {
+                        analysisViewModel.reset()
+                        await analysisViewModel.run(
+                            jpegData: data,
+                            binId: binId,
+                            apiClient: apiClient,
+                            context: modelContext
+                        )
+                    }
+                }
+            )
+            .task {
+                await analysisViewModel.run(
+                    jpegData: data,
+                    binId: binId,
+                    apiClient: apiClient,
+                    context: modelContext
+                )
+            }
+        }
+    }
+
+    // MARK: - Review View
+
+    @ViewBuilder
+    private var reviewView: some View {
+        if let binId = capturedBinId {
+            SuggestionReviewView(
+                viewModel: reviewViewModel,
+                binId: binId,
+                apiClient: apiClient,
+                onDone: {
+                    showCataloging = false
+                    Task { await viewModel.load(apiClient: apiClient) }
+                }
+            )
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func resetCataloging() {
+        catalogingPath = []
+        showShutterButton = false
+        scannerViewModel.reset()
+        analysisViewModel.reset()
+        captureAction = nil
+        capturedPhotoData = nil
+        capturedBinId = nil
     }
 
     // MARK: - Content

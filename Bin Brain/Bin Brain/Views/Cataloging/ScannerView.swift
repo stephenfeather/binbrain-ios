@@ -16,6 +16,7 @@ import AVFoundation
 ///
 /// Configure it with the two callback closures; the shutter button is rendered
 /// by the parent view using the `showShutterButton` binding as a visibility gate.
+/// The parent triggers capture by calling the closure delivered via `onCaptureReady`.
 struct ScannerView: UIViewControllerRepresentable {
 
     // MARK: - Properties
@@ -29,6 +30,10 @@ struct ScannerView: UIViewControllerRepresentable {
 
     /// Called when the scanner delivers a captured still photo.
     let onPhotoCapture: (AVCapturePhoto) -> Void
+
+    /// Called once the scanner is ready, delivering a closure the parent can invoke
+    /// to trigger `capturePhoto()` when the shutter button is tapped.
+    var onCaptureReady: (@MainActor @escaping () -> Void) -> Void = { _ in }
 
     // MARK: - UIViewControllerRepresentable
 
@@ -50,6 +55,15 @@ struct ScannerView: UIViewControllerRepresentable {
             isHighlightingEnabled: true
         )
         scanner.delegate = context.coordinator
+        context.coordinator.scanner = scanner
+
+        let captureFunc: @MainActor () -> Void = { [weak scanner] in
+            guard let scanner else { return }
+            Task { try? await scanner.capturePhoto() }
+        }
+        // Defer state mutation to avoid modifying state during the SwiftUI update pass.
+        DispatchQueue.main.async { onCaptureReady(captureFunc) }
+
         try? scanner.startScanning()
         return scanner
     }
@@ -89,6 +103,9 @@ struct ScannerView: UIViewControllerRepresentable {
 
         /// Guards against firing `onQRCode` more than once per scan session.
         private var hasDeliveredQR = false
+
+        /// Weak reference to the scanner VC, used to deliver the capture trigger.
+        weak var scanner: DataScannerViewController?
 
         // MARK: - Init
 
