@@ -38,7 +38,7 @@ final class APIClient {
     ///
     /// Defaults to `https://raspberrypi.local:8000` when no value is stored.
     var baseURL: String {
-        UserDefaults.standard.string(forKey: "serverURL") ?? "https://raspberrypi.local:8000"
+        UserDefaults.standard.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
     }
 
     // MARK: - Private Properties
@@ -200,6 +200,7 @@ final class APIClient {
     ) async throws -> T {
         let urlString = baseURL + path
         guard let url = URL(string: urlString) else {
+            print("[API] Invalid URL: \(urlString)")
             throw APIClientError.invalidURL(urlString)
         }
         var urlRequest = URLRequest(url: url, timeoutInterval: timeout)
@@ -210,16 +211,42 @@ final class APIClient {
         if let contentType {
             urlRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: urlRequest)
+
+        let bodySize = body.map { "\($0.count) bytes" } ?? "none"
+        print("[API] \(method) \(urlString) (body: \(bodySize), timeout: \(timeout)s)")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            print("[API] \(method) \(path) NETWORK ERROR: \(error.localizedDescription)")
+            throw error
+        }
+
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("[API] \(method) \(path) ERROR: non-HTTP response")
             throw APIClientError.unexpectedStatusCode(-1)
         }
+
+        let preview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary \(data.count) bytes>"
+        print("[API] \(method) \(path) → \(httpResponse.statusCode) (\(data.count) bytes)")
+        print("[API] Response: \(preview)")
+
         if (200...299).contains(httpResponse.statusCode) {
-            return try JSONDecoder.binBrain.decode(T.self, from: data)
+            do {
+                let decoded = try JSONDecoder.binBrain.decode(T.self, from: data)
+                return decoded
+            } catch {
+                print("[API] \(method) \(path) DECODE ERROR: \(error)")
+                throw error
+            }
         } else {
             if let apiError = try? JSONDecoder.binBrain.decode(APIError.self, from: data) {
+                print("[API] \(method) \(path) API ERROR: \(apiError.localizedDescription)")
                 throw apiError
             }
+            print("[API] \(method) \(path) HTTP ERROR: \(httpResponse.statusCode)")
             throw APIClientError.unexpectedStatusCode(httpResponse.statusCode)
         }
     }

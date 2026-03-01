@@ -14,6 +14,8 @@ import Observation
 
 /// The current phase of the photo analysis workflow.
 enum AnalysisPhase: Equatable {
+    /// Idle; no analysis has started yet.
+    case idle
     /// Uploading the photo to the server.
     case uploading
     /// Waiting for AI vision inference to complete.
@@ -36,7 +38,7 @@ final class AnalysisViewModel {
     // MARK: - State
 
     /// The current phase of the analysis workflow.
-    private(set) var phase: AnalysisPhase = .uploading
+    private(set) var phase: AnalysisPhase = .idle
 
     /// The item suggestions returned by vision inference; populated when `phase == .complete`.
     private(set) var suggestions: [SuggestionItem] = []
@@ -142,7 +144,7 @@ final class AnalysisViewModel {
 
     /// Resets all state back to `.uploading` for a retry.
     func reset() {
-        phase = .uploading
+        phase = .idle
         suggestions = []
     }
 

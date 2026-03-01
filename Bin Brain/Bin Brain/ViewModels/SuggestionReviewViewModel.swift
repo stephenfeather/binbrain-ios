@@ -89,6 +89,7 @@ final class SuggestionReviewViewModel {
         isConfirming = true
         failedIndices = []
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
+        print("[Review] confirm: \(editableSuggestions.count) total, \(includedIndices.count) included")
         for idx in includedIndices {
             let s = editableSuggestions[idx]
             let quantity = Double(s.editedQuantity)

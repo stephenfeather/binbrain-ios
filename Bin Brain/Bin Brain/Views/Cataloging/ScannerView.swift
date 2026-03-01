@@ -5,10 +5,11 @@
 // The shutter button overlay is NOT part of this view — it is rendered
 // by the parent SwiftUI view as a ZStack overlay after QR detection.
 
+import AVFoundation
 import SwiftUI
+import UIKit
 import Vision
 import VisionKit
-import AVFoundation
 
 // MARK: - ScannerView
 
@@ -28,8 +29,8 @@ struct ScannerView: UIViewControllerRepresentable {
     /// Called once per scan session when a QR code payload is first decoded.
     let onQRCode: (String) -> Void
 
-    /// Called when the scanner delivers a captured still photo.
-    let onPhotoCapture: (AVCapturePhoto) -> Void
+    /// Called when the scanner delivers a captured still image.
+    let onPhotoCapture: (UIImage) -> Void
 
     /// Called once the scanner is ready, delivering a closure the parent can invoke
     /// to trigger `capturePhoto()` when the shutter button is tapped.
@@ -42,6 +43,7 @@ struct ScannerView: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> UIViewController {
+        print("[Scanner] makeUIViewController called")
         guard DataScannerViewController.isSupported else {
             return makeFallbackViewController()
         }
@@ -57,19 +59,39 @@ struct ScannerView: UIViewControllerRepresentable {
         scanner.delegate = context.coordinator
         context.coordinator.scanner = scanner
 
+        // Wrap in a plain UIViewController to isolate the scanner
+        // from SwiftUI's color environment (prevents yellow tint).
+        let container = UIViewController()
+        container.addChild(scanner)
+        container.view.addSubview(scanner.view)
+        scanner.view.frame = container.view.bounds
+        scanner.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        scanner.didMove(toParent: container)
+
+        let photoCallback = onPhotoCapture
         let captureFunc: @MainActor () -> Void = { [weak scanner] in
-            guard let scanner else { return }
-            Task { try? await scanner.capturePhoto() }
+            guard let scanner else {
+                print("[Scanner] capturePhoto: scanner is nil")
+                return
+            }
+            Task {
+                do {
+                    let photo = try await scanner.capturePhoto()
+                    print("[Scanner] capturePhoto returned: \(photo.size)")
+                    photoCallback(photo)
+                } catch {
+                    print("[Scanner] capturePhoto error: \(error)")
+                }
+            }
         }
-        // Defer state mutation to avoid modifying state during the SwiftUI update pass.
-        DispatchQueue.main.async { onCaptureReady(captureFunc) }
+        onCaptureReady(captureFunc)
 
         try? scanner.startScanning()
-        return scanner
+        return container
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
-        // Keep the coordinator's parent reference current so closures stay fresh.
+        print("[Scanner] updateUIViewController called")
         context.coordinator.parent = self
     }
 
@@ -98,13 +120,8 @@ struct ScannerView: UIViewControllerRepresentable {
 
         // MARK: - Properties
 
-        /// The parent `ScannerView`; updated on every SwiftUI re-render via `updateUIViewController`.
         var parent: ScannerView
-
-        /// Guards against firing `onQRCode` more than once per scan session.
         private var hasDeliveredQR = false
-
-        /// Weak reference to the scanner VC, used to deliver the capture trigger.
         weak var scanner: DataScannerViewController?
 
         // MARK: - Init
@@ -136,7 +153,12 @@ struct ScannerView: UIViewControllerRepresentable {
             _ dataScanner: DataScannerViewController,
             didCapturePhoto photo: AVCapturePhoto
         ) {
-            parent.onPhotoCapture(photo)
+            // On modern iOS, capturePhoto() returns UIImage directly via the async call.
+            // This delegate path is a fallback; convert via fileDataRepresentation.
+            if let data = photo.fileDataRepresentation(),
+               let image = UIImage(data: data) {
+                parent.onPhotoCapture(image)
+            }
         }
     }
 }

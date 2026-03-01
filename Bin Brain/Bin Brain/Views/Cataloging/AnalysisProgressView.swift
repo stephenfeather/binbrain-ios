@@ -31,7 +31,7 @@ struct AnalysisProgressView: View {
     var body: some View {
         VStack(spacing: 16) {
             switch viewModel.phase {
-            case .uploading:
+            case .idle, .uploading:
                 ProgressView()
                 Text("Uploading photo...")
 

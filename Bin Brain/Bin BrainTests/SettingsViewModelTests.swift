@@ -103,7 +103,7 @@ final class SettingsViewModelTests: XCTestCase {
     // MARK: - Test 1: Initial state
 
     func testInitialState() {
-        XCTAssertEqual(sut.serverURL, "https://raspberrypi.local:8000",
+        XCTAssertEqual(sut.serverURL, "http://10.1.1.206:8000",
                        "serverURL should default to the Pi address")
         XCTAssertEqual(sut.similarityThreshold, 0.5,
                        "similarityThreshold should default to 0.5 when unset")

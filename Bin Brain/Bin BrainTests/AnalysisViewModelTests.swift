@@ -112,8 +112,8 @@ final class AnalysisViewModelTests: XCTestCase {
 
     // MARK: - Test 1: Initial state
 
-    func testInitialPhaseIsUploading() {
-        XCTAssertEqual(sut.phase, .uploading, "Fresh AnalysisViewModel should start in .uploading phase")
+    func testInitialPhaseIsIdle() {
+        XCTAssertEqual(sut.phase, .idle, "Fresh AnalysisViewModel should start in .idle phase")
         XCTAssertTrue(sut.suggestions.isEmpty, "suggestions should be empty on init")
     }
 
@@ -186,7 +186,7 @@ final class AnalysisViewModelTests: XCTestCase {
 
         sut.reset()
 
-        XCTAssertEqual(sut.phase, .uploading, "reset() should restore phase to .uploading")
+        XCTAssertEqual(sut.phase, .idle, "reset() should restore phase to .idle")
         XCTAssertTrue(sut.suggestions.isEmpty, "reset() should clear suggestions")
     }
 
@@ -224,7 +224,7 @@ final class AnalysisViewModelTests: XCTestCase {
 
         sut.reset()
 
-        XCTAssertEqual(sut.phase, .uploading, "reset() from .failed should restore phase to .uploading")
+        XCTAssertEqual(sut.phase, .idle, "reset() from .failed should restore phase to .idle")
         XCTAssertTrue(sut.suggestions.isEmpty, "Suggestions should be empty after reset from .failed")
     }
 }

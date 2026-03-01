@@ -48,7 +48,7 @@ final class SettingsViewModel {
     ///
     /// - Parameter defaults: The `UserDefaults` suite to read/write. Defaults to `.standard`.
     init(defaults: UserDefaults = .standard) {
-        serverURL = defaults.string(forKey: "serverURL") ?? "https://raspberrypi.local:8000"
+        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
         let stored = defaults.double(forKey: "similarityThreshold")
         similarityThreshold = stored == 0.0 ? 0.5 : stored
     }

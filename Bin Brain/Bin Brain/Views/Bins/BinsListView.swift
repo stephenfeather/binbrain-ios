@@ -6,8 +6,19 @@
 // The camera toolbar button launches the full cataloging flow:
 // Scanner → Analysis → Suggestion Review.
 
-import AVFoundation
 import SwiftUI
+
+// MARK: - CaptureProxy
+
+/// Reference-type container for the scanner's capture action.
+///
+/// Stored in `@State` so the same instance persists across renders.
+/// The button closure captures the proxy by reference, so it always
+/// reads the current `action` value at tap time — avoiding the
+/// stale-closure issue that arises with `@State var (() -> Void)?`.
+private final class CaptureProxy {
+    var action: (() -> Void)?
+}
 
 // MARK: - CatalogingStep
 
@@ -39,7 +50,7 @@ struct BinsListView: View {
     @State private var scannerViewModel = ScannerViewModel()
     @State private var analysisViewModel = AnalysisViewModel()
     @State private var reviewViewModel = SuggestionReviewViewModel()
-    @State private var captureAction: (() -> Void)?
+    @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
     @State private var capturedBinId: String?
 
@@ -78,24 +89,33 @@ struct BinsListView: View {
                     onQRCode: { code in
                         scannerViewModel.qrDetected(code)
                     },
-                    onPhotoCapture: { photo in
+                    onPhotoCapture: { image in
+                        print("[Capture] onPhotoCapture called, image: \(image.size)")
                         guard let binId = scannerViewModel.scannedBinId,
-                              let rawData = photo.fileDataRepresentation() else { return }
-                        scannerViewModel.photoCaptured(photo)
+                              let rawData = image.jpegData(compressionQuality: 1.0) else { return }
+                        print("[Capture] JPEG data: \(rawData.count) bytes, binId: \(binId)")
                         capturedPhotoData = rawData
                         capturedBinId = binId
                         catalogingPath.append(.analysis)
                     },
                     onCaptureReady: { action in
-                        captureAction = action
+                        captureProxy.action = action
                     }
                 )
                 .ignoresSafeArea()
 
-                if showShutterButton {
+                if showShutterButton, let binId = scannerViewModel.scannedBinId {
                     VStack {
+                        Text(binId)
+                            .font(.title2.bold())
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(.top, 16)
+
                         Spacer()
-                        Button(action: { captureAction?() }) {
+
+                        Button(action: { captureProxy.action?() }) {
                             Circle()
                                 .fill(Color.white)
                                 .frame(width: 72, height: 72)
@@ -106,7 +126,7 @@ struct BinsListView: View {
                     }
                 }
             }
-            .navigationTitle("Scan Bin")
+            .navigationTitle(showShutterButton ? "Scan Item" : "Scan Bin")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -126,53 +146,56 @@ struct BinsListView: View {
 
     // MARK: - Analysis View
 
-    @ViewBuilder
     private var analysisView: some View {
-        if let data = capturedPhotoData, let binId = capturedBinId {
-            AnalysisProgressView(
-                viewModel: analysisViewModel,
-                onComplete: { suggestions in
-                    reviewViewModel.loadSuggestions(suggestions)
-                    catalogingPath.append(.review)
-                },
-                onRetry: {
-                    Task {
-                        analysisViewModel.reset()
-                        await analysisViewModel.run(
-                            jpegData: data,
-                            binId: binId,
-                            apiClient: apiClient,
-                            context: modelContext
-                        )
-                    }
+        AnalysisProgressView(
+            viewModel: analysisViewModel,
+            onComplete: { suggestions in
+                reviewViewModel.loadSuggestions(suggestions)
+                catalogingPath.append(.review)
+            },
+            onRetry: {
+                Task {
+                    guard let data = capturedPhotoData,
+                          let binId = capturedBinId else { return }
+                    analysisViewModel.reset()
+                    await analysisViewModel.run(
+                        jpegData: data,
+                        binId: binId,
+                        apiClient: apiClient,
+                        context: modelContext
+                    )
                 }
-            )
-            .task {
-                await analysisViewModel.run(
-                    jpegData: data,
-                    binId: binId,
-                    apiClient: apiClient,
-                    context: modelContext
-                )
             }
+        )
+        .task(id: capturedPhotoData) {
+            guard let data = capturedPhotoData,
+                  let binId = capturedBinId else { return }
+            print("[Analysis] .task fired, data: \(data.count) bytes, phase: \(analysisViewModel.phase)")
+            guard analysisViewModel.phase != .uploading && analysisViewModel.phase != .analysing else {
+                print("[Analysis] Already running, skipping duplicate")
+                return
+            }
+            await analysisViewModel.run(
+                jpegData: data,
+                binId: binId,
+                apiClient: apiClient,
+                context: modelContext
+            )
         }
     }
 
     // MARK: - Review View
 
-    @ViewBuilder
     private var reviewView: some View {
-        if let binId = capturedBinId {
-            SuggestionReviewView(
-                viewModel: reviewViewModel,
-                binId: binId,
-                apiClient: apiClient,
-                onDone: {
-                    showCataloging = false
-                    Task { await viewModel.load(apiClient: apiClient) }
-                }
-            )
-        }
+        SuggestionReviewView(
+            viewModel: reviewViewModel,
+            binId: capturedBinId ?? "",
+            apiClient: apiClient,
+            onDone: {
+                showCataloging = false
+                Task { await viewModel.load(apiClient: apiClient) }
+            }
+        )
     }
 
     // MARK: - Helpers
@@ -182,7 +205,7 @@ struct BinsListView: View {
         showShutterButton = false
         scannerViewModel.reset()
         analysisViewModel.reset()
-        captureAction = nil
+        captureProxy.action = nil
         capturedPhotoData = nil
         capturedBinId = nil
     }
