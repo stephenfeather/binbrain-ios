@@ -43,7 +43,7 @@ struct SearchView: View {
                 .foregroundStyle(.secondary)
         } else {
             List(viewModel.results, id: \.itemId) { result in
-                NavigationLink(destination: BinDetailView(binId: result.bins?.first ?? "")) {
+                NavigationLink(destination: BinDetailView(binId: result.bins.first ?? "")) {
                     SearchResultRowView(result: result)
                 }
             }
@@ -62,7 +62,7 @@ private struct SearchResultRowView: View {
             Text(result.category ?? "Uncategorized")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Found in \(result.bins?.joined(separator: ", ") ?? "unknown")")
+            Text("Found in \(result.bins.isEmpty ? "unknown" : result.bins.joined(separator: ", "))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(String(format: "%.0f%% match", result.score * 100))

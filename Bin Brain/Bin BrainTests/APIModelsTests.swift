@@ -435,6 +435,7 @@ final class APIModelsTests: XCTestCase {
     func testSearchResponseDecodesResultsContainer() throws {
         let json = """
         {
+            "version": "1",
             "q": "m3 screw",
             "limit": 20,
             "offset": 0,
@@ -452,6 +453,7 @@ final class APIModelsTests: XCTestCase {
         """
         let response = try decode(SearchResponse.self, from: json)
 
+        XCTAssertEqual(response.version, "1")
         XCTAssertEqual(response.q, "m3 screw")
         XCTAssertEqual(response.limit, 20)
         XCTAssertEqual(response.offset, 0)
@@ -461,16 +463,118 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(response.results[0].score, 0.98, accuracy: 1e-10)
     }
 
-    func testSearchResultItemBinsCanBeNil() throws {
-        // bins is not in the required list in the OpenAPI spec — must decode cleanly when absent
+    func testSearchResultItemDecodesUpc() throws {
         let json = """
         {
             "item_id": 1,
             "name": "widget",
-            "distance": 0.1
+            "upc": "049000042566",
+            "distance": 0.1,
+            "bins": ["B-42"]
         }
         """
         let item = try decode(SearchResultItem.self, from: json)
-        XCTAssertNil(item.bins)
+        XCTAssertEqual(item.upc, "049000042566")
+        XCTAssertEqual(item.bins, ["B-42"])
+    }
+
+    // MARK: - SuggestionMatch decoding
+
+    func testSuggestionItemWithMatchDecodes() throws {
+        let json = """
+        {
+            "item_id": null,
+            "name": "hex nut",
+            "category": "fastener",
+            "confidence": 0.61,
+            "bins": [],
+            "match": {
+                "item_id": 42,
+                "name": "Hex Nut M3",
+                "category": "fastener",
+                "score": 0.87,
+                "bins": ["B-10", "B-42"]
+            }
+        }
+        """
+        let suggestion = try decode(SuggestionItem.self, from: json)
+
+        XCTAssertNil(suggestion.itemId)
+        let match = try XCTUnwrap(suggestion.match)
+        XCTAssertEqual(match.itemId, 42)
+        XCTAssertEqual(match.name, "Hex Nut M3")
+        XCTAssertEqual(match.score, 0.87, accuracy: 1e-10)
+        XCTAssertEqual(match.bins, ["B-10", "B-42"])
+    }
+
+    func testSuggestionItemWithNullMatchDecodes() throws {
+        let json = """
+        {
+            "item_id": null,
+            "name": "unknown widget",
+            "category": null,
+            "confidence": 0.3,
+            "bins": [],
+            "match": null
+        }
+        """
+        let suggestion = try decode(SuggestionItem.self, from: json)
+
+        XCTAssertNil(suggestion.match)
+    }
+
+    // MARK: - New model structs decoding
+
+    func testListModelsResponseDecodes() throws {
+        let json = """
+        {
+            "version": "1",
+            "active_model": "qwen3-vl:4b",
+            "models": [
+                {"name": "qwen3-vl:4b", "size": 3295636135, "modified_at": "2025-06-01T10:00:00Z"},
+                {"name": "llava:7b", "size": null, "modified_at": null}
+            ]
+        }
+        """
+        let response = try decode(ListModelsResponse.self, from: json)
+
+        XCTAssertEqual(response.activeModel, "qwen3-vl:4b")
+        XCTAssertEqual(response.models.count, 2)
+        XCTAssertEqual(response.models[0].name, "qwen3-vl:4b")
+        XCTAssertEqual(response.models[0].size, 3295636135)
+        XCTAssertNil(response.models[1].size)
+    }
+
+    func testSelectModelResponseDecodes() throws {
+        let json = """
+        {
+            "version": "1",
+            "previous_model": "llava:7b",
+            "active_model": "qwen3-vl:4b"
+        }
+        """
+        let response = try decode(SelectModelResponse.self, from: json)
+
+        XCTAssertEqual(response.previousModel, "llava:7b")
+        XCTAssertEqual(response.activeModel, "qwen3-vl:4b")
+    }
+
+    func testImageSizeResponseDecodes() throws {
+        let json = """
+        {"version": "1", "max_image_px": 1280}
+        """
+        let response = try decode(ImageSizeResponse.self, from: json)
+
+        XCTAssertEqual(response.maxImagePx, 1280)
+    }
+
+    func testSetImageSizeResponseDecodes() throws {
+        let json = """
+        {"version": "1", "previous_max_image_px": 1280, "max_image_px": 800}
+        """
+        let response = try decode(SetImageSizeResponse.self, from: json)
+
+        XCTAssertEqual(response.previousMaxImagePx, 1280)
+        XCTAssertEqual(response.maxImagePx, 800)
     }
 }

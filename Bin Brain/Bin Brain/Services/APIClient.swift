@@ -161,6 +161,47 @@ final class APIClient {
         )
     }
 
+    /// Returns all Ollama models available on the server and the currently active model.
+    func listModels() async throws -> ListModelsResponse {
+        try await request(path: "/models", method: "GET", body: nil, contentType: nil, timeout: 10)
+    }
+
+    /// Returns models currently loaded in Ollama memory.
+    func runningModels() async throws -> RunningModelsResponse {
+        try await request(path: "/models/running", method: "GET", body: nil, contentType: nil, timeout: 10)
+    }
+
+    /// Selects and warms up a vision model on the server.
+    ///
+    /// Blocks until the model is loaded (typically 5–30 s).
+    ///
+    /// - Parameter model: The model name as listed by `listModels()`.
+    func selectModel(_ model: String) async throws -> SelectModelResponse {
+        let body = try JSONEncoder().encode(["model": model])
+        return try await request(
+            path: "/models/select", method: "POST", body: body,
+            contentType: "application/json", timeout: 60
+        )
+    }
+
+    /// Returns the current max image size setting for vision inference.
+    func getImageSize() async throws -> ImageSizeResponse {
+        try await request(
+            path: "/settings/image-size", method: "GET", body: nil, contentType: nil, timeout: 10
+        )
+    }
+
+    /// Sets the max image size for vision inference.
+    ///
+    /// - Parameter maxImagePx: Max longest side in pixels (128–4096).
+    func setImageSize(_ maxImagePx: Int) async throws -> SetImageSizeResponse {
+        let body = try JSONEncoder().encode(["max_image_px": maxImagePx])
+        return try await request(
+            path: "/settings/image-size", method: "POST", body: body,
+            contentType: "application/json", timeout: 10
+        )
+    }
+
     /// Searches the item catalogue using a natural-language query.
     ///
     /// - Parameters:

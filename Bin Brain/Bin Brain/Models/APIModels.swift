@@ -79,6 +79,7 @@ struct BinItemRecord: Decodable {
     let itemId: Int
     let name: String
     let category: String?
+    let upc: String?
     let quantity: Double?
     let confidence: Double?
 
@@ -86,6 +87,7 @@ struct BinItemRecord: Decodable {
         case itemId = "item_id"
         case name
         case category
+        case upc
         case quantity
         case confidence
     }
@@ -130,6 +132,9 @@ struct UpsertItemResponse: Decodable {
     let fingerprint: String
     let name: String
     let category: String?
+    let notes: String?
+    let upc: String?
+    let binId: String?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -137,21 +142,44 @@ struct UpsertItemResponse: Decodable {
         case fingerprint
         case name
         case category
+        case notes
+        case upc
+        case binId = "bin_id"
     }
 }
 
 // MARK: - Suggestions
 
+/// A catalogue item matched to a vision suggestion by embedding similarity.
+///
+/// Present when an existing item scored above the cosine similarity threshold (0.5).
+struct SuggestionMatch: Decodable {
+    let itemId: Int
+    let name: String
+    let category: String?
+    let score: Double
+    let bins: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case name
+        case category
+        case score
+        case bins
+    }
+}
+
 /// A single item suggested by vision inference for a photo.
 ///
-/// `itemId` is `nil` when the vision label did not match any existing catalogue item
-/// above the similarity threshold.
+/// `itemId` is always `nil` — use `match?.itemId` for DB-matched items.
+/// `bins` is always empty — use `match?.bins` for DB-matched items.
 struct SuggestionItem: Decodable {
     let itemId: Int?
     let name: String
     let category: String?
     let confidence: Double
     let bins: [String]
+    let match: SuggestionMatch?
 
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
@@ -159,6 +187,7 @@ struct SuggestionItem: Decodable {
         case category
         case confidence
         case bins
+        case match
     }
 }
 
@@ -186,9 +215,9 @@ struct SearchResultItem: Decodable {
     let itemId: Int
     let name: String
     let category: String?
+    let upc: String?
     let distance: Double
-    /// Bins containing this item. `nil` when the server omits the field; `[]` when present but empty.
-    let bins: [String]?
+    let bins: [String]
 
     /// A 0–1 similarity score derived from the raw pgvector cosine distance.
     ///
@@ -200,6 +229,7 @@ struct SearchResultItem: Decodable {
         case itemId = "item_id"
         case name
         case category
+        case upc
         case distance
         case bins
     }
@@ -207,6 +237,7 @@ struct SearchResultItem: Decodable {
 
 /// The response returned by `GET /search`.
 struct SearchResponse: Decodable {
+    let version: String
     let q: String
     let limit: Int
     let offset: Int
@@ -214,11 +245,107 @@ struct SearchResponse: Decodable {
     let results: [SearchResultItem]
 
     enum CodingKeys: String, CodingKey {
+        case version
         case q
         case limit
         case offset
         case minScore = "min_score"
         case results
+    }
+}
+
+// MARK: - Models
+
+/// An Ollama model available on the server.
+struct OllamaModel: Decodable {
+    let name: String
+    let size: Int?
+    let modifiedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case size
+        case modifiedAt = "modified_at"
+    }
+}
+
+/// The response returned by `GET /models`.
+struct ListModelsResponse: Decodable {
+    let version: String
+    let activeModel: String
+    let models: [OllamaModel]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case activeModel = "active_model"
+        case models
+    }
+}
+
+/// An Ollama model currently loaded in memory.
+struct RunningModel: Decodable {
+    let name: String
+    let size: Int?
+    let sizeVram: Int?
+    let expiresAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case size
+        case sizeVram = "size_vram"
+        case expiresAt = "expires_at"
+    }
+}
+
+/// The response returned by `GET /models/running`.
+struct RunningModelsResponse: Decodable {
+    let version: String
+    let activeModel: String
+    let models: [RunningModel]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case activeModel = "active_model"
+        case models
+    }
+}
+
+/// The response returned by `POST /models/select`.
+struct SelectModelResponse: Decodable {
+    let version: String
+    let previousModel: String
+    let activeModel: String
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case previousModel = "previous_model"
+        case activeModel = "active_model"
+    }
+}
+
+// MARK: - Settings
+
+/// The response returned by `GET /settings/image-size`.
+struct ImageSizeResponse: Decodable {
+    let version: String
+    let maxImagePx: Int
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case maxImagePx = "max_image_px"
+    }
+}
+
+/// The response returned by `POST /settings/image-size`.
+struct SetImageSizeResponse: Decodable {
+    let version: String
+    let previousMaxImagePx: Int
+    let maxImagePx: Int
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case previousMaxImagePx = "previous_max_image_px"
+        case maxImagePx = "max_image_px"
     }
 }
 
