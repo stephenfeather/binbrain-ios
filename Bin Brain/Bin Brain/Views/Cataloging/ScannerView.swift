@@ -62,6 +62,9 @@ struct ScannerView: UIViewControllerRepresentable {
         // Wrap in a plain UIViewController to isolate the scanner
         // from SwiftUI's color environment (prevents yellow tint).
         let container = UIViewController()
+        // Clamp tintColor to sRGB to suppress the
+        // "UIColor component values far outside expected range" warning.
+        container.view.tintColor = .systemBlue
         container.addChild(scanner)
         container.view.addSubview(scanner.view)
         scanner.view.frame = container.view.bounds
