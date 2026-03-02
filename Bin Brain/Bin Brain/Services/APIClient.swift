@@ -56,6 +56,22 @@ final class APIClient {
 
     // MARK: - Public API
 
+    /// Returns the URL for serving a photo file, optionally resized.
+    ///
+    /// Use with `AsyncImage` or a custom image loader. Pass `width` to
+    /// request a JPEG thumbnail resized to the given width (aspect ratio preserved).
+    ///
+    /// - Parameters:
+    ///   - photoId: The photo ID returned by a prior `ingest` call.
+    ///   - width: Optional width in pixels (16–4096). `nil` returns the original.
+    func photoFileURL(photoId: Int, width: Int? = nil) -> URL? {
+        var path = "\(baseURL)/photos/\(photoId)/file"
+        if let width {
+            path += "?w=\(width)"
+        }
+        return URL(string: path)
+    }
+
     /// Returns the server health status.
     func health() async throws -> HealthResponse {
         try await request(path: "/health", method: "GET", body: nil, contentType: nil, timeout: 10)

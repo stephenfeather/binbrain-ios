@@ -45,6 +45,36 @@ final class SettingsViewModel {
     /// In-flight debounce task for `debouncedSave()`. Cancelled on each new call.
     private var saveTask: Task<Void, Never>?
 
+    // MARK: - Image Size State
+
+    /// The current max image dimension (longest side in pixels) for vision inference.
+    ///
+    /// Writable so the slider can update the local value before committing to the server.
+    var maxImagePx: Int = 1280
+
+    /// Whether the image size is currently being loaded or saved.
+    private(set) var isLoadingImageSize: Bool = false
+
+    /// Error message from the last image size operation, if any.
+    private(set) var imageSizeError: String?
+
+    // MARK: - Model State
+
+    /// Available Ollama models on the server.
+    private(set) var availableModels: [OllamaModel] = []
+
+    /// The currently active vision model name.
+    private(set) var activeModel: String = ""
+
+    /// Whether models are being loaded or switched.
+    private(set) var isLoadingModels: Bool = false
+
+    /// Whether a model switch is in progress (can take 5–30 s).
+    private(set) var isSwitchingModel: Bool = false
+
+    /// Error message from the last model operation, if any.
+    private(set) var modelError: String?
+
     // MARK: - Initializer
 
     /// Creates a `SettingsViewModel`, loading persisted values from `defaults`.
@@ -95,5 +125,68 @@ final class SettingsViewModel {
         } catch {
             connectionStatus = .failed
         }
+    }
+
+    // MARK: - Image Size Actions
+
+    /// Fetches the current image size setting from the server.
+    func loadImageSize(apiClient: APIClient) async {
+        isLoadingImageSize = true
+        imageSizeError = nil
+        do {
+            let response = try await apiClient.getImageSize()
+            maxImagePx = response.maxImagePx
+        } catch {
+            imageSizeError = error.localizedDescription
+        }
+        isLoadingImageSize = false
+    }
+
+    /// Updates the max image size on the server.
+    ///
+    /// - Parameter value: Max longest side in pixels (128–4096).
+    func setImageSize(_ value: Int, apiClient: APIClient) async {
+        isLoadingImageSize = true
+        imageSizeError = nil
+        do {
+            let response = try await apiClient.setImageSize(value)
+            maxImagePx = response.maxImagePx
+        } catch {
+            imageSizeError = error.localizedDescription
+        }
+        isLoadingImageSize = false
+    }
+
+    // MARK: - Model Actions
+
+    /// Fetches available models and the active model from the server.
+    func loadModels(apiClient: APIClient) async {
+        isLoadingModels = true
+        modelError = nil
+        do {
+            let response = try await apiClient.listModels()
+            availableModels = response.models
+            activeModel = response.activeModel
+        } catch {
+            modelError = error.localizedDescription
+        }
+        isLoadingModels = false
+    }
+
+    /// Selects a new vision model on the server.
+    ///
+    /// Blocks until the model is warmed up (typically 5–30 s).
+    ///
+    /// - Parameter model: The model name to switch to.
+    func selectModel(_ model: String, apiClient: APIClient) async {
+        isSwitchingModel = true
+        modelError = nil
+        do {
+            let response = try await apiClient.selectModel(model)
+            activeModel = response.activeModel
+        } catch {
+            modelError = error.localizedDescription
+        }
+        isSwitchingModel = false
     }
 }
