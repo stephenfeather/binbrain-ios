@@ -226,9 +226,15 @@ struct BinDetailView: View {
     @ViewBuilder
     private func loadedView(bin: GetBinResponse) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("\(bin.photos.count) photos")
-                .font(.subheadline)
-                .padding([.horizontal, .top])
+            HStack {
+                Text("\(bin.items.count) items")
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text("\(bin.photos.count) scans")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
+            .padding([.horizontal, .top])
 
             List(sortedItems(bin.items), id: \.itemId) { item in
                 ItemRowView(item: item)
