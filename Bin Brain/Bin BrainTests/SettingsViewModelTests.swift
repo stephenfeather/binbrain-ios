@@ -178,7 +178,30 @@ final class SettingsViewModelTests: XCTestCase {
                        "save(to:) should persist the updated similarityThreshold")
     }
 
-    // MARK: - Test 7: loads previously persisted values
+    // MARK: - Test 7: debouncedSave coalesces rapid calls
+
+    @MainActor
+    func testDebouncedSaveCoalescesRapidWrites() async throws {
+        // Simulate rapid typing — each keystroke calls debouncedSave
+        sut.serverURL = "http://a"
+        sut.debouncedSave(to: testDefaults)
+        sut.serverURL = "http://ab"
+        sut.debouncedSave(to: testDefaults)
+        sut.serverURL = "http://abc"
+        sut.debouncedSave(to: testDefaults)
+
+        // Before debounce fires, defaults should still hold the old value
+        XCTAssertNil(testDefaults.string(forKey: "serverURL"),
+                     "Defaults should not be written immediately during rapid calls")
+
+        // Wait for debounce to settle (500ms + margin)
+        try await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertEqual(testDefaults.string(forKey: "serverURL"), "http://abc",
+                       "After debounce settles, only the final value should be persisted")
+    }
+
+    // MARK: - Test 8: loads previously persisted values
 
     func testLoadsPreviouslyPersistedValues() async {
         testDefaults.set("http://customhost.local:9000", forKey: "serverURL")

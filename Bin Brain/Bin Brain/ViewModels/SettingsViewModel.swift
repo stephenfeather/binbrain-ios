@@ -42,6 +42,9 @@ final class SettingsViewModel {
     /// Set only by `testConnection(apiClient:)`. Starts as `.unknown`.
     private(set) var connectionStatus: ConnectionStatus = .unknown
 
+    /// In-flight debounce task for `debouncedSave()`. Cancelled on each new call.
+    private var saveTask: Task<Void, Never>?
+
     // MARK: - Initializer
 
     /// Creates a `SettingsViewModel`, loading persisted values from `defaults`.
@@ -61,6 +64,21 @@ final class SettingsViewModel {
     func save(to defaults: UserDefaults = .standard) {
         defaults.set(serverURL, forKey: "serverURL")
         defaults.set(similarityThreshold, forKey: "similarityThreshold")
+    }
+
+    /// Schedules a debounced save after a 0.5-second pause.
+    ///
+    /// Each call cancels the previous pending save, so only the final
+    /// value after typing stops is persisted. Safe to call from `@MainActor`.
+    ///
+    /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
+    func debouncedSave(to defaults: UserDefaults = .standard) {
+        saveTask?.cancel()
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            save(to: defaults)
+        }
     }
 
     /// Tests the connection to the backend and updates `connectionStatus`.

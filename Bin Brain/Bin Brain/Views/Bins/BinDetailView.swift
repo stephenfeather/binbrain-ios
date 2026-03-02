@@ -40,6 +40,7 @@ struct BinDetailView: View {
     @State private var showAddItem = false
     @State private var showCamera = false
     @State private var sortOrder: SortOrder = .name
+    @State private var cameraTapCount = 0
 
     // Cataloging flow state
     @State private var catalogingPath: [BinCatalogingStep] = []
@@ -75,11 +76,13 @@ struct BinDetailView: View {
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Button {
+                        cameraTapCount += 1
                         showCamera = true
                     } label: {
                         Image(systemName: "camera.fill")
                             .font(.title2)
                     }
+                    .sensoryFeedback(.impact(flexibility: .rigid, intensity: 0.6), trigger: cameraTapCount)
                 }
             }
             .task { await viewModel.load(binId: binId, apiClient: apiClient) }

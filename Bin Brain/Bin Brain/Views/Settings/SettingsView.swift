@@ -6,6 +6,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 // MARK: - SettingsView
 
@@ -41,12 +42,18 @@ struct SettingsView: View {
                 .keyboardType(.URL)
                 .autocorrectionDisabled()
                 .onChange(of: viewModel.serverURL) {
-                    viewModel.save()
+                    viewModel.debouncedSave()
                 }
 
             HStack {
                 Button("Test Connection") {
-                    Task { await viewModel.testConnection(apiClient: apiClient) }
+                    Task {
+                        await viewModel.testConnection(apiClient: apiClient)
+                        let generator = UINotificationFeedbackGenerator()
+                        generator.notificationOccurred(
+                            viewModel.connectionStatus == .ok ? .success : .error
+                        )
+                    }
                 }
                 Spacer()
                 connectionIndicator
