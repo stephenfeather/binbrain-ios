@@ -227,4 +227,30 @@ final class AnalysisViewModelTests: XCTestCase {
         XCTAssertEqual(sut.phase, .idle, "reset() from .failed should restore phase to .idle")
         XCTAssertTrue(sut.suggestions.isEmpty, "Suggestions should be empty after reset from .failed")
     }
+
+    // MARK: - Test 8: Zero suggestions completes successfully
+
+    func testRunCompletesWithZeroSuggestions() async {
+        let emptySuggestJSON = Data("""
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "test-model",
+            "vision_elapsed_ms": 500,
+            "suggestions": []
+        }
+        """.utf8)
+
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), emptySuggestJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.phase, .complete, "Phase should be .complete even with zero suggestions")
+        XCTAssertTrue(sut.suggestions.isEmpty, "Suggestions should be empty")
+    }
 }

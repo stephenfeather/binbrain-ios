@@ -300,4 +300,30 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             "Request body should contain the edited name 'Renamed'"
         )
     }
+
+    // MARK: - Test 9: loadSuggestions with empty array shows empty state
+
+    func testLoadEmptySuggestionsKeepsEmptyState() {
+        sut.loadSuggestions([])
+
+        XCTAssertTrue(sut.editableSuggestions.isEmpty, "Should have no editable suggestions")
+        XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty")
+    }
+
+    // MARK: - Test 10: confirm with empty suggestions is a no-op
+
+    func testConfirmWithEmptySuggestionsIsNoOp() async {
+        sut.loadSuggestions([])
+
+        var callCount = 0
+        let client = makeMockAPIClient { [self] request in
+            callCount += 1
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(callCount, 0, "No API calls should be made with empty suggestions")
+        XCTAssertFalse(sut.isConfirming, "isConfirming should be false")
+    }
 }
