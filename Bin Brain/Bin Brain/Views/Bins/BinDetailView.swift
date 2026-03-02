@@ -115,13 +115,18 @@ private struct ItemRowView: View {
     let item: BinItemRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.name).font(.headline)
-            Text(item.category ?? "Uncategorized").font(.subheadline)
-            if let quantity = item.quantity {
-                Text("Qty: \(quantity, specifier: "%.0f")").font(.caption)
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name).font(.headline)
+                Text(item.category ?? "Uncategorized").font(.subheadline).foregroundStyle(.secondary)
+                if let quantity = item.quantity {
+                    Text("Qty: \(quantity, specifier: "%.0f")").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            Text(String(format: "%.0f%%", (item.confidence ?? 0) * 100)).font(.caption)
+            Spacer()
+            if let confidence = item.confidence {
+                ConfidenceBadge(confidence: confidence)
+            }
         }
     }
 }
