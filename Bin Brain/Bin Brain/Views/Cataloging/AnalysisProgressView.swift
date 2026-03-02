@@ -33,10 +33,14 @@ struct AnalysisProgressView: View {
             switch viewModel.phase {
             case .idle, .uploading:
                 ProgressView()
+                    .scaleEffect(3)
+                    .padding(.bottom, 16)
                 Text("Uploading photo...")
 
             case .analysing:
                 ProgressView()
+                    .scaleEffect(3)
+                    .padding(.bottom, 16)
                 Text("Analysing with AI...")
 
             case .complete:

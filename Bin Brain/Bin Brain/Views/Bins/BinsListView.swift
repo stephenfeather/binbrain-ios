@@ -97,6 +97,16 @@ struct BinsListView: View {
                         capturedPhotoData = rawData
                         capturedBinId = binId
                         catalogingPath.append(.analysis)
+                        // Launch analysis in an unstructured Task so SwiftUI
+                        // re-renders cannot cancel the in-flight network call.
+                        Task {
+                            await analysisViewModel.run(
+                                jpegData: rawData,
+                                binId: binId,
+                                apiClient: apiClient,
+                                context: modelContext
+                            )
+                        }
                     },
                     onCaptureReady: { action in
                         captureProxy.action = action
@@ -167,21 +177,6 @@ struct BinsListView: View {
                 }
             }
         )
-        .task(id: capturedPhotoData) {
-            guard let data = capturedPhotoData,
-                  let binId = capturedBinId else { return }
-            print("[Analysis] .task fired, data: \(data.count) bytes, phase: \(analysisViewModel.phase)")
-            guard analysisViewModel.phase != .uploading && analysisViewModel.phase != .analysing else {
-                print("[Analysis] Already running, skipping duplicate")
-                return
-            }
-            await analysisViewModel.run(
-                jpegData: data,
-                binId: binId,
-                apiClient: apiClient,
-                context: modelContext
-            )
-        }
     }
 
     // MARK: - Review View

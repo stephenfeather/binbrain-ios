@@ -23,8 +23,6 @@ struct BinDetailView: View {
     @State private var viewModel = BinDetailViewModel()
     @Environment(\.apiClient) private var apiClient
     @State private var showAddItem = false
-    @State private var showScanner = false
-    @State private var showShutterButton = false
     @State private var sortOrder: SortOrder = .name
 
     // MARK: - Sort Order
@@ -52,14 +50,6 @@ struct BinDetailView: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 200)
                 }
-                ToolbarItem(placement: .bottomBar) {
-                    Button {
-                        showScanner = true
-                    } label: {
-                        Image(systemName: "camera.fill")
-                            .font(.title2)
-                    }
-                }
             }
             .task { await viewModel.load(binId: binId, apiClient: apiClient) }
             .sheet(isPresented: $showAddItem) {
@@ -68,13 +58,6 @@ struct BinDetailView: View {
                     apiClient: apiClient,
                     viewModel: viewModel,
                     isPresented: $showAddItem
-                )
-            }
-            .sheet(isPresented: $showScanner) {
-                ScannerView(
-                    showShutterButton: $showShutterButton,
-                    onQRCode: { _ in },
-                    onPhotoCapture: { _ in }
                 )
             }
     }
