@@ -6,6 +6,20 @@
 
 import SwiftUI
 
+// MARK: - BinDetailCaptureProxy
+
+/// Reference-type container for the scanner's capture action.
+private final class CaptureProxy {
+    var action: (() -> Void)?
+}
+
+// MARK: - BinCatalogingStep
+
+private enum BinCatalogingStep: Hashable {
+    case analysis
+    case review
+}
+
 // MARK: - BinDetailView
 
 /// The detail screen for a single storage bin.
@@ -22,8 +36,17 @@ struct BinDetailView: View {
 
     @State private var viewModel = BinDetailViewModel()
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.modelContext) private var modelContext
     @State private var showAddItem = false
+    @State private var showCamera = false
     @State private var sortOrder: SortOrder = .name
+
+    // Cataloging flow state
+    @State private var catalogingPath: [BinCatalogingStep] = []
+    @State private var analysisViewModel = AnalysisViewModel()
+    @State private var reviewViewModel = SuggestionReviewViewModel()
+    @State private var captureProxy = CaptureProxy()
+    @State private var capturedPhotoData: Data?
 
     // MARK: - Sort Order
 
@@ -50,6 +73,14 @@ struct BinDetailView: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 200)
                 }
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        showCamera = true
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .font(.title2)
+                    }
+                }
             }
             .task { await viewModel.load(binId: binId, apiClient: apiClient) }
             .sheet(isPresented: $showAddItem) {
@@ -60,6 +91,114 @@ struct BinDetailView: View {
                     isPresented: $showAddItem
                 )
             }
+            .sheet(isPresented: $showCamera, onDismiss: resetCataloging) {
+                cameraSheet
+            }
+    }
+
+    // MARK: - Camera Sheet
+
+    @ViewBuilder
+    private var cameraSheet: some View {
+        NavigationStack(path: $catalogingPath) {
+            ZStack {
+                ScannerView(
+                    showShutterButton: .constant(true),
+                    onQRCode: { _ in },
+                    onPhotoCapture: { image in
+                        guard let rawData = image.jpegData(compressionQuality: 1.0) else { return }
+                        capturedPhotoData = rawData
+                        catalogingPath.append(.analysis)
+                        Task {
+                            await analysisViewModel.run(
+                                jpegData: rawData,
+                                binId: binId,
+                                apiClient: apiClient,
+                                context: modelContext
+                            )
+                        }
+                    },
+                    onCaptureReady: { action in
+                        captureProxy.action = action
+                    }
+                )
+                .ignoresSafeArea()
+
+                VStack {
+                    Spacer()
+                    Button(action: { captureProxy.action?() }) {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 72, height: 72)
+                            .overlay(Circle().stroke(Color.gray.opacity(0.4), lineWidth: 2))
+                            .shadow(radius: 4)
+                    }
+                    .padding(.bottom, 50)
+                }
+            }
+            .navigationTitle("Scan Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showCamera = false }
+                }
+            }
+            .navigationDestination(for: BinCatalogingStep.self) { step in
+                switch step {
+                case .analysis:
+                    analysisView
+                case .review:
+                    reviewView
+                }
+            }
+        }
+    }
+
+    // MARK: - Analysis View
+
+    private var analysisView: some View {
+        AnalysisProgressView(
+            viewModel: analysisViewModel,
+            onComplete: { suggestions in
+                reviewViewModel.loadSuggestions(suggestions)
+                catalogingPath.append(.review)
+            },
+            onRetry: {
+                Task {
+                    guard let data = capturedPhotoData else { return }
+                    analysisViewModel.reset()
+                    await analysisViewModel.run(
+                        jpegData: data,
+                        binId: binId,
+                        apiClient: apiClient,
+                        context: modelContext
+                    )
+                }
+            }
+        )
+    }
+
+    // MARK: - Review View
+
+    private var reviewView: some View {
+        SuggestionReviewView(
+            viewModel: reviewViewModel,
+            binId: binId,
+            apiClient: apiClient,
+            onDone: {
+                showCamera = false
+                Task { await viewModel.load(binId: binId, apiClient: apiClient) }
+            }
+        )
+    }
+
+    // MARK: - Cataloging Helpers
+
+    private func resetCataloging() {
+        catalogingPath = []
+        analysisViewModel.reset()
+        captureProxy.action = nil
+        capturedPhotoData = nil
     }
 
     // MARK: - Content
