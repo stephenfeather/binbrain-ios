@@ -13,8 +13,9 @@ import Observation
 /// A mutable wrapper around a `SuggestionItem` for the review UI.
 ///
 /// Each suggestion starts with `included = true` and fields pre-filled
-/// from the original `SuggestionItem`. The user can toggle inclusion,
-/// edit the name, category, and quantity before confirming.
+/// from the matched catalogue item when available, falling back to the
+/// raw vision label. The user can toggle inclusion, edit the name,
+/// category, and quantity before confirming.
 struct EditableSuggestion: Identifiable {
     /// The index in the original suggestions array, used as a stable identifier.
     let id: Int
@@ -28,6 +29,12 @@ struct EditableSuggestion: Identifiable {
     var editedQuantity: String
     /// The confidence score from the original suggestion (read-only).
     let confidence: Double
+    /// The raw vision label before any match substitution (read-only).
+    let visionName: String
+    /// The catalogue match details, if a similar item was found (read-only).
+    let match: SuggestionMatch?
+    /// Whether the pre-filled name/category came from a catalogue match.
+    var isMatched: Bool { match != nil }
 }
 
 // MARK: - SuggestionReviewViewModel
@@ -57,19 +64,28 @@ final class SuggestionReviewViewModel {
 
     /// Populates `editableSuggestions` from a raw `SuggestionItem` array.
     ///
-    /// Each item starts with `included = true` and fields pre-filled from the suggestion.
-    /// Calling this method clears any previous `failedIndices`.
+    /// When a suggestion has a catalogue `match`, the matched item's name and
+    /// category are used as defaults (since the catalogue entry is more accurate
+    /// than the raw vision label). The original vision name is preserved in
+    /// `visionName` for reference.
+    ///
+    /// Each item starts with `included = true`. Calling this method clears
+    /// any previous `failedIndices`.
     ///
     /// - Parameter suggestions: The suggestion items returned by vision inference.
     func loadSuggestions(_ suggestions: [SuggestionItem]) {
         editableSuggestions = suggestions.enumerated().map { idx, item in
-            EditableSuggestion(
+            let name = item.match?.name ?? item.name
+            let category = item.match?.category ?? item.category ?? ""
+            return EditableSuggestion(
                 id: idx,
                 included: true,
-                editedName: item.name,
-                editedCategory: item.category ?? "",
+                editedName: name,
+                editedCategory: category,
                 editedQuantity: "",
-                confidence: item.confidence
+                confidence: item.confidence,
+                visionName: item.name,
+                match: item.match
             )
         }
         failedIndices = []

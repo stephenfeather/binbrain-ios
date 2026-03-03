@@ -301,7 +301,67 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         )
     }
 
-    // MARK: - Test 9: loadSuggestions with empty array shows empty state
+    // MARK: - Test 9: loadSuggestions prefers match name/category
+
+    func testLoadSuggestionsUsesMatchNameWhenAvailable() throws {
+        let json = Data("""
+        [
+            {
+                "item_id": null,
+                "name": "hex nut",
+                "category": "hardware",
+                "confidence": 0.61,
+                "bins": [],
+                "match": {
+                    "item_id": 42,
+                    "name": "Hex Nut M3",
+                    "category": "Fasteners",
+                    "score": 0.87,
+                    "bins": ["B-10"]
+                }
+            },
+            {
+                "item_id": null,
+                "name": "mystery part",
+                "category": null,
+                "confidence": 0.3,
+                "bins": [],
+                "match": null
+            }
+        ]
+        """.utf8)
+        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+
+        sut.loadSuggestions(suggestions)
+
+        // First: matched — should use catalogue name/category
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "Hex Nut M3")
+        XCTAssertEqual(sut.editableSuggestions[0].editedCategory, "Fasteners")
+        XCTAssertEqual(sut.editableSuggestions[0].visionName, "hex nut")
+        XCTAssertTrue(sut.editableSuggestions[0].isMatched)
+        let matchScore = try XCTUnwrap(sut.editableSuggestions[0].match?.score)
+        XCTAssertEqual(matchScore, 0.87, accuracy: 1e-10)
+
+        // Second: no match — should use vision name, empty category
+        XCTAssertEqual(sut.editableSuggestions[1].editedName, "mystery part")
+        XCTAssertEqual(sut.editableSuggestions[1].editedCategory, "")
+        XCTAssertEqual(sut.editableSuggestions[1].visionName, "mystery part")
+        XCTAssertFalse(sut.editableSuggestions[1].isMatched)
+        XCTAssertNil(sut.editableSuggestions[1].match)
+    }
+
+    // MARK: - Test 10: loadSuggestions without match preserves vision data
+
+    func testLoadSuggestionsWithoutMatchPreservesVisionName() throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        XCTAssertEqual(sut.editableSuggestions[0].visionName, "Widget")
+        XCTAssertNil(sut.editableSuggestions[0].match)
+        XCTAssertFalse(sut.editableSuggestions[0].isMatched)
+    }
+
+    // MARK: - Test 11: loadSuggestions with empty array shows empty state
 
     func testLoadEmptySuggestionsKeepsEmptyState() {
         sut.loadSuggestions([])
@@ -310,7 +370,7 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty")
     }
 
-    // MARK: - Test 10: confirm with empty suggestions is a no-op
+    // MARK: - Test 12: confirm with empty suggestions is a no-op
 
     func testConfirmWithEmptySuggestionsIsNoOp() async {
         sut.loadSuggestions([])

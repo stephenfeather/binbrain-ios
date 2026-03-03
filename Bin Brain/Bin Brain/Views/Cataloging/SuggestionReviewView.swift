@@ -104,18 +104,39 @@ struct SuggestionReviewView: View {
     // MARK: - Suggestion Row
 
     private func suggestionRow(at idx: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let suggestion = viewModel.editableSuggestions[idx]
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Toggle(
                     isOn: $viewModel.editableSuggestions[idx].included
                 ) {
-                    Text(viewModel.editableSuggestions[idx].editedName)
+                    Text(suggestion.editedName)
                         .font(.headline)
                 }
 
-                Text(String(format: "%.0f%%", viewModel.editableSuggestions[idx].confidence * 100))
+                Text(String(format: "%.0f%%", suggestion.confidence * 100))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if suggestion.isMatched {
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                        .font(.caption2)
+                    Text("Matched to catalogue")
+                        .font(.caption)
+                    if suggestion.visionName != suggestion.editedName {
+                        Text("(vision: \(suggestion.visionName))")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if let score = suggestion.match?.score {
+                        Spacer()
+                        Text(String(format: "%.0f%% similar", score * 100))
+                            .font(.caption)
+                    }
+                }
+                .foregroundStyle(.secondary)
             }
 
             TextField("Name", text: $viewModel.editableSuggestions[idx].editedName)
