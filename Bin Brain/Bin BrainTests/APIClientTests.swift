@@ -349,7 +349,7 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.requestHandler = { request in
             capturedRequest = request
             let json = Data("""
-            {"q":"screw","limit":20,"offset":0,"min_score":0.5,"results":[]}
+            {"version":"1","q":"screw","limit":20,"offset":0,"min_score":0.5,"results":[]}
             """.utf8)
             return (makeResponse(statusCode: 200), json)
         }
@@ -368,7 +368,7 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.requestHandler = { request in
             capturedRequest = request
             let json = Data("""
-            {"q":"bolt","limit":20,"offset":0,"min_score":null,"results":[]}
+            {"version":"1","q":"bolt","limit":20,"offset":0,"min_score":null,"results":[]}
             """.utf8)
             return (makeResponse(statusCode: 200), json)
         }

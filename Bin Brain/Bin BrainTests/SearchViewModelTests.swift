@@ -47,11 +47,13 @@ final class SearchViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        UserDefaults.standard.removeObject(forKey: "similarityThreshold")
         sut = SearchViewModel()
     }
 
     override func tearDown() async throws {
         SearchMockURLProtocol.requestHandler = nil
+        UserDefaults.standard.removeObject(forKey: "similarityThreshold")
         sut = nil
         try await super.tearDown()
     }
@@ -81,13 +83,14 @@ final class SearchViewModelTests: XCTestCase {
     private var searchSuccessJSON: Data {
         Data("""
         {
+            "version": "1",
             "q": "widget",
             "limit": 10,
             "offset": 0,
             "min_score": null,
             "results": [
-                {"item_id": 1, "name": "Widget", "category": "Hardware", "distance": 0.1, "bins": ["BIN-0001"]},
-                {"item_id": 2, "name": "Mini Widget", "category": "Hardware", "distance": 0.3, "bins": ["BIN-0001", "BIN-0002"]}
+                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "distance": 0.1, "bins": ["BIN-0001"]},
+                {"item_id": 2, "name": "Mini Widget", "category": "Hardware", "upc": null, "distance": 0.3, "bins": ["BIN-0001", "BIN-0002"]}
             ]
         }
         """.utf8)
@@ -95,7 +98,7 @@ final class SearchViewModelTests: XCTestCase {
 
     private var searchEmptyJSON: Data {
         Data("""
-        {"q": "xyzzy", "limit": 10, "offset": 0, "min_score": null, "results": []}
+        {"version": "1", "q": "xyzzy", "limit": 10, "offset": 0, "min_score": null, "results": []}
         """.utf8)
     }
 
@@ -108,12 +111,13 @@ final class SearchViewModelTests: XCTestCase {
     private var searchScoreJSON: Data {
         Data("""
         {
+            "version": "1",
             "q": "widget",
             "limit": 10,
             "offset": 0,
             "min_score": null,
             "results": [
-                {"item_id": 1, "name": "Widget", "category": "Hardware", "distance": 0.2, "bins": ["BIN-0001"]}
+                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "distance": 0.2, "bins": ["BIN-0001"]}
             ]
         }
         """.utf8)
