@@ -17,6 +17,7 @@ struct RootView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.serverMonitor) private var serverMonitor
 
     // MARK: - State
 
@@ -25,21 +26,36 @@ struct RootView: View {
     // MARK: - Body
 
     var body: some View {
-        TabView {
-            BinsListView()
-                .tabItem {
-                    Label("Bins", systemImage: "tray.2.fill")
+        VStack(spacing: 0) {
+            if !serverMonitor.isReachable {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .font(.caption)
+                    Text("Server unreachable")
+                        .font(.caption.weight(.medium))
                 }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(Color.red.opacity(0.85))
+            }
 
-            SearchView()
-                .tabItem {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
+            TabView {
+                BinsListView()
+                    .tabItem {
+                        Label("Bins", systemImage: "tray.2.fill")
+                    }
 
-            SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gear")
-                }
+                SearchView()
+                    .tabItem {
+                        Label("Search", systemImage: "magnifyingglass")
+                    }
+
+                SettingsView()
+                    .tabItem {
+                        Label("Settings", systemImage: "gear")
+                    }
+            }
         }
         .toast(message: toast.message, isShowing: Binding(
             get: { toast.isShowing },

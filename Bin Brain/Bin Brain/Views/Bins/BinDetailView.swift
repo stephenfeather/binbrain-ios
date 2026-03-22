@@ -89,6 +89,7 @@ struct BinDetailView: View {
                 }
             }
             .task { await viewModel.load(binId: binId, apiClient: apiClient) }
+            .refreshable { await viewModel.load(binId: binId, apiClient: apiClient) }
             .sheet(isPresented: $showAddItem) {
                 AddItemSheet(
                     binId: binId,
