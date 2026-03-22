@@ -48,6 +48,9 @@ struct BinDetailView: View {
     // Edit item state
     @State private var editingItem: BinItemRecord?
 
+    // Delete confirmation state
+    @State private var itemToDelete: BinItemRecord?
+
     // Cataloging flow state
     @State private var catalogingPath: [BinCatalogingStep] = []
     @State private var analysisViewModel = AnalysisViewModel()
@@ -128,6 +131,27 @@ struct BinDetailView: View {
                         )
                     )
                 }
+            }
+            .alert(
+                "Remove Item",
+                isPresented: Binding(
+                    get: { itemToDelete != nil },
+                    set: { if !$0 { itemToDelete = nil } }
+                ),
+                presenting: itemToDelete
+            ) { item in
+                Button("Remove", role: .destructive) {
+                    Task {
+                        await viewModel.removeItem(
+                            itemId: item.itemId,
+                            binId: binId,
+                            apiClient: apiClient
+                        )
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { item in
+                Text("Remove \"\(item.name)\" from this bin? The item will remain in the catalogue.")
             }
     }
 
@@ -283,15 +307,8 @@ struct BinDetailView: View {
                 }
                 .onDelete { offsets in
                     let sorted = sortedItems(bin.items)
-                    for index in offsets {
-                        let item = sorted[index]
-                        Task {
-                            await viewModel.removeItem(
-                                itemId: item.itemId,
-                                binId: binId,
-                                apiClient: apiClient
-                            )
-                        }
+                    if let index = offsets.first {
+                        itemToDelete = sorted[index]
                     }
                 }
             }
