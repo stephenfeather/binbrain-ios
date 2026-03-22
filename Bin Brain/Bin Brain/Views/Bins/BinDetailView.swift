@@ -58,6 +58,10 @@ struct BinDetailView: View {
     @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
 
+    // Model escalation
+    private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]
+    @State private var currentModelIndex = 0
+
     // MARK: - Sort Order
 
     enum SortOrder { case name, confidence }
@@ -247,17 +251,42 @@ struct BinDetailView: View {
             onDone: {
                 showCamera = false
                 Task { await viewModel.load(binId: binId, apiClient: apiClient) }
-            }
+            },
+            onRetryWithLargerModel: nextModelAvailable ? {
+                escalateModelAndReSuggest()
+            } : nil
         )
     }
 
     // MARK: - Cataloging Helpers
+
+    private var nextModelAvailable: Bool {
+        currentModelIndex + 1 < Self.modelEscalation.count
+    }
+
+    private func escalateModelAndReSuggest() {
+        guard nextModelAvailable else { return }
+        currentModelIndex += 1
+        let nextModel = Self.modelEscalation[currentModelIndex]
+        // Pop back to analysis screen, select the larger model, re-suggest
+        catalogingPath = [.analysis]
+        reviewViewModel = SuggestionReviewViewModel()
+        Task {
+            do {
+                _ = try await apiClient.selectModel(nextModel)
+            } catch {
+                // selectModel failed — still try suggest with current model
+            }
+            await analysisViewModel.reSuggest(apiClient: apiClient)
+        }
+    }
 
     private func resetCataloging() {
         catalogingPath = []
         analysisViewModel.reset()
         captureProxy.action = nil
         capturedPhotoData = nil
+        currentModelIndex = 0
     }
 
     // MARK: - Content

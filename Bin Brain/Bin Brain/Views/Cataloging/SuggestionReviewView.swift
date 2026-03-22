@@ -29,6 +29,10 @@ struct SuggestionReviewView: View {
     /// Called after all items are confirmed successfully (failedIndices empty).
     let onDone: () -> Void
 
+    /// Called when the user wants to retry with a larger vision model.
+    /// `nil` hides the button (e.g. when already on the largest model).
+    var onRetryWithLargerModel: (() -> Void)?
+
     // MARK: - Body
 
     var body: some View {
@@ -58,9 +62,25 @@ struct SuggestionReviewView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Text("No items detected. Try retaking the photo.")
+            Image(systemName: "eye.slash")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("No items detected.")
+                .font(.headline)
+            Text("Try retaking the photo, or use a larger model for better accuracy.")
                 .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+            if let onRetryWithLargerModel {
+                Button {
+                    onRetryWithLargerModel()
+                } label: {
+                    Label("Try a larger model", systemImage: "arrow.trianglehead.2.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+            }
             Button("Done") { onDone() }
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

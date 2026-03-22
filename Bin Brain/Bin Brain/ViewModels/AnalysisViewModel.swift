@@ -43,6 +43,9 @@ final class AnalysisViewModel {
     /// The item suggestions returned by vision inference; populated when `phase == .complete`.
     private(set) var suggestions: [SuggestionItem] = []
 
+    /// The photo ID from the last successful ingest; `nil` until ingest completes.
+    private(set) var lastPhotoId: Int?
+
     // MARK: - Actions
 
     /// Compresses `jpegData`, uploads it via `ingest()`, then calls `suggest()`.
@@ -78,6 +81,7 @@ final class AnalysisViewModel {
             return
         }
         let photoId = firstPhoto.photoId
+        lastPhotoId = photoId
 
         phase = .analysing
 
@@ -142,10 +146,35 @@ final class AnalysisViewModel {
         }
     }
 
+    /// Re-runs suggest on the previously ingested photo without re-uploading.
+    ///
+    /// Call after switching to a larger model via `apiClient.selectModel()`.
+    /// Requires a prior successful `run()` that set `lastPhotoId`.
+    ///
+    /// - Parameter apiClient: The `APIClient` instance to use for the suggest call.
+    func reSuggest(apiClient: APIClient) async {
+        guard let photoId = lastPhotoId else {
+            phase = .failed("No photo to re-analyse")
+            return
+        }
+
+        phase = .analysing
+        suggestions = []
+
+        do {
+            let response = try await apiClient.suggest(photoId: photoId)
+            suggestions = response.suggestions
+            phase = .complete
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
     /// Resets all state back to `.uploading` for a retry.
     func reset() {
         phase = .idle
         suggestions = []
+        lastPhotoId = nil
     }
 
     // MARK: - Private Helpers
