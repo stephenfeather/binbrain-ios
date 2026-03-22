@@ -42,6 +42,9 @@ struct BinDetailView: View {
     @State private var sortOrder: SortOrder = .name
     @State private var cameraTapCount = 0
 
+    // Photo viewer state
+    @State private var selectedPhotoURL: URL?
+
     // Cataloging flow state
     @State private var catalogingPath: [BinCatalogingStep] = []
     @State private var analysisViewModel = AnalysisViewModel()
@@ -96,6 +99,14 @@ struct BinDetailView: View {
             }
             .sheet(isPresented: $showCamera, onDismiss: resetCataloging) {
                 cameraSheet
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { selectedPhotoURL != nil },
+                set: { if !$0 { selectedPhotoURL = nil } }
+            )) {
+                if let url = selectedPhotoURL {
+                    PhotoViewer(url: url)
+                }
             }
     }
 
@@ -239,10 +250,61 @@ struct BinDetailView: View {
             .font(.subheadline)
             .padding([.horizontal, .top])
 
+            if !bin.photos.isEmpty {
+                photoStrip(photos: bin.photos)
+            }
+
             List(sortedItems(bin.items), id: \.itemId) { item in
                 ItemRowView(item: item)
             }
         }
+    }
+
+    // MARK: - Photo Strip
+
+    @ViewBuilder
+    private func photoStrip(photos: [PhotoRecord]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 8) {
+                ForEach(photos, id: \.photoId) { photo in
+                    if let url = apiClient.photoFileURL(photoId: photo.photoId, width: 200) {
+                        Button {
+                            selectedPhotoURL = apiClient.photoFileURL(photoId: photo.photoId)
+                        } label: {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 100, height: 100)
+                                        .clipped()
+                                case .failure:
+                                    placeholderThumbnail(systemName: "photo.badge.exclamationmark")
+                                default:
+                                    placeholderThumbnail(systemName: "photo")
+                                        .overlay(ProgressView())
+                                }
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+        .frame(height: 116)
+    }
+
+    private func placeholderThumbnail(systemName: String) -> some View {
+        Rectangle()
+            .fill(Color(.secondarySystemBackground))
+            .frame(width: 100, height: 100)
+            .overlay(
+                Image(systemName: systemName)
+                    .foregroundStyle(.tertiary)
+            )
     }
 
     // MARK: - Helpers
