@@ -177,6 +177,49 @@ final class APIClient {
         )
     }
 
+    /// Removes an item from a bin (deletes the association, not the item itself).
+    ///
+    /// - Parameters:
+    ///   - itemId: The item ID to remove.
+    ///   - binId: The bin to remove the item from.
+    @discardableResult
+    func removeItem(itemId: Int, binId: String) async throws -> RemoveItemResponse {
+        try await request(
+            path: "/bins/\(binId)/items/\(itemId)",
+            method: "DELETE",
+            body: nil,
+            contentType: nil,
+            timeout: 10
+        )
+    }
+
+    /// Updates quantity and/or confidence for an item in a bin.
+    ///
+    /// - Parameters:
+    ///   - itemId: The item ID to update.
+    ///   - binId: The bin the item belongs to.
+    ///   - quantity: New quantity value, or `nil` to leave unchanged.
+    ///   - confidence: New confidence value, or `nil` to leave unchanged.
+    @discardableResult
+    func updateItem(
+        itemId: Int,
+        binId: String,
+        quantity: Double?,
+        confidence: Double?
+    ) async throws -> UpdateItemResponse {
+        var fields: [String: Any] = [:]
+        if let quantity { fields["quantity"] = quantity }
+        if let confidence { fields["confidence"] = confidence }
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        return try await request(
+            path: "/bins/\(binId)/items/\(itemId)",
+            method: "PATCH",
+            body: body,
+            contentType: "application/json",
+            timeout: 10
+        )
+    }
+
     /// Returns all Ollama models available on the server and the currently active model.
     func listModels() async throws -> ListModelsResponse {
         try await request(path: "/models", method: "GET", body: nil, contentType: nil, timeout: 10)

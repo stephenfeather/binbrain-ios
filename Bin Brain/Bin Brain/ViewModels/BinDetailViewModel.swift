@@ -58,6 +58,38 @@ final class BinDetailViewModel {
     ///   - quantity: Optional quantity.
     ///   - binId: Bin to associate the item with.
     ///   - apiClient: API client for network calls.
+    /// Removes an item from this bin, then reloads the bin contents.
+    ///
+    /// - Parameters:
+    ///   - itemId: The item to remove.
+    ///   - binId: The bin to remove the item from.
+    ///   - apiClient: API client for network calls.
+    func removeItem(itemId: Int, binId: String, apiClient: APIClient) async {
+        do {
+            try await apiClient.removeItem(itemId: itemId, binId: binId)
+            await load(binId: binId, apiClient: apiClient)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Updates quantity and/or confidence for an item in this bin, then reloads.
+    ///
+    /// - Parameters:
+    ///   - itemId: The item to update.
+    ///   - quantity: New quantity, or `nil` to leave unchanged.
+    ///   - confidence: New confidence, or `nil` to leave unchanged.
+    ///   - binId: The bin the item belongs to.
+    ///   - apiClient: API client for network calls.
+    func updateItem(itemId: Int, quantity: Double?, confidence: Double?, binId: String, apiClient: APIClient) async {
+        do {
+            try await apiClient.updateItem(itemId: itemId, binId: binId, quantity: quantity, confidence: confidence)
+            await load(binId: binId, apiClient: apiClient)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func addItem(name: String, category: String?, quantity: Double?, binId: String, apiClient: APIClient) async {
         do {
             _ = try await apiClient.upsertItem(

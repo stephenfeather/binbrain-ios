@@ -96,6 +96,18 @@ final class BinDetailViewModelTests: XCTestCase {
         """.utf8)
     }
 
+    private var removeItemSuccessJSON: Data {
+        Data("""
+        {"removed":true}
+        """.utf8)
+    }
+
+    private var updateItemSuccessJSON: Data {
+        Data("""
+        {"item_id":1,"bin_id":"BIN-0001","quantity":10.0,"confidence":0.95}
+        """.utf8)
+    }
+
     private var serverErrorJSON: Data {
         Data("""
         {"version":"1","error":{"code":"server_error","message":"Internal server error"}}
@@ -180,5 +192,73 @@ final class BinDetailViewModelTests: XCTestCase {
         )
 
         XCTAssertNotNil(sut.bin, "bin should be populated after addItem triggers reload")
+    }
+
+    // MARK: - Test 6: removeItem calls DELETE and reloads
+
+    func testRemoveItemCallsDeleteAndReloads() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.httpMethod == "DELETE" {
+                return (mockResponse(statusCode: 200, for: request), removeItemSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), getBinSuccessJSON)
+        }
+
+        await sut.removeItem(itemId: 1, binId: "BIN-0001", apiClient: client)
+
+        XCTAssertNotNil(sut.bin, "bin should be populated after removeItem triggers reload")
+        XCTAssertNil(sut.error, "error should be nil after successful removeItem")
+    }
+
+    // MARK: - Test 7: removeItem sets error on failure
+
+    func testRemoveItemSetsErrorOnFailure() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+        }
+
+        await sut.removeItem(itemId: 1, binId: "BIN-0001", apiClient: client)
+
+        XCTAssertNotNil(sut.error, "error should be set on failed removeItem")
+    }
+
+    // MARK: - Test 8: updateItem calls PATCH and reloads
+
+    func testUpdateItemCallsPatchAndReloads() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.httpMethod == "PATCH" {
+                return (mockResponse(statusCode: 200, for: request), updateItemSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), getBinSuccessJSON)
+        }
+
+        await sut.updateItem(
+            itemId: 1,
+            quantity: 10.0,
+            confidence: 0.95,
+            binId: "BIN-0001",
+            apiClient: client
+        )
+
+        XCTAssertNotNil(sut.bin, "bin should be populated after updateItem triggers reload")
+        XCTAssertNil(sut.error, "error should be nil after successful updateItem")
+    }
+
+    // MARK: - Test 9: updateItem sets error on failure
+
+    func testUpdateItemSetsErrorOnFailure() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+        }
+
+        await sut.updateItem(
+            itemId: 1,
+            quantity: 10.0,
+            confidence: nil,
+            binId: "BIN-0001",
+            apiClient: client
+        )
+
+        XCTAssertNotNil(sut.error, "error should be set on failed updateItem")
     }
 }
