@@ -35,6 +35,23 @@ extension EnvironmentValues {
     }
 }
 
+// MARK: - Embedded in Split View
+
+struct EmbeddedInSplitViewKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether the view is embedded in a `NavigationSplitView` detail pane.
+    ///
+    /// When `true`, child views should skip creating their own `NavigationStack`
+    /// because the split view's detail column already provides one.
+    var embeddedInSplitView: Bool {
+        get { self[EmbeddedInSplitViewKey.self] }
+        set { self[EmbeddedInSplitViewKey.self] = newValue }
+    }
+}
+
 // MARK: - ServerMonitor
 
 struct ServerMonitorKey: EnvironmentKey {

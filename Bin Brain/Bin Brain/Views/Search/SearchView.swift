@@ -15,18 +15,27 @@ struct SearchView: View {
 
     @State private var viewModel = SearchViewModel()
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("Search")
+        if embeddedInSplitView {
+            searchContent
+        } else {
+            NavigationStack {
+                searchContent
+            }
         }
-        .searchable(text: $viewModel.query, prompt: "Search items...")
-        .onChange(of: viewModel.query) { _, _ in
-            viewModel.scheduleSearch(apiClient: apiClient)
-        }
+    }
+
+    private var searchContent: some View {
+        content
+            .navigationTitle("Search")
+            .searchable(text: $viewModel.query, prompt: "Search items...")
+            .onChange(of: viewModel.query) { _, _ in
+                viewModel.scheduleSearch(apiClient: apiClient)
+            }
     }
 
     // MARK: - Content

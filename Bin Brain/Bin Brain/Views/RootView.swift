@@ -124,18 +124,22 @@ struct RootView: View {
                 Label(section.title, systemImage: section.systemImage)
             }
             .navigationTitle("Bin Brain")
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            switch selectedSection {
-            case .bins:
-                BinsListView()
-            case .search:
-                SearchView()
-            case .settings:
-                SettingsView()
-            case nil:
-                Text("Select a section")
-                    .foregroundStyle(.secondary)
+            NavigationStack {
+                switch selectedSection {
+                case .bins:
+                    BinsListView()
+                case .search:
+                    SearchView()
+                case .settings:
+                    SettingsView()
+                case nil:
+                    Text("Select a section")
+                        .foregroundStyle(.secondary)
+                }
             }
+            .environment(\.embeddedInSplitView, true)
         }
     }
 

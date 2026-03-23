@@ -19,24 +19,33 @@ struct SettingsView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.uploadQueueManager) private var uploadQueueManager
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            Form {
-                serverSection
-                visionModelSection
-                imageSizeSection
-                searchSection
-                uploadQueueSection
+        if embeddedInSplitView {
+            settingsContent
+        } else {
+            NavigationStack {
+                settingsContent
             }
-            .navigationTitle("Settings")
-            .task {
-                async let models: () = viewModel.loadModels(apiClient: apiClient)
-                async let imageSize: () = viewModel.loadImageSize(apiClient: apiClient)
-                _ = await (models, imageSize)
-            }
+        }
+    }
+
+    private var settingsContent: some View {
+        Form {
+            serverSection
+            visionModelSection
+            imageSizeSection
+            searchSection
+            uploadQueueSection
+        }
+        .navigationTitle("Settings")
+        .task {
+            async let models: () = viewModel.loadModels(apiClient: apiClient)
+            async let imageSize: () = viewModel.loadImageSize(apiClient: apiClient)
+            _ = await (models, imageSize)
         }
     }
 

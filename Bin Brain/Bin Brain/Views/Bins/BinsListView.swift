@@ -42,6 +42,7 @@ struct BinsListView: View {
     @State private var viewModel = BinsListViewModel()
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
     // Cataloging flow
     @State private var showCataloging = false
@@ -61,25 +62,33 @@ struct BinsListView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("Bins")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            showCataloging = true
-                        } label: {
-                            Image(systemName: "camera.fill")
-                                .font(.title2)
-                        }
+        if embeddedInSplitView {
+            binsContent
+        } else {
+            NavigationStack {
+                binsContent
+            }
+        }
+    }
+
+    private var binsContent: some View {
+        content
+            .navigationTitle("Bins")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showCataloging = true
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .font(.title2)
                     }
                 }
-                .task { await viewModel.load(apiClient: apiClient) }
-                .refreshable { await viewModel.load(apiClient: apiClient) }
-                .sheet(isPresented: $showCataloging, onDismiss: resetCataloging) {
-                    catalogingSheet
-                }
-        }
+            }
+            .task { await viewModel.load(apiClient: apiClient) }
+            .refreshable { await viewModel.load(apiClient: apiClient) }
+            .sheet(isPresented: $showCataloging, onDismiss: resetCataloging) {
+                catalogingSheet
+            }
     }
 
     // MARK: - Cataloging Sheet
