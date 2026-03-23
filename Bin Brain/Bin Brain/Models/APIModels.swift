@@ -216,21 +216,15 @@ struct SearchResultItem: Decodable {
     let name: String
     let category: String?
     let upc: String?
-    let distance: Double
+    let score: Double
     let bins: [String]
-
-    /// A 0–1 similarity score derived from the raw pgvector cosine distance.
-    ///
-    /// pgvector cosine distance is in the range 0–2 (lower = more similar).
-    /// Converted to a 0–1 similarity score: `score = 1.0 - (distance / 2.0)`.
-    var score: Double { 1.0 - (distance / 2.0) }
 
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
         case name
         case category
         case upc
-        case distance
+        case score
         case bins
     }
 }

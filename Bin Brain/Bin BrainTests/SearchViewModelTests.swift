@@ -89,8 +89,8 @@ final class SearchViewModelTests: XCTestCase {
             "offset": 0,
             "min_score": null,
             "results": [
-                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "distance": 0.1, "bins": ["BIN-0001"]},
-                {"item_id": 2, "name": "Mini Widget", "category": "Hardware", "upc": null, "distance": 0.3, "bins": ["BIN-0001", "BIN-0002"]}
+                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "score": 0.9, "bins": ["BIN-0001"]},
+                {"item_id": 2, "name": "Mini Widget", "category": "Hardware", "upc": null, "score": 0.7, "bins": ["BIN-0001", "BIN-0002"]}
             ]
         }
         """.utf8)
@@ -117,7 +117,7 @@ final class SearchViewModelTests: XCTestCase {
             "offset": 0,
             "min_score": null,
             "results": [
-                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "distance": 0.2, "bins": ["BIN-0001"]}
+                {"item_id": 1, "name": "Widget", "category": "Hardware", "upc": null, "score": 0.8, "bins": ["BIN-0001"]}
             ]
         }
         """.utf8)
@@ -183,8 +183,8 @@ final class SearchViewModelTests: XCTestCase {
         await sut.performSearch(apiClient: client)
 
         XCTAssertEqual(sut.results.count, 1, "Should have 1 result")
-        XCTAssertEqual(sut.results[0].score, 0.9, accuracy: 0.0001,
-                       "Score should be 1.0 - (0.2 / 2.0) = 0.9")
+        XCTAssertEqual(sut.results[0].score, 0.8, accuracy: 0.0001,
+                       "Score should match server-provided value")
     }
 
     // MARK: - Test 6: scheduleSearch clears results immediately on empty query

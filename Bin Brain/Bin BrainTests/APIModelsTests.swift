@@ -167,27 +167,27 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(suggestion.bins, ["B-42"])
     }
 
-    // MARK: - Test 5: SearchResultItem.score computed property
+    // MARK: - Test 5: SearchResultItem.score from server
 
-    func testScoreForDistanceHalf() throws {
+    func testScoreDecodesDirectly() throws {
         let json = """
         {
             "item_id": 1,
             "name": "test",
-            "distance": 0.5,
+            "score": 0.5,
             "bins": []
         }
         """
         let item = try decode(SearchResultItem.self, from: json)
-        XCTAssertEqual(item.score, 0.75, accuracy: 1e-10)
+        XCTAssertEqual(item.score, 0.5, accuracy: 1e-10)
     }
 
-    func testScoreForDistanceZero() throws {
+    func testScoreIdenticalVectors() throws {
         let json = """
         {
             "item_id": 1,
             "name": "test",
-            "distance": 0.0,
+            "score": 1.0,
             "bins": []
         }
         """
@@ -195,17 +195,17 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(item.score, 1.0, accuracy: 1e-10)
     }
 
-    func testScoreForDistanceMaximum() throws {
+    func testScoreOppositeVectors() throws {
         let json = """
         {
             "item_id": 1,
             "name": "test",
-            "distance": 2.0,
+            "score": -1.0,
             "bins": []
         }
         """
         let item = try decode(SearchResultItem.self, from: json)
-        XCTAssertEqual(item.score, 0.0, accuracy: 1e-10)
+        XCTAssertEqual(item.score, -1.0, accuracy: 1e-10)
     }
 
     // MARK: - Test 6: APIError decoding
@@ -445,7 +445,7 @@ final class APIModelsTests: XCTestCase {
                     "item_id": 12,
                     "name": "M3 Screw",
                     "category": "fastener",
-                    "distance": 0.04,
+                    "score": 0.96,
                     "bins": ["B-42"]
                 }
             ]
@@ -460,7 +460,7 @@ final class APIModelsTests: XCTestCase {
         XCTAssertNil(response.minScore)
         XCTAssertEqual(response.results.count, 1)
         XCTAssertEqual(response.results[0].name, "M3 Screw")
-        XCTAssertEqual(response.results[0].score, 0.98, accuracy: 1e-10)
+        XCTAssertEqual(response.results[0].score, 0.96, accuracy: 1e-10)
     }
 
     func testSearchResultItemDecodesUpc() throws {
@@ -469,7 +469,7 @@ final class APIModelsTests: XCTestCase {
             "item_id": 1,
             "name": "widget",
             "upc": "049000042566",
-            "distance": 0.1,
+            "score": 0.9,
             "bins": ["B-42"]
         }
         """
