@@ -35,6 +35,8 @@ struct EditableSuggestion: Identifiable {
     let match: SuggestionMatch?
     /// Whether the pre-filled name/category came from a catalogue match.
     var isMatched: Bool { match != nil }
+    /// Whether the user wants to teach this item name as a YOLO-World class.
+    var teach: Bool
 }
 
 // MARK: - SuggestionReviewViewModel
@@ -85,7 +87,8 @@ final class SuggestionReviewViewModel {
                 editedQuantity: "",
                 confidence: item.confidence,
                 visionName: item.name,
-                match: item.match
+                match: item.match,
+                teach: true
             )
         }
         failedIndices = []
@@ -125,6 +128,14 @@ final class SuggestionReviewViewModel {
                 return
             }
         }
+
+        // Confirm taught items as YOLO-World classes (fire-and-forget).
+        for idx in includedIndices where editableSuggestions[idx].teach {
+            let s = editableSuggestions[idx]
+            let category = s.editedCategory.isEmpty ? nil : s.editedCategory
+            try? await apiClient.confirmClass(className: s.editedName, category: category)
+        }
+
         isConfirming = false
     }
 

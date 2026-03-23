@@ -261,6 +261,32 @@ final class APIClient {
         )
     }
 
+    /// Confirms a class name for YOLO-World detection training.
+    ///
+    /// Sends an approved or corrected item name to the server so it can be
+    /// added to the active class list for faster future detection.
+    ///
+    /// - Parameters:
+    ///   - className: The confirmed or corrected item name (e.g. `"scissors"`).
+    ///   - category: Optional category for UI grouping (e.g. `"tools"`).
+    @discardableResult
+    func confirmClass(className: String, category: String?) async throws -> ConfirmClassResponse {
+        var payload: [String: String] = [
+            "version": "1",
+            "class_name": className,
+            "source": "vision_llm"
+        ]
+        if let category { payload["category"] = category }
+        let body = try JSONEncoder().encode(payload)
+        return try await request(
+            path: "/classes/confirm",
+            method: "POST",
+            body: body,
+            contentType: "application/json",
+            timeout: 10
+        )
+    }
+
     /// Searches the item catalogue using a natural-language query.
     ///
     /// - Parameters:

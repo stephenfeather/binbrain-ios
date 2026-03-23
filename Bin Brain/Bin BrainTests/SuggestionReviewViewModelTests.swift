@@ -108,6 +108,12 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         """.utf8)
     }
 
+    private var confirmClassSuccessJSON: Data {
+        Data("""
+        {"version":"1","class_name":"Widget","added":true,"active_class_count":47,"reload_triggered":true}
+        """.utf8)
+    }
+
     private var serverErrorJSON: Data {
         Data("""
         {"version":"1","error":{"code":"server_error","message":"Internal server error"}}
@@ -166,9 +172,13 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         let suggestions = try makeSuggestions()
         sut.loadSuggestions(suggestions)
 
-        var callCount = 0
+        var upsertCount = 0
         let client = makeMockAPIClient { [self] request in
-            callCount += 1
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            upsertCount += 1
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
@@ -176,7 +186,7 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         XCTAssertFalse(sut.isConfirming, "isConfirming should be false after confirm completes")
         XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty after successful confirm")
-        XCTAssertEqual(callCount, 2, "Should have made 2 upsert calls (one per included suggestion)")
+        XCTAssertEqual(upsertCount, 2, "Should have made 2 upsert calls (one per included suggestion)")
     }
 
     // MARK: - Test 4: confirm skips excluded suggestions
@@ -186,15 +196,19 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         sut.loadSuggestions(suggestions)
         sut.editableSuggestions[1].included = false
 
-        var callCount = 0
+        var upsertCount = 0
         let client = makeMockAPIClient { [self] request in
-            callCount += 1
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            upsertCount += 1
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
         await sut.confirm(binId: "BIN-0001", apiClient: client)
 
-        XCTAssertEqual(callCount, 1, "Should have made only 1 upsert call (excluded suggestion skipped)")
+        XCTAssertEqual(upsertCount, 1, "Should have made only 1 upsert call (excluded suggestion skipped)")
         XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty after successful confirm")
     }
 
@@ -385,5 +399,85 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         XCTAssertEqual(callCount, 0, "No API calls should be made with empty suggestions")
         XCTAssertFalse(sut.isConfirming, "isConfirming should be false")
+    }
+
+    // MARK: - Test 13: loadSuggestions sets teach to true by default
+
+    func testLoadSuggestionsDefaultsTeachToTrue() throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        XCTAssertTrue(sut.editableSuggestions[0].teach, "teach should default to true")
+        XCTAssertTrue(sut.editableSuggestions[1].teach, "teach should default to true")
+    }
+
+    // MARK: - Test 14: confirm calls confirmClass for taught items
+
+    func testConfirmCallsConfirmClassForTaughtItems() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        // Disable teach on second item
+        sut.editableSuggestions[1].teach = false
+
+        var requestPaths: [String] = []
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            requestPaths.append(path)
+            if path.contains("/classes/confirm") {
+                let json = Data("""
+                {"version":"1","class_name":"Widget","added":true,"active_class_count":47,"reload_triggered":true}
+                """.utf8)
+                return (mockResponse(statusCode: 200, for: request), json)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        // 2 upsert calls + 1 confirmClass call (only first item has teach=true)
+        let confirmCalls = requestPaths.filter { $0.contains("/classes/confirm") }
+        XCTAssertEqual(confirmCalls.count, 1, "Should call confirmClass once for the taught item")
+        let upsertCalls = requestPaths.filter { $0.contains("/items") }
+        XCTAssertEqual(upsertCalls.count, 2, "Should call upsert for both included items")
+    }
+
+    // MARK: - Test 15: confirm does not call confirmClass when teach is false for all
+
+    func testConfirmSkipsConfirmClassWhenAllTeachDisabled() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        sut.editableSuggestions[0].teach = false
+        sut.editableSuggestions[1].teach = false
+
+        var requestPaths: [String] = []
+        let client = makeMockAPIClient { [self] request in
+            requestPaths.append(request.url?.path ?? "")
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        let confirmCalls = requestPaths.filter { $0.contains("/classes/confirm") }
+        XCTAssertEqual(confirmCalls.count, 0, "Should not call confirmClass when all teach=false")
+    }
+
+    // MARK: - Test 16: confirmClass failure does not block confirm completion
+
+    func testConfirmClassFailureDoesNotBlockConfirm() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertFalse(sut.isConfirming, "isConfirming should be false after confirm completes")
+        XCTAssertTrue(sut.failedIndices.isEmpty, "Upserts succeeded, confirmClass failures are fire-and-forget")
     }
 }

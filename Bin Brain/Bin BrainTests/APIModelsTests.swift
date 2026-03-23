@@ -577,4 +577,41 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(response.previousMaxImagePx, 1280)
         XCTAssertEqual(response.maxImagePx, 800)
     }
+
+    // MARK: - ConfirmClassResponse decoding
+
+    func testConfirmClassResponseDecodesAllFields() throws {
+        let json = """
+        {
+            "version": "1",
+            "class_name": "scissors",
+            "added": true,
+            "active_class_count": 47,
+            "reload_triggered": true
+        }
+        """
+        let response = try decode(ConfirmClassResponse.self, from: json)
+
+        XCTAssertEqual(response.version, "1")
+        XCTAssertEqual(response.className, "scissors")
+        XCTAssertTrue(response.added)
+        XCTAssertEqual(response.activeClassCount, 47)
+        XCTAssertTrue(response.reloadTriggered)
+    }
+
+    func testConfirmClassResponseDecodesWhenNotAdded() throws {
+        let json = """
+        {
+            "version": "1",
+            "class_name": "scissors",
+            "added": false,
+            "active_class_count": 47,
+            "reload_triggered": false
+        }
+        """
+        let response = try decode(ConfirmClassResponse.self, from: json)
+
+        XCTAssertFalse(response.added)
+        XCTAssertFalse(response.reloadTriggered)
+    }
 }

@@ -168,6 +168,14 @@ struct SuggestionReviewView: View {
             TextField("Quantity", text: $viewModel.editableSuggestions[idx].editedQuantity)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.decimalPad)
+
+            Toggle(isOn: $viewModel.editableSuggestions[idx].teach) {
+                Label("Teach for future detection", systemImage: "brain")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.switch)
+            .tint(.green)
         }
         .padding(.vertical, 4)
     }

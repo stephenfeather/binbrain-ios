@@ -445,7 +445,67 @@ final class APIClientTests: XCTestCase {
         }
     }
 
-    // MARK: - Test 14: getBin() sends GET to correct path
+    // MARK: - Test 14: confirmClass() sends POST with class_name in JSON body
+
+    func testConfirmClassSendsCorrectPayload() async throws {
+        var capturedRequest: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let json = Data("""
+            {
+                "version": "1",
+                "class_name": "scissors",
+                "added": true,
+                "active_class_count": 47,
+                "reload_triggered": true
+            }
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        let result = try await sut.confirmClass(className: "scissors", category: "tools")
+
+        XCTAssertEqual(capturedRequest?.httpMethod, "POST")
+        let path = try XCTUnwrap(capturedRequest?.url?.path)
+        XCTAssertTrue(path.contains("/classes/confirm"), "Path should contain /classes/confirm, got: \(path)")
+
+        let bodyData = try XCTUnwrap(capturedRequest?.bodyData)
+        let payload = try JSONDecoder().decode([String: String].self, from: bodyData)
+        XCTAssertEqual(payload["class_name"], "scissors")
+        XCTAssertEqual(payload["category"], "tools")
+        XCTAssertEqual(payload["source"], "vision_llm")
+        XCTAssertEqual(payload["version"], "1")
+
+        XCTAssertEqual(result.className, "scissors")
+        XCTAssertTrue(result.added)
+        XCTAssertEqual(result.activeClassCount, 47)
+    }
+
+    func testConfirmClassOmitsCategoryWhenNil() async throws {
+        var capturedRequest: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let json = Data("""
+            {
+                "version": "1",
+                "class_name": "wire cutters",
+                "added": true,
+                "active_class_count": 48,
+                "reload_triggered": true
+            }
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.confirmClass(className: "wire cutters", category: nil)
+
+        let bodyData = try XCTUnwrap(capturedRequest?.bodyData)
+        let payload = try JSONDecoder().decode([String: String].self, from: bodyData)
+        XCTAssertEqual(payload["class_name"], "wire cutters")
+        XCTAssertNil(payload["category"], "category should be absent when nil")
+    }
+
+    // MARK: - Test 15: getBin() sends GET to correct path
 
     func testGetBinUsesCorrectBinIdInPath() async throws {
         var capturedRequest: URLRequest?
