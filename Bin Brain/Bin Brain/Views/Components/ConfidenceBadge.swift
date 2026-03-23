@@ -41,5 +41,6 @@ struct ConfidenceBadge: View {
             .background(badgeColor.opacity(0.15))
             .foregroundStyle(badgeColor)
             .clipShape(Capsule())
+            .accessibilityLabel("\(label) confidence")
     }
 }

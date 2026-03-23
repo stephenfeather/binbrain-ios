@@ -46,8 +46,10 @@ struct SuggestionReviewView: View {
             if viewModel.isConfirming {
                 Color.black.opacity(0.3)
                     .ignoresSafeArea()
+                    .accessibilityHidden(true)
                 ProgressView()
                     .scaleEffect(1.5)
+                    .accessibilityLabel("Saving items")
             }
         }
         .navigationTitle("Review Items")
@@ -65,6 +67,7 @@ struct SuggestionReviewView: View {
             Image(systemName: "eye.slash")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text("No items detected.")
                 .font(.headline)
             Text("Try retaking the photo, or use a larger model for better accuracy.")
@@ -143,6 +146,7 @@ struct SuggestionReviewView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
                         .font(.caption2)
+                        .accessibilityHidden(true)
                     Text("Matched to catalogue")
                         .font(.caption)
                     if suggestion.visionName != suggestion.editedName {

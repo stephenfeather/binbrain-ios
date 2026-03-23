@@ -95,6 +95,7 @@ struct BinDetailView: View {
                         Image(systemName: "camera.fill")
                             .font(.title2)
                     }
+                    .accessibilityLabel("Scan item into this bin")
                     .sensoryFeedback(.impact(flexibility: .rigid, intensity: 0.6), trigger: cameraTapCount)
                 }
             }
@@ -196,6 +197,7 @@ struct BinDetailView: View {
                             .overlay(Circle().stroke(Color.gray.opacity(0.4), lineWidth: 2))
                             .shadow(radius: 4)
                     }
+                    .accessibilityLabel("Take photo")
                     .padding(.bottom, 50)
                 }
             }
@@ -372,6 +374,8 @@ struct BinDetailView: View {
                             }
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .accessibilityLabel("Scan photo")
+                        .accessibilityHint("Double-tap to view full size")
                     }
                 }
             }

@@ -79,6 +79,11 @@ private struct ToastModifier: ViewModifier {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: isShowing)
+        .onChange(of: isShowing) { _, showing in
+            if showing {
+                AccessibilityNotification.Announcement(message).post()
+            }
+        }
     }
 }
 

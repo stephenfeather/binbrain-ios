@@ -92,6 +92,8 @@ struct RootView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
             .background(Color.red.opacity(0.85))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Server unreachable")
         }
     }
 

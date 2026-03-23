@@ -59,6 +59,7 @@ struct PhotoViewer: View {
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.white)
                     }
+                    .accessibilityLabel("Close")
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)

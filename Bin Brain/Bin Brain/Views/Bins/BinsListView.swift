@@ -82,6 +82,7 @@ struct BinsListView: View {
                         Image(systemName: "camera.fill")
                             .font(.title2)
                     }
+                    .accessibilityLabel("Scan new bin")
                 }
             }
             .task { await viewModel.load(apiClient: apiClient) }
@@ -145,6 +146,7 @@ struct BinsListView: View {
                                 .overlay(Circle().stroke(Color.gray.opacity(0.4), lineWidth: 2))
                                 .shadow(radius: 4)
                         }
+                        .accessibilityLabel("Take photo")
                         .padding(.bottom, 50)
                     }
                 }
