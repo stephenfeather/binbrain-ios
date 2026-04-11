@@ -49,3 +49,6 @@ fastlane/test_output
 .tldr/
 .tldrignore
 thoughts/
+
+# Analysis output
+opengrep*
