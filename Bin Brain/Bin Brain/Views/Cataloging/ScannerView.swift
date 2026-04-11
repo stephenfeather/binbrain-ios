@@ -6,8 +6,11 @@
 // by the parent SwiftUI view as a ZStack overlay after QR detection.
 
 import AVFoundation
+import OSLog
 import SwiftUI
 import UIKit
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "ScannerView")
 import Vision
 import VisionKit
 
@@ -43,7 +46,7 @@ struct ScannerView: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> UIViewController {
-        print("[Scanner] makeUIViewController called")
+        logger.debug("makeUIViewController called")
         guard DataScannerViewController.isSupported else {
             return makeFallbackViewController()
         }
@@ -74,27 +77,31 @@ struct ScannerView: UIViewControllerRepresentable {
         let photoCallback = onPhotoCapture
         let captureFunc: @MainActor () -> Void = { [weak scanner] in
             guard let scanner else {
-                print("[Scanner] capturePhoto: scanner is nil")
+                logger.warning("capturePhoto: scanner is nil")
                 return
             }
             Task {
                 do {
                     let photo = try await scanner.capturePhoto()
-                    print("[Scanner] capturePhoto returned: \(photo.size)")
+                    logger.debug("capturePhoto returned: \(photo.size.width)x\(photo.size.height)")
                     photoCallback(photo)
                 } catch {
-                    print("[Scanner] capturePhoto error: \(error)")
+                    logger.error("capturePhoto error: \(error.localizedDescription)")
                 }
             }
         }
         onCaptureReady(captureFunc)
 
-        try? scanner.startScanning()
+        do {
+            try scanner.startScanning()
+        } catch {
+            logger.error("Failed to start scanning: \(error.localizedDescription)")
+        }
         return container
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
-        print("[Scanner] updateUIViewController called")
+        logger.debug("updateUIViewController called")
         context.coordinator.parent = self
     }
 

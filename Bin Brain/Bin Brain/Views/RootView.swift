@@ -5,8 +5,11 @@
 // Uses NavigationSplitView on iPad (regular width) and TabView on iPhone (compact width).
 // On launch, retries any PendingAnalysis entries interrupted by background task expiry.
 
+import OSLog
 import SwiftUI
 import SwiftData
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "RootView")
 
 // MARK: - SidebarSection
 
@@ -191,19 +194,34 @@ struct RootView: View {
     /// Deletes entries on success or after 3 consecutive failures.
     private func retryPendingAnalyses() async {
         let descriptor = FetchDescriptor<PendingAnalysis>()
-        guard let entries = try? modelContext.fetch(descriptor), !entries.isEmpty else { return }
+        let entries: [PendingAnalysis]
+        do {
+            entries = try modelContext.fetch(descriptor)
+        } catch {
+            logger.error("retryPendingAnalyses fetch failed: \(error.localizedDescription)")
+            return
+        }
+        guard !entries.isEmpty else { return }
 
         for entry in entries {
             toast.show("Resuming analysis for \(entry.binId)...")
             do {
                 _ = try await apiClient.suggest(photoId: entry.photoId)
                 modelContext.delete(entry)
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    logger.error("retryPendingAnalyses save after success failed: \(error.localizedDescription)")
+                }
             } catch {
                 entry.retryCount += 1
                 if entry.retryCount >= 3 {
                     modelContext.delete(entry)
-                    try? modelContext.save()
+                    do {
+                        try modelContext.save()
+                    } catch {
+                        logger.error("retryPendingAnalyses save after max retries failed: \(error.localizedDescription)")
+                    }
                 }
             }
         }

@@ -7,6 +7,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 // MARK: - EditableSuggestion
 
@@ -45,6 +46,8 @@ struct EditableSuggestion: Identifiable {
 ///
 /// Call `loadSuggestions(_:)` to populate from `AnalysisViewModel.suggestions`.
 /// Then call `confirm(binId:apiClient:)` to upsert all included items.
+private let logger = Logger(subsystem: "com.binbrain.app", category: "SuggestionReview")
+
 @Observable
 final class SuggestionReviewViewModel {
 
@@ -108,7 +111,7 @@ final class SuggestionReviewViewModel {
         isConfirming = true
         failedIndices = []
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
-        print("[Review] confirm: \(editableSuggestions.count) total, \(includedIndices.count) included")
+        logger.debug("confirm: \(self.editableSuggestions.count) total, \(includedIndices.count) included")
         for idx in includedIndices {
             let s = editableSuggestions[idx]
             let quantity = Double(s.editedQuantity)
@@ -133,7 +136,11 @@ final class SuggestionReviewViewModel {
         for idx in includedIndices where editableSuggestions[idx].teach {
             let s = editableSuggestions[idx]
             let category = s.editedCategory.isEmpty ? nil : s.editedCategory
-            try? await apiClient.confirmClass(className: s.editedName, category: category)
+            do {
+                _ = try await apiClient.confirmClass(className: s.editedName, category: category)
+            } catch {
+                logger.error("confirmClass failed for '\(s.editedName)': \(error.localizedDescription)")
+            }
         }
 
         isConfirming = false

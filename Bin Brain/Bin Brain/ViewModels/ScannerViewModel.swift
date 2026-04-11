@@ -6,8 +6,11 @@
 
 import Foundation
 import AVFoundation
+import OSLog
 import VisionKit
 import Observation
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "ScannerViewModel")
 
 // MARK: - ScanPhase
 
@@ -73,7 +76,13 @@ final class ScannerViewModel {
     /// - Parameter scanner: The active `DataScannerViewController` instance.
     func shutterTapped(scanner: DataScannerViewController) {
         guard phase == .awaitingPhoto else { return }
-        Task { try? await scanner.capturePhoto() }
+        Task {
+            do {
+                try await scanner.capturePhoto()
+            } catch {
+                logger.error("capturePhoto failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Stores the captured photo and transitions to the `.captured` phase.

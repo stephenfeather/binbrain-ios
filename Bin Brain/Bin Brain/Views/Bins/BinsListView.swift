@@ -6,7 +6,11 @@
 // The camera toolbar button launches the full cataloging flow:
 // Scanner → Analysis → Suggestion Review.
 
+import OSLog
 import SwiftUI
+import SwiftData
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "BinsListView")
 
 // MARK: - CaptureProxy
 
@@ -104,10 +108,10 @@ struct BinsListView: View {
                         scannerViewModel.qrDetected(code)
                     },
                     onPhotoCapture: { image in
-                        print("[Capture] onPhotoCapture called, image: \(image.size)")
+                        logger.debug("onPhotoCapture called, image: \(image.size.width)x\(image.size.height)")
                         guard let binId = scannerViewModel.scannedBinId,
                               let rawData = image.jpegData(compressionQuality: 1.0) else { return }
-                        print("[Capture] JPEG data: \(rawData.count) bytes, binId: \(binId)")
+                        logger.debug("JPEG data: \(rawData.count) bytes, binId: \(binId)")
                         capturedPhotoData = rawData
                         capturedBinId = binId
                         catalogingPath.append(.analysis)

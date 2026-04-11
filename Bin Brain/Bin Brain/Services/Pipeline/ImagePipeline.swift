@@ -7,7 +7,10 @@
 import CoreGraphics
 import CoreImage
 import Foundation
+import OSLog
 import UIKit
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "ImagePipeline")
 
 // MARK: - Image Pipeline
 
@@ -108,7 +111,13 @@ actor ImagePipeline {
         cgImage = capResolution(cgImage)
 
         // Run saliency for smart crop (without the full gate validation)
-        let saliencyBox = try? await qualityGates.checkSaliencyOnly(cgImage)
+        let saliencyBox: CGRect?
+        do {
+            saliencyBox = try await qualityGates.checkSaliencyOnly(cgImage)
+        } catch {
+            logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription)")
+            saliencyBox = nil
+        }
 
         // Stage 2: Optimize
         let optimized = optimizer.optimize(

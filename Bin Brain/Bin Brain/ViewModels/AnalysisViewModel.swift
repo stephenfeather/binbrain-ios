@@ -5,10 +5,13 @@
 // AnalysisProgressView drives this ViewModel by calling run() and observing phase.
 
 import Foundation
+import OSLog
 import UIKit
 import UserNotifications
 import SwiftData
 import Observation
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "AnalysisViewModel")
 
 // MARK: - AnalysisPhase
 
@@ -181,7 +184,11 @@ final class AnalysisViewModel {
         if let context {
             let entry = PendingAnalysis(photoId: photoId, binId: binId)
             context.insert(entry)
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                logger.error("Failed to persist PendingAnalysis for photoId '\(photoId)': \(error.localizedDescription)")
+            }
         }
 
         do {
@@ -191,11 +198,21 @@ final class AnalysisViewModel {
 
             // Clean up the pending analysis entry on success.
             if let context {
-                let all = (try? context.fetch(FetchDescriptor<PendingAnalysis>())) ?? []
+                let all: [PendingAnalysis]
+                do {
+                    all = try context.fetch(FetchDescriptor<PendingAnalysis>())
+                } catch {
+                    logger.error("Failed to fetch PendingAnalysis for cleanup: \(error.localizedDescription)")
+                    all = []
+                }
                 for entry in all where entry.photoId == photoId {
                     context.delete(entry)
                 }
-                try? context.save()
+                do {
+                    try context.save()
+                } catch {
+                    logger.error("Failed to save after PendingAnalysis cleanup: \(error.localizedDescription)")
+                }
             }
         } catch is CancellationError {
             // Expiration handler already set phase to .failed — do not overwrite.

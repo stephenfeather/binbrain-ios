@@ -5,8 +5,11 @@
 // server becomes reachable and the app enters the foreground.
 
 import Foundation
+import OSLog
 import SwiftData
 import Observation
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "UploadQueueManager")
 
 // MARK: - UploadQueueManager
 
@@ -67,7 +70,7 @@ final class UploadQueueManager {
                 .filter { $0.status == .pending }
                 .sorted { $0.queuedAt < $1.queuedAt }
         } catch {
-            print("UploadQueueManager: failed to fetch pending uploads — \(error)")
+            logger.error("Failed to fetch pending uploads: \(error.localizedDescription)")
             return
         }
 
@@ -87,7 +90,7 @@ final class UploadQueueManager {
             // Mark as in-progress before the network call.
             upload.status = .uploading
             do { try context.save() } catch {
-                print("UploadQueueManager: save after marking .uploading failed — \(error)")
+                logger.error("Save after marking .uploading failed: \(error.localizedDescription)")
             }
 
             do {
@@ -99,15 +102,15 @@ final class UploadQueueManager {
                 // Success: remove from queue.
                 context.delete(upload)
                 do { try context.save() } catch {
-                    print("UploadQueueManager: save after delete failed — \(error)")
+                    logger.error("Save after delete failed: \(error.localizedDescription)")
                 }
             } catch {
                 // Failure: increment retry count and keep pending for next drain cycle.
-                print("UploadQueueManager: ingest failed for bin '\(upload.binId)' — \(error)")
+                logger.error("Ingest failed for bin '\(upload.binId)': \(error.localizedDescription)")
                 upload.retryCount += 1
                 upload.status = .pending
                 do { try context.save() } catch {
-                    print("UploadQueueManager: save after failure handling failed — \(error)")
+                    logger.error("Save after failure handling failed: \(error.localizedDescription)")
                 }
             }
 
@@ -119,11 +122,21 @@ final class UploadQueueManager {
     ///
     /// - Parameter context: The SwiftData `ModelContext` used for reads and writes.
     func clearQueue(context: ModelContext) {
-        let all = (try? context.fetch(FetchDescriptor<PendingUpload>())) ?? []
+        let all: [PendingUpload]
+        do {
+            all = try context.fetch(FetchDescriptor<PendingUpload>())
+        } catch {
+            logger.error("clearQueue fetch failed: \(error.localizedDescription)")
+            return
+        }
         for upload in all {
             context.delete(upload)
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            logger.error("clearQueue save failed: \(error.localizedDescription)")
+        }
         refreshCount(context: context)
     }
 
@@ -138,14 +151,24 @@ final class UploadQueueManager {
     /// - Parameter context: The SwiftData `ModelContext` used for reads and writes.
     func pruneExpired(context: ModelContext) {
         let cutoff = now().addingTimeInterval(-Self.maxAge)
-        let all = (try? context.fetch(FetchDescriptor<PendingUpload>())) ?? []
+        let all: [PendingUpload]
+        do {
+            all = try context.fetch(FetchDescriptor<PendingUpload>())
+        } catch {
+            logger.error("pruneExpired fetch failed: \(error.localizedDescription)")
+            return
+        }
         var pruned = false
         for upload in all where upload.queuedAt < cutoff {
             context.delete(upload)
             pruned = true
         }
         if pruned {
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                logger.error("pruneExpired save failed: \(error.localizedDescription)")
+            }
             refreshCount(context: context)
         }
     }
@@ -157,7 +180,13 @@ final class UploadQueueManager {
     ///
     /// - Parameter context: The SwiftData `ModelContext` used to fetch the count.
     func refreshCount(context: ModelContext) {
-        let all = (try? context.fetch(FetchDescriptor<PendingUpload>())) ?? []
+        let all: [PendingUpload]
+        do {
+            all = try context.fetch(FetchDescriptor<PendingUpload>())
+        } catch {
+            logger.error("refreshCount fetch failed: \(error.localizedDescription)")
+            return
+        }
         pendingCount = all.filter { $0.status == .pending || $0.status == .failed }.count
     }
 }

@@ -1,9 +1,12 @@
 // Bin_BrainApp.swift
 // Bin Brain
 
+import OSLog
 import SwiftUI
 import SwiftData
 import UserNotifications
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "App")
 
 @main
 struct Bin_BrainApp: App {
@@ -63,8 +66,15 @@ struct Bin_BrainApp: App {
     /// Called once via `.task` on the root view. The result is discarded
     /// because the app degrades gracefully if the user declines.
     private func requestNotificationPermission() async {
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .sound, .badge]
-        )
+        do {
+            let granted = try await UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .sound, .badge]
+            )
+            if !granted {
+                logger.info("User declined notification permission")
+            }
+        } catch {
+            logger.error("Notification authorization failed: \(error.localizedDescription)")
+        }
     }
 }

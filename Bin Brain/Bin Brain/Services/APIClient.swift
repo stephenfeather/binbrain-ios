@@ -5,7 +5,10 @@
 // at call time so Settings changes take effect immediately.
 
 import Foundation
+import OSLog
 import Observation
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "APIClient")
 
 // MARK: - Error Types
 
@@ -418,14 +421,14 @@ final class APIClient {
     ) async throws -> T {
         if requiresAuth {
             guard hasAPIKey else {
-                print("[API] \(method) \(path) BLOCKED: no API key configured")
+                logger.warning("\(method) \(path) BLOCKED: no API key configured")
                 throw APIClientError.missingAPIKey
             }
         }
 
         let urlString = baseURL + path
         guard let url = URL(string: urlString) else {
-            print("[API] Invalid URL: \(urlString)")
+            logger.error("Invalid URL: \(urlString)")
             throw APIClientError.invalidURL(urlString)
         }
         var urlRequest = URLRequest(url: url, timeoutInterval: timeout)
@@ -441,40 +444,40 @@ final class APIClient {
         }
 
         let bodySize = body.map { "\($0.count) bytes" } ?? "none"
-        print("[API] \(method) \(urlString) (body: \(bodySize), timeout: \(timeout)s)")
+        logger.debug("\(method) \(urlString) (body: \(bodySize), timeout: \(timeout)s)")
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: urlRequest)
         } catch {
-            print("[API] \(method) \(path) NETWORK ERROR: \(error.localizedDescription)")
+            logger.error("\(method) \(path) NETWORK ERROR: \(error.localizedDescription)")
             throw error
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("[API] \(method) \(path) ERROR: non-HTTP response")
+            logger.error("\(method) \(path) ERROR: non-HTTP response")
             throw APIClientError.unexpectedStatusCode(-1)
         }
 
         let preview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary \(data.count) bytes>"
-        print("[API] \(method) \(path) → \(httpResponse.statusCode) (\(data.count) bytes)")
-        print("[API] Response: \(preview)")
+        logger.debug("\(method) \(path) → \(httpResponse.statusCode) (\(data.count) bytes)")
+        logger.debug("Response: \(preview)")
 
         if (200...299).contains(httpResponse.statusCode) {
             do {
                 let decoded = try JSONDecoder.binBrain.decode(T.self, from: data)
                 return decoded
             } catch {
-                print("[API] \(method) \(path) DECODE ERROR: \(error)")
+                logger.error("\(method) \(path) DECODE ERROR: \(error.localizedDescription)")
                 throw error
             }
         } else {
             if let apiError = try? JSONDecoder.binBrain.decode(APIError.self, from: data) {
-                print("[API] \(method) \(path) API ERROR: \(apiError.localizedDescription)")
+                logger.error("\(method) \(path) API ERROR: \(apiError.localizedDescription)")
                 throw apiError
             }
-            print("[API] \(method) \(path) HTTP ERROR: \(httpResponse.statusCode)")
+            logger.error("\(method) \(path) HTTP ERROR: \(httpResponse.statusCode)")
             throw APIClientError.unexpectedStatusCode(httpResponse.statusCode)
         }
     }
