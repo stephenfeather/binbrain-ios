@@ -310,6 +310,75 @@ final class APIClient {
         )
     }
 
+    // MARK: - Locations
+
+    /// Returns all active locations sorted by name.
+    func listLocations() async throws -> [LocationSummary] {
+        let response: [LocationSummary] = try await request(
+            path: "/locations", method: "GET", body: nil, contentType: nil, timeout: 10
+        )
+        return response.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Creates a new location.
+    ///
+    /// - Parameters:
+    ///   - name: The location name (required).
+    ///   - description: Optional description.
+    func createLocation(name: String, description: String?) async throws -> CreateLocationResponse {
+        var fields: [String: String] = ["name": name]
+        if let description { fields["description"] = description }
+        let (body, boundary) = multipartBody(
+            fields: fields,
+            fileData: nil,
+            fileName: nil,
+            mimeType: nil
+        )
+        return try await request(
+            path: "/locations",
+            method: "POST",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            timeout: 10
+        )
+    }
+
+    /// Soft-deletes a location.
+    ///
+    /// - Parameter locationId: The location to delete.
+    @discardableResult
+    func deleteLocation(_ locationId: Int) async throws -> DeleteLocationResponse {
+        try await request(
+            path: "/locations/\(locationId)",
+            method: "DELETE",
+            body: nil,
+            contentType: nil,
+            timeout: 10
+        )
+    }
+
+    /// Assigns, changes, or clears a bin's location.
+    ///
+    /// - Parameters:
+    ///   - binId: The bin to update.
+    ///   - locationId: The location to assign, or `nil` to clear.
+    @discardableResult
+    func assignLocation(binId: String, locationId: Int?) async throws -> AssignLocationResponse {
+        let body: Data
+        if let locationId {
+            body = try JSONSerialization.data(withJSONObject: ["location_id": locationId])
+        } else {
+            body = try JSONSerialization.data(withJSONObject: ["location_id": NSNull()])
+        }
+        return try await request(
+            path: "/bins/\(binId)/location",
+            method: "PATCH",
+            body: body,
+            contentType: "application/json",
+            timeout: 10
+        )
+    }
+
     // MARK: - Private Helpers
 
     /// Sends an HTTP request and decodes the response into `T`.
