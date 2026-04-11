@@ -121,8 +121,8 @@ final class AnalysisViewModel {
 
         phase = .processingImage
 
-        let uploadData: Data
-        let metadataString: String?
+        var uploadData: Data
+        var metadataString: String?
 
         do {
             let result = try await pipeline.process(jpegData)
@@ -217,8 +217,8 @@ final class AnalysisViewModel {
         lastQualityFailure = nil
         phase = .processingImage
 
-        let uploadData: Data
-        let metadataString: String?
+        var uploadData: Data
+        var metadataString: String?
 
         do {
             let result = try await pipeline.processSkippingQualityGates(jpegData)

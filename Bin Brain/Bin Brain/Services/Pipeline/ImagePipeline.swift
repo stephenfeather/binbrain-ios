@@ -180,8 +180,8 @@ actor ImagePipeline {
         let deviceProcessing = DeviceProcessing(
             version: "1",
             pipelineMs: pipelineMs,
-            iosVersion: UIDevice.current.systemVersion,
-            deviceModel: deviceModelIdentifier(),
+            iosVersion: Self.iosVersion,
+            deviceModel: Self.deviceModel,
             qualityScores: scores,
             ocr: extraction.ocr,
             barcodes: extraction.barcodes,
@@ -198,8 +198,13 @@ actor ImagePipeline {
         )
     }
 
-    /// Returns the hardware model identifier (e.g., "iPhone16,1").
-    private func deviceModelIdentifier() -> String {
+    // MARK: - Static Device Info
+
+    /// Cached iOS version string, resolved once via ProcessInfo (nonisolated).
+    private static let iosVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+
+    /// Cached hardware model identifier (e.g., "iPhone16,1").
+    private static let deviceModel: String = {
         var systemInfo = utsname()
         uname(&systemInfo)
         return withUnsafePointer(to: &systemInfo.machine) {
@@ -207,5 +212,5 @@ actor ImagePipeline {
                 String(validatingUTF8: $0) ?? "unknown"
             }
         }
-    }
+    }()
 }

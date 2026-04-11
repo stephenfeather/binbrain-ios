@@ -34,7 +34,7 @@ let kExposureExtremeBinCount: Int = 26 // ~10% of 256
 /// Each gate computes a numeric score and optionally fails with a user-facing message.
 /// All scores are returned regardless of failure status so the metadata sidecar
 /// can record them.
-struct QualityGates {
+nonisolated struct QualityGates: Sendable {
 
     /// Serial queue for dispatching synchronous Vision requests off the cooperative thread pool.
     private let visionQueue = DispatchQueue(label: "com.binbrain.pipeline.quality")

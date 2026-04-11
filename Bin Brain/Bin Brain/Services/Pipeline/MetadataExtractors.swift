@@ -12,7 +12,7 @@ import Vision
 
 /// Extracts metadata (OCR text, barcodes, image classifications) from a CGImage
 /// using the Vision framework.
-struct MetadataExtractors {
+nonisolated struct MetadataExtractors: Sendable {
 
     /// Dedicated serial queue for Vision requests. `VNImageRequestHandler.perform()`
     /// is synchronous and must not block the cooperative thread pool.

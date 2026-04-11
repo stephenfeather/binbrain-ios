@@ -190,6 +190,18 @@ struct BinsListView: View {
                         context: modelContext
                     )
                 }
+            },
+            onOverride: {
+                Task {
+                    guard let data = capturedPhotoData,
+                          let binId = capturedBinId else { return }
+                    await analysisViewModel.overrideQualityGate(
+                        jpegData: data,
+                        binId: binId,
+                        apiClient: apiClient,
+                        context: modelContext
+                    )
+                }
             }
         )
     }

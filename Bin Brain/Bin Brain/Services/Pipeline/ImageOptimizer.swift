@@ -20,7 +20,7 @@ import UniformTypeIdentifiers
 /// 2. Auto-enhance (disabled by default — effect on server vision model unvalidated)
 /// 3. Resize (if longest side > 2048px, downscale preserving aspect ratio)
 /// 4. JPEG encode (quality 0.85, always JPEG — server cannot decode HEIC)
-struct ImageOptimizer {
+nonisolated struct ImageOptimizer: Sendable {
 
     // MARK: - Constants
 
