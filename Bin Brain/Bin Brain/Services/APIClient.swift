@@ -314,10 +314,12 @@ final class APIClient {
 
     /// Returns all active locations sorted by name.
     func listLocations() async throws -> [LocationSummary] {
-        let response: [LocationSummary] = try await request(
+        let response: ListLocationsResponse = try await request(
             path: "/locations", method: "GET", body: nil, contentType: nil, timeout: 10
         )
-        return response.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return response.locations.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
     }
 
     /// Creates a new location.
@@ -326,19 +328,17 @@ final class APIClient {
     ///   - name: The location name (required).
     ///   - description: Optional description.
     func createLocation(name: String, description: String?) async throws -> CreateLocationResponse {
-        var fields: [String: String] = ["name": name]
-        if let description { fields["description"] = description }
-        let (body, boundary) = multipartBody(
-            fields: fields,
-            fileData: nil,
-            fileName: nil,
-            mimeType: nil
-        )
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        if let description {
+            components.queryItems?.append(URLQueryItem(name: "description", value: description))
+        }
+        let body = Data((components.percentEncodedQuery ?? "").utf8)
         return try await request(
             path: "/locations",
             method: "POST",
             body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)",
+            contentType: "application/x-www-form-urlencoded",
             timeout: 10
         )
     }
