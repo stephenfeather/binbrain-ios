@@ -23,15 +23,37 @@ struct AnalysisProgressView: View {
     /// Called with the final suggestion list when `phase` transitions to `.complete`.
     let onComplete: ([SuggestionItem]) -> Void
 
-    /// Called when the user taps "Retry" after a `.failed` phase.
+    /// Called when the user taps "Retry" after a `.failed` or `.qualityFailed` phase.
     let onRetry: () -> Void
+
+    /// Called when the user taps "Upload Anyway" after a `.qualityFailed` phase.
+    let onOverride: () -> Void
 
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 16) {
             switch viewModel.phase {
-            case .idle, .uploading:
+            case .idle, .processingImage:
+                ProgressView()
+                    .scaleEffect(3)
+                    .padding(.bottom, 16)
+                Text(viewModel.phase == .processingImage ? "Processing image..." : "Preparing...")
+
+            case .qualityFailed(let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.orange)
+                    .padding(.bottom, 8)
+                Text(message)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Button("Retake Photo") { onRetry() }
+                    .buttonStyle(.borderedProminent)
+                Button("Upload Anyway") { onOverride() }
+                    .foregroundStyle(.secondary)
+
+            case .uploading:
                 ProgressView()
                     .scaleEffect(3)
                     .padding(.bottom, 16)

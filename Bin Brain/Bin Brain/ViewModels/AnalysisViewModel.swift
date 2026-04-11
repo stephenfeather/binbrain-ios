@@ -16,6 +16,11 @@ import Observation
 enum AnalysisPhase: Equatable {
     /// Idle; no analysis has started yet.
     case idle
+    /// On-device pipeline is processing the image (quality gates, optimize, extract).
+    case processingImage
+    /// A quality gate failed; the associated message explains why and suggests a fix.
+    /// The user can retry (retake photo) or override (upload anyway).
+    case qualityFailed(String)
     /// Uploading the photo to the server.
     case uploading
     /// Waiting for AI vision inference to complete.
@@ -46,6 +51,14 @@ final class AnalysisViewModel {
     /// The photo ID from the last successful ingest; `nil` until ingest completes.
     private(set) var lastPhotoId: Int?
 
+    /// The last quality gate failure, if any. Set when `phase == .qualityFailed`.
+    private(set) var lastQualityFailure: QualityGateFailure?
+
+    // MARK: - Dependencies
+
+    /// The on-device image processing pipeline.
+    private let pipeline = ImagePipeline()
+
     // MARK: - Actions
 
     /// Compresses `jpegData`, uploads it via `ingest()`, then calls `suggest()`.
@@ -62,44 +75,22 @@ final class AnalysisViewModel {
     ///   - apiClient: The `APIClient` instance to use for network calls.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func run(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
-        phase = .uploading
-
-        let compressedData = compress(jpegData)
-
-        // MARK: Ingest
-
-        let ingestResponse: IngestResponse
-        do {
-            ingestResponse = try await apiClient.ingest(jpegData: compressedData, binId: binId)
-        } catch {
-            phase = .failed(error.localizedDescription)
-            return
-        }
-
-        guard let firstPhoto = ingestResponse.photos.first else {
-            phase = .failed("No photo returned from server")
-            return
-        }
-        let photoId = firstPhoto.photoId
-        lastPhotoId = photoId
-
-        phase = .analysing
-
-        // MARK: Suggest (with background task protection)
+        lastQualityFailure = nil
 
         // Boxes allow mutation from the synchronously-called expiration handler.
-        final class SuggestTaskBox: @unchecked Sendable {
-            var task: Task<PhotoSuggestResponse, Error>?
+        final class WorkTaskBox: @unchecked Sendable {
+            var task: Task<Void, Never>?
         }
         final class BGTaskBox: @unchecked Sendable {
             var identifier: UIBackgroundTaskIdentifier = .invalid
         }
 
-        let taskBox = SuggestTaskBox()
+        let workBox = WorkTaskBox()
         let bgBox = BGTaskBox()
 
-        bgBox.identifier = UIApplication.shared.beginBackgroundTask(withName: "BinBrainSuggest") { [weak self] in
-            taskBox.task?.cancel()
+        // Begin background task covering the entire pipeline + upload + suggest flow.
+        bgBox.identifier = UIApplication.shared.beginBackgroundTask(withName: "BinBrainAnalysis") { [weak self] in
+            workBox.task?.cancel()
 
             let content = UNMutableNotificationContent()
             content.title = "Analysis interrupted"
@@ -110,12 +101,6 @@ final class AnalysisViewModel {
                 trigger: nil
             )
             UNUserNotificationCenter.current().add(request)
-
-            if let context {
-                let entry = PendingAnalysis(photoId: photoId, binId: binId)
-                context.insert(entry)
-                try? context.save()
-            }
 
             self?.phase = .failed("Analysis interrupted — tap to retry")
 
@@ -132,15 +117,148 @@ final class AnalysisViewModel {
             }
         }
 
+        // MARK: Pipeline (Stages 1-3)
+
+        phase = .processingImage
+
+        let uploadData: Data
+        let metadataString: String?
+
+        do {
+            let result = try await pipeline.process(jpegData)
+            uploadData = result.optimizedImageData
+            let jsonData = try JSONEncoder().encode(result.deviceMetadata)
+            metadataString = String(data: jsonData, encoding: .utf8)
+        } catch let error as PipelineError {
+            switch error {
+            case .qualityGateFailed(let failure):
+                lastQualityFailure = failure
+                phase = .qualityFailed(failure.message)
+                return
+            case .invalidImageData:
+                phase = .failed("Could not process image")
+                return
+            }
+        } catch {
+            // Graceful degradation: pipeline internal error → upload original without metadata.
+            // Matches the old compress() contract of never-failing.
+            uploadData = jpegData
+            metadataString = nil
+        }
+
+        // MARK: Ingest
+
+        phase = .uploading
+
+        let ingestResponse: IngestResponse
+        do {
+            ingestResponse = try await apiClient.ingest(
+                jpegData: uploadData,
+                binId: binId,
+                deviceMetadata: metadataString
+            )
+        } catch {
+            phase = .failed(error.localizedDescription)
+            return
+        }
+
+        guard let firstPhoto = ingestResponse.photos.first else {
+            phase = .failed("No photo returned from server")
+            return
+        }
+        let photoId = firstPhoto.photoId
+        lastPhotoId = photoId
+
+        phase = .analysing
+
+        // MARK: Suggest
+
         let suggestTask = Task { try await apiClient.suggest(photoId: photoId) }
-        taskBox.task = suggestTask
+        workBox.task = Task { [suggestTask] in _ = try? await suggestTask.value }
+
+        // Persist pending analysis in case of background task expiry.
+        if let context {
+            let entry = PendingAnalysis(photoId: photoId, binId: binId)
+            context.insert(entry)
+            try? context.save()
+        }
 
         do {
             let suggestResponse = try await suggestTask.value
             suggestions = suggestResponse.suggestions
             phase = .complete
+
+            // Clean up the pending analysis entry on success.
+            if let context {
+                let all = (try? context.fetch(FetchDescriptor<PendingAnalysis>())) ?? []
+                for entry in all where entry.photoId == photoId {
+                    context.delete(entry)
+                }
+                try? context.save()
+            }
         } catch is CancellationError {
             // Expiration handler already set phase to .failed — do not overwrite.
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Bypasses quality gates and proceeds with the pipeline + upload.
+    ///
+    /// Called when the user taps "Upload Anyway" after a quality gate failure.
+    /// Runs the optimizer and metadata extractors without quality validation.
+    ///
+    /// - Parameters:
+    ///   - jpegData: Raw JPEG bytes from the camera capture.
+    ///   - binId: The bin identifier to associate the photo with.
+    ///   - apiClient: The `APIClient` instance to use for network calls.
+    ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
+    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
+        lastQualityFailure = nil
+        phase = .processingImage
+
+        let uploadData: Data
+        let metadataString: String?
+
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData)
+            uploadData = result.optimizedImageData
+            let jsonData = try JSONEncoder().encode(result.deviceMetadata)
+            metadataString = String(data: jsonData, encoding: .utf8)
+        } catch {
+            // Graceful degradation: upload original without metadata.
+            uploadData = jpegData
+            metadataString = nil
+        }
+
+        // Reuse the main run() flow for upload + suggest by setting state and calling ingest directly.
+        phase = .uploading
+
+        let ingestResponse: IngestResponse
+        do {
+            ingestResponse = try await apiClient.ingest(
+                jpegData: uploadData,
+                binId: binId,
+                deviceMetadata: metadataString
+            )
+        } catch {
+            phase = .failed(error.localizedDescription)
+            return
+        }
+
+        guard let firstPhoto = ingestResponse.photos.first else {
+            phase = .failed("No photo returned from server")
+            return
+        }
+        let photoId = firstPhoto.photoId
+        lastPhotoId = photoId
+
+        phase = .analysing
+
+        do {
+            let suggestResponse = try await apiClient.suggest(photoId: photoId)
+            suggestions = suggestResponse.suggestions
+            phase = .complete
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -170,31 +288,11 @@ final class AnalysisViewModel {
         }
     }
 
-    /// Resets all state back to `.uploading` for a retry.
+    /// Resets all state back to `.idle` for a retry.
     func reset() {
         phase = .idle
         suggestions = []
         lastPhotoId = nil
-    }
-
-    // MARK: - Private Helpers
-
-    /// Resizes `data` so the longest edge is at most `maxDimension` pixels,
-    /// then re-encodes at JPEG `quality`. Returns `data` unchanged if it is
-    /// already within bounds or cannot be decoded as a `UIImage`.
-    ///
-    /// - Parameters:
-    ///   - data: Raw image data to compress.
-    ///   - maxDimension: Maximum pixel length for the longest edge. Defaults to 1920.
-    ///   - quality: JPEG compression quality 0–1. Defaults to 0.85.
-    private func compress(_ data: Data, maxDimension: CGFloat = 1920, quality: CGFloat = 0.85) -> Data {
-        guard let image = UIImage(data: data) else { return data }
-        let size = image.size
-        let scale = min(maxDimension / max(size.width, size.height), 1.0)
-        if scale >= 1.0 { return data }
-        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: newSize)
-        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
-        return resized.jpegData(compressionQuality: quality) ?? data
+        lastQualityFailure = nil
     }
 }
