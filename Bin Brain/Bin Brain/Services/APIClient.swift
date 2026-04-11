@@ -36,9 +36,16 @@ final class APIClient {
 
     /// The base URL read from `UserDefaults` at call time.
     ///
-    /// Defaults to `https://raspberrypi.local:8000` when no value is stored.
+    /// Defaults to `http://10.1.1.206:8000` when no value is stored.
     var baseURL: String {
         UserDefaults.standard.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
+    }
+
+    /// The API key read from `UserDefaults` at call time.
+    ///
+    /// Sent as the `X-API-Key` header on every request. `nil` when no key is stored.
+    var apiKey: String? {
+        UserDefaults.standard.string(forKey: "apiKey")
     }
 
     // MARK: - Private Properties
@@ -405,6 +412,9 @@ final class APIClient {
         }
         if let contentType {
             urlRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        if let apiKey {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
 
         let bodySize = body.map { "\($0.count) bytes" } ?? "none"

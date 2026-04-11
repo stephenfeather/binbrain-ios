@@ -34,6 +34,9 @@ final class SettingsViewModel {
     /// The backend server URL (e.g. `https://raspberrypi.local:8000`).
     var serverURL: String
 
+    /// The API key sent as `X-API-Key` on every request.
+    var apiKey: String
+
     /// Minimum similarity score for search results (0–1). Defaults to `0.5`.
     var similarityThreshold: Double
 
@@ -82,6 +85,7 @@ final class SettingsViewModel {
     /// - Parameter defaults: The `UserDefaults` suite to read/write. Defaults to `.standard`.
     init(defaults: UserDefaults = .standard) {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
+        apiKey = defaults.string(forKey: "apiKey") ?? ""
         let stored = defaults.double(forKey: "similarityThreshold")
         similarityThreshold = stored == 0.0 ? 0.5 : stored
     }
@@ -93,6 +97,7 @@ final class SettingsViewModel {
     /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
     func save(to defaults: UserDefaults = .standard) {
         defaults.set(serverURL, forKey: "serverURL")
+        defaults.set(apiKey, forKey: "apiKey")
         defaults.set(similarityThreshold, forKey: "similarityThreshold")
     }
 

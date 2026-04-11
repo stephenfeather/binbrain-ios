@@ -71,6 +71,13 @@ struct SettingsView: View {
                     viewModel.debouncedSave()
                 }
 
+            SecureField("API Key", text: $viewModel.apiKey)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onChange(of: viewModel.apiKey) {
+                    viewModel.debouncedSave()
+                }
+
             HStack {
                 Button("Test Connection") {
                     Task {
