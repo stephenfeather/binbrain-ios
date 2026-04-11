@@ -5,6 +5,7 @@
 // Displays items and photos; supports adding new items and scanning.
 
 import SwiftUI
+import SwiftData
 
 // MARK: - BinDetailCaptureProxy
 
