@@ -121,9 +121,16 @@ final class APIClient {
     /// - Parameters:
     ///   - jpegData: Compressed JPEG image data to upload.
     ///   - binId: The target bin identifier.
-    func ingest(jpegData: Data, binId: String) async throws -> IngestResponse {
+    ///   - deviceMetadata: Optional JSON string of on-device processing metadata
+    ///     (quality scores, OCR, barcodes, classifications). Sent as a
+    ///     `device_metadata` text field in the multipart body when non-nil.
+    func ingest(jpegData: Data, binId: String, deviceMetadata: String? = nil) async throws -> IngestResponse {
+        var fields = ["bin_id": binId]
+        if let deviceMetadata {
+            fields["device_metadata"] = deviceMetadata
+        }
         let (body, boundary) = multipartBody(
-            fields: ["bin_id": binId],
+            fields: fields,
             fileData: jpegData,
             fileName: "photo.jpg",
             mimeType: "image/jpeg"

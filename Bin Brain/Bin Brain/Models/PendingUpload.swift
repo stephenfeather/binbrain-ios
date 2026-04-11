@@ -42,16 +42,24 @@ final class PendingUpload {
     /// The current lifecycle state of the upload.
     var status: UploadStatus
 
+    /// JSON-encoded on-device processing metadata to send alongside the photo.
+    ///
+    /// When non-nil, this string is passed as the `device_metadata` field in the
+    /// multipart upload body. `nil` for uploads queued before the pipeline was added.
+    var deviceMetadataJSON: String?
+
     /// Creates a new pending upload for the given JPEG data and bin.
     ///
     /// - Parameters:
     ///   - jpegData: Compressed JPEG image bytes to upload.
     ///   - binId: The identifier of the target bin.
-    init(jpegData: Data, binId: String) {
+    ///   - deviceMetadataJSON: Optional JSON string of on-device processing metadata.
+    init(jpegData: Data, binId: String, deviceMetadataJSON: String? = nil) {
         self.jpegData = jpegData
         self.binId = binId
         self.queuedAt = Date()
         self.retryCount = 0
         self.status = .pending
+        self.deviceMetadataJSON = deviceMetadataJSON
     }
 }

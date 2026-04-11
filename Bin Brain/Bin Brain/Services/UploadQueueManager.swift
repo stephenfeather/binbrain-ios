@@ -18,6 +18,14 @@ import Observation
 @Observable
 final class UploadQueueManager {
 
+    // MARK: - Constants
+
+    /// Exponential backoff delays in seconds between retry attempts.
+    static let backoffDelays: [TimeInterval] = [5, 15, 45, 120]
+
+    /// Maximum age for a pending upload before it is pruned, in seconds (7 days).
+    static let maxAge: TimeInterval = 7 * 24 * 60 * 60
+
     // MARK: - Public Properties
 
     /// The number of uploads with status `.pending` or `.failed`.
@@ -26,19 +34,31 @@ final class UploadQueueManager {
     /// Suitable for display in a badge or status indicator.
     private(set) var pendingCount: Int = 0
 
+    // MARK: - Internal Properties
+
+    /// The current date provider, overridable for testing time-based expiry.
+    var now: () -> Date = { Date() }
+
+    /// The sleep function used for backoff delays, overridable for testing.
+    var sleepForInterval: (TimeInterval) async throws -> Void = { interval in
+        try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+    }
+
     // MARK: - Public Methods
 
     /// Drains the upload queue sequentially, processing all `.pending` uploads.
     ///
-    /// Uploads are processed oldest-first. Errors are caught per-upload; this method
-    /// does not throw. On success the upload is deleted from the store; on failure the
-    /// retry count is incremented. Uploads that reach or exceed a retry count of 3 are
-    /// marked `.failed` and will not be retried automatically.
+    /// Uploads are processed oldest-first. Before processing, entries older than 7 days
+    /// are pruned. On failure, exponential backoff delays of 5s, 15s, 45s, and 120s are
+    /// applied between retries. Errors are caught per-upload; this method does not throw.
     ///
     /// - Parameters:
     ///   - context: The SwiftData `ModelContext` used for reads and writes.
     ///   - apiClient: The `APIClient` used to perform the network upload.
     func drain(context: ModelContext, using apiClient: APIClient) async {
+        // Prune expired entries before processing.
+        pruneExpired(context: context)
+
         let uploads: [PendingUpload]
         do {
             // Fetch all and filter in memory to avoid SwiftData predicate issues with enums.
@@ -52,6 +72,18 @@ final class UploadQueueManager {
         }
 
         for upload in uploads {
+            // Apply exponential backoff delay based on retry count.
+            if upload.retryCount > 0 {
+                let delayIndex = min(upload.retryCount - 1, Self.backoffDelays.count - 1)
+                let delay = Self.backoffDelays[delayIndex]
+                do {
+                    try await sleepForInterval(delay)
+                } catch {
+                    // Task was cancelled — stop draining.
+                    return
+                }
+            }
+
             // Mark as in-progress before the network call.
             upload.status = .uploading
             do { try context.save() } catch {
@@ -59,17 +91,21 @@ final class UploadQueueManager {
             }
 
             do {
-                _ = try await apiClient.ingest(jpegData: upload.jpegData, binId: upload.binId)
+                _ = try await apiClient.ingest(
+                    jpegData: upload.jpegData,
+                    binId: upload.binId,
+                    deviceMetadata: upload.deviceMetadataJSON
+                )
                 // Success: remove from queue.
                 context.delete(upload)
                 do { try context.save() } catch {
                     print("UploadQueueManager: save after delete failed — \(error)")
                 }
             } catch {
-                // Failure: increment retry count and decide next status.
+                // Failure: increment retry count and keep pending for next drain cycle.
                 print("UploadQueueManager: ingest failed for bin '\(upload.binId)' — \(error)")
                 upload.retryCount += 1
-                upload.status = upload.retryCount >= 3 ? .failed : .pending
+                upload.status = .pending
                 do { try context.save() } catch {
                     print("UploadQueueManager: save after failure handling failed — \(error)")
                 }
@@ -92,6 +128,27 @@ final class UploadQueueManager {
     }
 
     // MARK: - Internal Helpers
+
+    /// Removes uploads older than `maxAge` from the store.
+    ///
+    /// Called at the start of each `drain()` cycle to prevent stale entries
+    /// from accumulating indefinitely. Exposed as `internal` so tests can
+    /// verify pruning behaviour directly.
+    ///
+    /// - Parameter context: The SwiftData `ModelContext` used for reads and writes.
+    func pruneExpired(context: ModelContext) {
+        let cutoff = now().addingTimeInterval(-Self.maxAge)
+        let all = (try? context.fetch(FetchDescriptor<PendingUpload>())) ?? []
+        var pruned = false
+        for upload in all where upload.queuedAt < cutoff {
+            context.delete(upload)
+            pruned = true
+        }
+        if pruned {
+            try? context.save()
+            refreshCount(context: context)
+        }
+    }
 
     /// Updates `pendingCount` by querying the store for `.pending` and `.failed` rows.
     ///

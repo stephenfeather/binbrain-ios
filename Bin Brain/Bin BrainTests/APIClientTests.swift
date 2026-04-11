@@ -254,6 +254,65 @@ final class APIClientTests: XCTestCase {
         )
     }
 
+    // MARK: - Test 5b: ingest() with deviceMetadata includes device_metadata field
+
+    func testIngestWithDeviceMetadataIncludesField() async throws {
+        var capturedRequest: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let json = Data("""
+            {
+                "version": "1",
+                "bin_id": "B-42",
+                "photos": [{ "photo_id": 7, "path": "/data/photos/B-42/abc.jpg" }]
+            }
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        let metadata = "{\"device_processing\":{\"version\":\"1\"}}"
+        _ = try await sut.ingest(
+            jpegData: Data("fake-jpeg-bytes".utf8),
+            binId: "B-42",
+            deviceMetadata: metadata
+        )
+
+        let bodyString = capturedRequest?.bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        XCTAssertTrue(
+            bodyString.contains("device_metadata"),
+            "Multipart body should contain field name 'device_metadata'"
+        )
+        XCTAssertTrue(
+            bodyString.contains("device_processing"),
+            "Multipart body should contain the metadata JSON value"
+        )
+    }
+
+    // MARK: - Test 5c: ingest() without deviceMetadata excludes device_metadata field
+
+    func testIngestWithoutDeviceMetadataExcludesField() async throws {
+        var capturedRequest: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let json = Data("""
+            {
+                "version": "1",
+                "bin_id": "B-42",
+                "photos": [{ "photo_id": 7, "path": "/data/photos/B-42/abc.jpg" }]
+            }
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.ingest(jpegData: Data("fake-jpeg-bytes".utf8), binId: "B-42")
+
+        let bodyString = capturedRequest?.bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        XCTAssertFalse(
+            bodyString.contains("device_metadata"),
+            "Multipart body should NOT contain 'device_metadata' when nil"
+        )
+    }
+
     // MARK: - Test 6: ingest() returns decoded photo ID
 
     func testIngestReturnsPhotoId() async throws {

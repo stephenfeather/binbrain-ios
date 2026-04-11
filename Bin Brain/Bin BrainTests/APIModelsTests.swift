@@ -478,6 +478,70 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(item.bins, ["B-42"])
     }
 
+    // MARK: - PhotoRecord with device_metadata
+
+    func testPhotoRecordDecodesWithDeviceMetadata() throws {
+        let json = """
+        {
+            "photo_id": 7,
+            "path": "/data/photos/B-42/abc.jpg",
+            "device_metadata": {
+                "device_processing": {
+                    "version": "1",
+                    "pipeline_ms": 420,
+                    "ios_version": "18.4",
+                    "device_model": "iPhone16,1",
+                    "quality_scores": {
+                        "blur_variance": 150.5,
+                        "exposure_mean": 0.45,
+                        "saliency_coverage": 0.72,
+                        "shortest_side": 1920
+                    },
+                    "ocr": [],
+                    "barcodes": [],
+                    "classifications": [],
+                    "crop_applied": null
+                }
+            }
+        }
+        """
+        let record = try decode(PhotoRecord.self, from: json)
+
+        XCTAssertEqual(record.photoId, 7)
+        XCTAssertEqual(record.path, "/data/photos/B-42/abc.jpg")
+        let metadata = try XCTUnwrap(record.deviceMetadata)
+        XCTAssertEqual(metadata.deviceProcessing.version, "1")
+        XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
+        XCTAssertEqual(metadata.deviceProcessing.qualityScores.blurVariance, 150.5, accuracy: 1e-10)
+    }
+
+    func testPhotoRecordDecodesWithoutDeviceMetadata() throws {
+        let json = """
+        {
+            "photo_id": 7,
+            "path": "/data/photos/B-42/abc.jpg"
+        }
+        """
+        let record = try decode(PhotoRecord.self, from: json)
+
+        XCTAssertEqual(record.photoId, 7)
+        XCTAssertNil(record.deviceMetadata)
+    }
+
+    func testPhotoRecordDecodesWithNullDeviceMetadata() throws {
+        let json = """
+        {
+            "photo_id": 7,
+            "path": "/data/photos/B-42/abc.jpg",
+            "device_metadata": null
+        }
+        """
+        let record = try decode(PhotoRecord.self, from: json)
+
+        XCTAssertEqual(record.photoId, 7)
+        XCTAssertNil(record.deviceMetadata)
+    }
+
     // MARK: - SuggestionMatch decoding
 
     func testSuggestionItemWithMatchDecodes() throws {

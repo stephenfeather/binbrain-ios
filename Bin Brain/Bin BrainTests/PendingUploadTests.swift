@@ -129,7 +129,51 @@ final class PendingUploadTests: XCTestCase {
         XCTAssertEqual(failedItem.binId, "BIN-0003")
     }
 
-    // MARK: - Test 7: UploadStatus Raw Values
+    // MARK: - Test 7: DeviceMetadataJSON
+
+    func testInitWithDeviceMetadataStoresJSON() {
+        let metadata = "{\"device_processing\":{\"version\":\"1\"}}"
+        let upload = PendingUpload(
+            jpegData: Data([0xFF, 0xD8]),
+            binId: "BIN-0001",
+            deviceMetadataJSON: metadata
+        )
+
+        XCTAssertEqual(upload.deviceMetadataJSON, metadata)
+    }
+
+    func testInitWithoutDeviceMetadataDefaultsToNil() {
+        let upload = PendingUpload(jpegData: Data([0xFF, 0xD8]), binId: "BIN-0001")
+
+        XCTAssertNil(upload.deviceMetadataJSON)
+    }
+
+    func testDeviceMetadataJSONPersistsAndFetches() throws {
+        let metadata = "{\"device_processing\":{\"version\":\"1\"}}"
+        let upload = PendingUpload(
+            jpegData: Data([0xFF, 0xD8]),
+            binId: "BIN-0042",
+            deviceMetadataJSON: metadata
+        )
+        context.insert(upload)
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<PendingUpload>())
+        let item = try XCTUnwrap(fetched.first)
+        XCTAssertEqual(item.deviceMetadataJSON, metadata)
+    }
+
+    func testDeviceMetadataNilPersistsAndFetches() throws {
+        let upload = PendingUpload(jpegData: Data([0xFF, 0xD8]), binId: "BIN-0042")
+        context.insert(upload)
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<PendingUpload>())
+        let item = try XCTUnwrap(fetched.first)
+        XCTAssertNil(item.deviceMetadataJSON)
+    }
+
+    // MARK: - Test 8: UploadStatus Raw Values
 
     func testUploadStatusRawValues() {
         XCTAssertEqual(UploadStatus.pending.rawValue, "pending")

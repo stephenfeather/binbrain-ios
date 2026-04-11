@@ -68,6 +68,7 @@ private let successIngestJSON = Data("""
 
 // MARK: - UploadQueueManagerTests
 
+@MainActor
 final class UploadQueueManagerTests: XCTestCase {
 
     // MARK: - Setup
@@ -158,35 +159,35 @@ final class UploadQueueManagerTests: XCTestCase {
         XCTAssertEqual(item.retryCount, 1, "retryCount should be incremented by 1 on each failure")
     }
 
-    // MARK: - Test 5: Drain failure with retryCount == 2 marks upload as failed
+    // MARK: - Test 5: Drain failure keeps upload pending (no hard cap)
 
-    /// When `retryCount` is already 2 and ingest fails, the upload reaches the threshold
-    /// and is marked `.failed` (retryCount >= 3).
-    func testDrainFailureAfter3RetriesMarksFailed() async throws {
+    /// Failed uploads always remain `.pending` for the next drain cycle.
+    /// Time-based expiry (7 days) replaces the old 3-retry hard cap.
+    func testDrainFailureKeepsUploadPending() async throws {
         let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
-        upload.retryCount = 2
+        upload.retryCount = 5
         context.insert(upload)
         try context.save()
 
         let apiClient = makeMockAPIClient { _ in
             throw URLError(.notConnectedToInternet)
         }
+        sut.sleepForInterval = { _ in } // skip actual delays
 
         await sut.drain(context: context, using: apiClient)
 
         let remaining = try context.fetch(FetchDescriptor<PendingUpload>())
         let item = try XCTUnwrap(remaining.first)
-        XCTAssertEqual(item.retryCount, 3)
-        XCTAssertEqual(item.status, .failed, "Upload at retry threshold should become .failed")
+        XCTAssertEqual(item.retryCount, 6)
+        XCTAssertEqual(item.status, .pending, "Failed uploads should stay .pending regardless of retry count")
     }
 
-    // MARK: - Test 6: Drain failure below threshold keeps upload pending
+    // MARK: - Test 6: Drain failure increments retryCount and stays pending
 
     /// When `retryCount` is 0 and ingest fails (retryCount becomes 1), the status
-    /// reverts to `.pending` since the retry threshold has not been reached.
+    /// stays `.pending` for the next drain cycle.
     func testDrainFailureBelowThresholdKeepsPending() async throws {
         let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
-        // retryCount starts at 0; after one failure it becomes 1, still below threshold of 3.
         context.insert(upload)
         try context.save()
 
@@ -198,7 +199,7 @@ final class UploadQueueManagerTests: XCTestCase {
 
         let remaining = try context.fetch(FetchDescriptor<PendingUpload>())
         let item = try XCTUnwrap(remaining.first)
-        XCTAssertEqual(item.status, .pending, "Upload below retry threshold should stay .pending")
+        XCTAssertEqual(item.status, .pending, "Upload should stay .pending after failure")
     }
 
     // MARK: - Test 7: clearQueue deletes all uploads
@@ -247,5 +248,201 @@ final class UploadQueueManagerTests: XCTestCase {
         let remainingItem = try XCTUnwrap(remaining.first)
         XCTAssertEqual(remainingItem.status, .failed, "Untouched item should still be .failed")
         XCTAssertEqual(ingestCallCount, 1, "ingest should be called once — for the pending upload only")
+    }
+
+    // MARK: - Test 9: Drain passes deviceMetadataJSON to ingest
+
+    /// When a `PendingUpload` has `deviceMetadataJSON`, `drain` passes it to `apiClient.ingest`.
+    func testDrainPassesDeviceMetadataToIngest() async throws {
+        let metadata = "{\"device_processing\":{\"version\":\"1\"}}"
+        let upload = PendingUpload(
+            jpegData: Data([0xFF, 0xD8]),
+            binId: "BIN-0001",
+            deviceMetadataJSON: metadata
+        )
+        context.insert(upload)
+        try context.save()
+
+        var capturedBodyString = ""
+        let apiClient = makeMockAPIClient { request in
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 65_536)
+                while stream.hasBytesAvailable {
+                    let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+                    guard bytesRead > 0 else { break }
+                    data.append(contentsOf: buffer.prefix(bytesRead))
+                }
+                capturedBodyString = String(data: data, encoding: .utf8) ?? ""
+            } else if let body = request.httpBody {
+                capturedBodyString = String(data: body, encoding: .utf8) ?? ""
+            }
+            return (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        XCTAssertTrue(
+            capturedBodyString.contains("device_metadata"),
+            "Multipart body should contain 'device_metadata' field"
+        )
+        XCTAssertTrue(
+            capturedBodyString.contains("device_processing"),
+            "Multipart body should contain the metadata JSON value"
+        )
+    }
+
+    // MARK: - Test 10: Drain without metadata omits device_metadata
+
+    /// When `deviceMetadataJSON` is nil, `drain` does not include `device_metadata` in the body.
+    func testDrainWithoutMetadataOmitsField() async throws {
+        let upload = PendingUpload(jpegData: Data([0xFF, 0xD8]), binId: "BIN-0001")
+        context.insert(upload)
+        try context.save()
+
+        var capturedBodyString = ""
+        let apiClient = makeMockAPIClient { request in
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 65_536)
+                while stream.hasBytesAvailable {
+                    let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+                    guard bytesRead > 0 else { break }
+                    data.append(contentsOf: buffer.prefix(bytesRead))
+                }
+                capturedBodyString = String(data: data, encoding: .utf8) ?? ""
+            } else if let body = request.httpBody {
+                capturedBodyString = String(data: body, encoding: .utf8) ?? ""
+            }
+            return (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        XCTAssertFalse(
+            capturedBodyString.contains("device_metadata"),
+            "Multipart body should NOT contain 'device_metadata' when nil"
+        )
+    }
+
+    // MARK: - Test 11: Exponential backoff delays
+
+    /// Verifies that backoff delays match the expected schedule [5, 15, 45, 120].
+    func testBackoffDelaysAppliedOnRetry() async throws {
+        let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
+        upload.retryCount = 2 // Should trigger backoffDelays[1] = 15s
+        context.insert(upload)
+        try context.save()
+
+        var capturedDelay: TimeInterval = 0
+        sut.sleepForInterval = { interval in
+            capturedDelay = interval
+        }
+
+        let apiClient = makeMockAPIClient { _ in
+            (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        XCTAssertEqual(capturedDelay, 15, accuracy: 0.01, "retryCount 2 should use backoffDelays[1] = 15s")
+    }
+
+    /// No delay is applied on the first attempt (retryCount == 0).
+    func testNoBackoffOnFirstAttempt() async throws {
+        let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
+        context.insert(upload)
+        try context.save()
+
+        var sleepCalled = false
+        sut.sleepForInterval = { _ in
+            sleepCalled = true
+        }
+
+        let apiClient = makeMockAPIClient { _ in
+            (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        XCTAssertFalse(sleepCalled, "No backoff delay should be applied on first attempt")
+    }
+
+    /// Backoff delay clamps to the last value for high retry counts.
+    func testBackoffClampsToMaxDelay() async throws {
+        let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
+        upload.retryCount = 100 // Way beyond the array length
+        context.insert(upload)
+        try context.save()
+
+        var capturedDelay: TimeInterval = 0
+        sut.sleepForInterval = { interval in
+            capturedDelay = interval
+        }
+
+        let apiClient = makeMockAPIClient { _ in
+            (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        XCTAssertEqual(capturedDelay, 120, accuracy: 0.01, "High retry counts should clamp to max delay of 120s")
+    }
+
+    // MARK: - Test 12: 7-day expiry pruning
+
+    /// Uploads older than 7 days are pruned on each `drain()` call.
+    func testPruneExpiredRemovesOldEntries() async throws {
+        let oldUpload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-OLD")
+        // Manually set queuedAt to 8 days ago
+        oldUpload.queuedAt = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let freshUpload = PendingUpload(jpegData: Data([0x02]), binId: "BIN-FRESH")
+
+        context.insert(oldUpload)
+        context.insert(freshUpload)
+        try context.save()
+
+        let apiClient = makeMockAPIClient { _ in
+            (makeMockResponse(statusCode: 200), successIngestJSON)
+        }
+
+        await sut.drain(context: context, using: apiClient)
+
+        let remaining = try context.fetch(FetchDescriptor<PendingUpload>())
+        // Fresh upload was processed successfully and deleted; old upload was pruned.
+        XCTAssertEqual(remaining.count, 0, "Both old (pruned) and fresh (uploaded) should be gone")
+    }
+
+    /// Uploads within 7 days are NOT pruned.
+    func testPruneExpiredKeepsRecentEntries() throws {
+        let recentUpload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-RECENT")
+        recentUpload.queuedAt = Date().addingTimeInterval(-6 * 24 * 60 * 60) // 6 days ago
+        context.insert(recentUpload)
+        try context.save()
+
+        sut.pruneExpired(context: context)
+
+        let remaining = try context.fetch(FetchDescriptor<PendingUpload>())
+        XCTAssertEqual(remaining.count, 1, "Upload within 7 days should NOT be pruned")
+    }
+
+    /// Pruning uses the injectable `now()` for time calculation.
+    func testPruneUsesInjectableNow() throws {
+        let upload = PendingUpload(jpegData: Data([0x01]), binId: "BIN-0001")
+        upload.queuedAt = Date() // Queued "now" in real time
+        context.insert(upload)
+        try context.save()
+
+        // Pretend it's 8 days in the future
+        sut.now = { Date().addingTimeInterval(8 * 24 * 60 * 60) }
+
+        sut.pruneExpired(context: context)
+
+        let remaining = try context.fetch(FetchDescriptor<PendingUpload>())
+        XCTAssertEqual(remaining.count, 0, "Upload should be pruned when 'now' is 8 days later")
     }
 }

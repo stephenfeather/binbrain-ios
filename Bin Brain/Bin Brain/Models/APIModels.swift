@@ -44,10 +44,13 @@ struct HealthResponse: Decodable {
 struct PhotoRecord: Decodable {
     let photoId: Int
     let path: String
+    /// On-device processing metadata, present when the client sent a `device_metadata` sidecar.
+    let deviceMetadata: DeviceMetadata?
 
     enum CodingKeys: String, CodingKey {
         case photoId = "photo_id"
         case path
+        case deviceMetadata = "device_metadata"
     }
 }
 
