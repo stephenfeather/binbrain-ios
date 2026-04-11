@@ -43,7 +43,7 @@ struct QualityGates {
     ///
     /// - Parameter cgImage: The image to validate.
     /// - Returns: A tuple of all computed scores and an optional failure.
-    func validate(_ cgImage: CGImage) async throws -> (scores: QualityScores, failure: QualityGateFailure?) {
+    func validate(_ cgImage: CGImage) async throws -> (scores: QualityScores, failure: QualityGateFailure?, saliencyBoundingBox: CGRect?) {
         var blurVariance: Double = 0
         var exposureMean: Double = 0
         var saliencyCoverage: Double = 0
@@ -57,7 +57,7 @@ struct QualityGates {
                 saliencyCoverage: saliencyCoverage,
                 shortestSide: shortestSide
             )
-            return (scores, failure)
+            return (scores, failure, nil)
         }
 
         // Gate 2: Blur
@@ -70,7 +70,7 @@ struct QualityGates {
                 saliencyCoverage: saliencyCoverage,
                 shortestSide: shortestSide
             )
-            return (scores, failure)
+            return (scores, failure, nil)
         }
 
         // Gate 3: Exposure
@@ -83,7 +83,7 @@ struct QualityGates {
                 saliencyCoverage: saliencyCoverage,
                 shortestSide: shortestSide
             )
-            return (scores, failure)
+            return (scores, failure, nil)
         }
 
         // Gate 4: Saliency
@@ -96,7 +96,7 @@ struct QualityGates {
                 saliencyCoverage: saliencyCoverage,
                 shortestSide: shortestSide
             )
-            return (scores, failure)
+            return (scores, failure, saliencyResult.boundingBox)
         }
 
         let scores = QualityScores(
@@ -105,7 +105,7 @@ struct QualityGates {
             saliencyCoverage: saliencyCoverage,
             shortestSide: shortestSide
         )
-        return (scores, nil)
+        return (scores, nil, saliencyResult.boundingBox)
     }
 
     // MARK: - Gate 1: Resolution
@@ -350,6 +350,17 @@ struct QualityGates {
                 continuation.resume(returning: (coverage, largestObject.boundingBox, nil))
             }
         }
+    }
+
+    // MARK: - Convenience
+
+    /// Runs only the saliency check and returns the bounding box, ignoring the gate result.
+    ///
+    /// Used by the pipeline's "skip quality gates" path to obtain the saliency box
+    /// for smart crop without running all four gates.
+    func checkSaliencyOnly(_ cgImage: CGImage) async throws -> CGRect? {
+        let result = try await checkSaliency(cgImage)
+        return result.boundingBox
     }
 
     // MARK: - Helpers
