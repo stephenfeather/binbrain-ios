@@ -81,6 +81,7 @@ final class APIClientTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         UserDefaults.standard.removeObject(forKey: "serverURL")
+        UserDefaults.standard.set("test-key", forKey: "apiKey")
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         let mockSession = URLSession(configuration: config)
