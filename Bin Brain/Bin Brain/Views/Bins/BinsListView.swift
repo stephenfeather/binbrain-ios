@@ -279,6 +279,9 @@ private struct BinRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(bin.binId).font(.headline)
             Text("\(bin.itemCount) items").font(.subheadline).foregroundStyle(.secondary)
+            if let locationName = bin.locationName {
+                Text(locationName).font(.caption).foregroundStyle(.secondary)
+            }
             Text(bin.lastUpdated, style: .relative).font(.caption).foregroundStyle(.secondary)
         }
     }

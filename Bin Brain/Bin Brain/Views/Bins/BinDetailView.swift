@@ -42,6 +42,10 @@ struct BinDetailView: View {
     @State private var sortOrder: SortOrder = .name
     @State private var cameraTapCount = 0
 
+    // Location state
+    @State private var showLocationPicker = false
+    @State private var displayedLocationName: String?
+
     // Photo viewer state
     @State private var selectedPhotoURL: URL?
 
@@ -99,8 +103,14 @@ struct BinDetailView: View {
                     .sensoryFeedback(.impact(flexibility: .rigid, intensity: 0.6), trigger: cameraTapCount)
                 }
             }
-            .task { await viewModel.load(binId: binId, apiClient: apiClient) }
-            .refreshable { await viewModel.load(binId: binId, apiClient: apiClient) }
+            .task {
+                await viewModel.load(binId: binId, apiClient: apiClient)
+                displayedLocationName = viewModel.bin?.locationName
+            }
+            .refreshable {
+                await viewModel.load(binId: binId, apiClient: apiClient)
+                displayedLocationName = viewModel.bin?.locationName
+            }
             .sheet(isPresented: $showAddItem) {
                 AddItemSheet(
                     binId: binId,
@@ -136,6 +146,15 @@ struct BinDetailView: View {
                         )
                     )
                 }
+            }
+            .sheet(isPresented: $showLocationPicker) {
+                LocationPickerSheet(
+                    binId: binId,
+                    currentLocationName: displayedLocationName,
+                    onLocationChanged: { newName in
+                        displayedLocationName = newName
+                    }
+                )
             }
             .alert(
                 "Remove Item",
@@ -325,6 +344,26 @@ struct BinDetailView: View {
             }
             .font(.subheadline)
             .padding([.horizontal, .top])
+
+            Button {
+                showLocationPicker = true
+            } label: {
+                HStack {
+                    Image(systemName: "mappin.and.ellipse")
+                        .foregroundStyle(.secondary)
+                    Text(displayedLocationName ?? "No location")
+                        .foregroundStyle(displayedLocationName != nil ? .primary : .secondary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .tint(.primary)
+            .accessibilityLabel("Location: \(displayedLocationName ?? "none")")
+            .accessibilityHint("Double-tap to change location")
 
             if !bin.photos.isEmpty {
                 photoStrip(photos: bin.photos)
