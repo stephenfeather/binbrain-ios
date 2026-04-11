@@ -13,6 +13,7 @@ import SwiftData
 /// The sections available in the sidebar / tab bar.
 enum SidebarSection: String, CaseIterable, Identifiable {
     case bins
+    case locations
     case search
     case settings
 
@@ -21,6 +22,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .bins: "Bins"
+        case .locations: "Locations"
         case .search: "Search"
         case .settings: "Settings"
         }
@@ -29,6 +31,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .bins: "tray.2.fill"
+        case .locations: "mappin.and.ellipse"
         case .search: "magnifyingglass"
         case .settings: "gear"
         }
@@ -106,6 +109,11 @@ struct RootView: View {
                     Label("Bins", systemImage: "tray.2.fill")
                 }
 
+            LocationsListView()
+                .tabItem {
+                    Label("Locations", systemImage: "mappin.and.ellipse")
+                }
+
             SearchView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
@@ -132,6 +140,8 @@ struct RootView: View {
                 switch selectedSection {
                 case .bins:
                     BinsListView()
+                case .locations:
+                    LocationsListView()
                 case .search:
                     SearchView()
                 case .settings:
