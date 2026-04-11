@@ -136,8 +136,9 @@ final class AnalysisViewModel {
                 phase = .qualityFailed(failure.message)
                 return
             case .invalidImageData:
-                phase = .failed("Could not process image")
-                return
+                // Graceful degradation: upload original bytes without pipeline processing.
+                uploadData = jpegData
+                metadataString = nil
             }
         } catch {
             // Graceful degradation: pipeline internal error → upload original without metadata.

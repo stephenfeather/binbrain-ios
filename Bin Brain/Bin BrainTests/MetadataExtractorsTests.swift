@@ -37,13 +37,19 @@ final class MetadataExtractorsTests: XCTestCase {
         let extractor = MetadataExtractors()
         let blankImage = makeSolidImage()
 
-        let result = try await extractor.extract(from: blankImage)
-
-        // A blank solid-color image should produce no meaningful OCR or barcode results.
-        XCTAssertTrue(result.ocr.isEmpty, "Blank image should yield no OCR results")
-        XCTAssertTrue(result.barcodes.isEmpty, "Blank image should yield no barcode results")
-        // Classifications may or may not be empty — Vision may classify anything.
-        // We just verify no crash occurred and results are valid.
+        do {
+            let result = try await extractor.extract(from: blankImage)
+            // A blank solid-color image should produce no meaningful OCR or barcode results.
+            XCTAssertTrue(result.ocr.isEmpty, "Blank image should yield no OCR results")
+            XCTAssertTrue(result.barcodes.isEmpty, "Blank image should yield no barcode results")
+        } catch {
+            // Vision's Neural Engine (espresso) is unavailable in some simulator environments.
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable in this environment — requires device testing"
+            )
+            throw error
+        }
     }
 
     // MARK: - OCR Confidence Filtering
@@ -145,12 +151,17 @@ final class MetadataExtractorsTests: XCTestCase {
         let extractor = MetadataExtractors()
         let image = makeSolidImage(width: 1024, height: 768)
 
-        // Should complete without throwing
-        let result = try await extractor.extract(from: image)
-
-        // Validate return types are correct
-        XCTAssertNotNil(result.ocr)
-        XCTAssertNotNil(result.barcodes)
-        XCTAssertNotNil(result.classifications)
+        do {
+            let result = try await extractor.extract(from: image)
+            XCTAssertNotNil(result.ocr)
+            XCTAssertNotNil(result.barcodes)
+            XCTAssertNotNil(result.classifications)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable in this environment — requires device testing"
+            )
+            throw error
+        }
     }
 }

@@ -146,21 +146,34 @@ final class QualityGatesTests: XCTestCase {
     // MARK: - Saliency Gate
 
     func testSaliencyGateFailsForUniformImage() async throws {
-        // A solid color image has no salient objects
         let uniformImage = makeSolidImage(width: 1024, height: 1024, gray: 0.5)
-        let result = try await gates.checkSaliency(uniformImage)
-        // Vision may or may not detect saliency on a uniform image in the simulator —
-        // if coverage is zero, failure should be present
-        if result.coverage == 0 {
-            XCTAssertNotNil(result.failure)
-            XCTAssertEqual(result.failure?.gate, .saliency)
+        do {
+            let result = try await gates.checkSaliency(uniformImage)
+            if result.coverage == 0 {
+                XCTAssertNotNil(result.failure)
+                XCTAssertEqual(result.failure?.gate, .saliency)
+            }
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable in this environment — requires device testing"
+            )
+            throw error
         }
     }
 
     func testSaliencyGateReturnsNonNegativeCoverage() async throws {
         let image = makeCheckerboardImage(width: 1024, height: 1024)
-        let result = try await gates.checkSaliency(image)
-        XCTAssertGreaterThanOrEqual(result.coverage, 0)
+        do {
+            let result = try await gates.checkSaliency(image)
+            XCTAssertGreaterThanOrEqual(result.coverage, 0)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable in this environment — requires device testing"
+            )
+            throw error
+        }
     }
 
     // MARK: - Full Validation Pipeline
@@ -200,12 +213,19 @@ final class QualityGatesTests: XCTestCase {
     func testValidatePassesWithSharpWellExposedImage() async throws {
         // Checkerboard at valid resolution — sharp, mid-exposure
         let image = makeCheckerboardImage(width: 1024, height: 1024, blockSize: 2)
-        let result = try await gates.validate(image)
-        // Resolution and blur should pass; exposure and saliency depend on Vision behavior
-        // At minimum, resolution and blur are non-failing
-        XCTAssertNotEqual(result.failure?.gate, .resolution)
-        XCTAssertNotEqual(result.failure?.gate, .blur)
-        XCTAssertGreaterThan(result.scores.blurVariance, 0)
+        do {
+            let result = try await gates.validate(image)
+            // Resolution and blur should pass; exposure and saliency depend on Vision behavior
+            XCTAssertNotEqual(result.failure?.gate, .resolution)
+            XCTAssertNotEqual(result.failure?.gate, .blur)
+            XCTAssertGreaterThan(result.scores.blurVariance, 0)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable in this environment — requires device testing"
+            )
+            throw error
+        }
     }
 
     // MARK: - Sequential Ordering
