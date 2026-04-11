@@ -12,11 +12,13 @@ import Observation
 /// Errors thrown by `APIClient` itself (not decoded from the server).
 enum APIClientError: LocalizedError {
     case invalidURL(String)
+    case missingAPIKey
     case unexpectedStatusCode(Int)
 
     var errorDescription: String? {
         switch self {
         case .invalidURL(let url): return "Invalid URL: \(url)"
+        case .missingAPIKey: return "No API key configured. Please set one in Settings."
         case .unexpectedStatusCode(let code): return "Unexpected status code: \(code)"
         }
     }
@@ -46,6 +48,12 @@ final class APIClient {
     /// Sent as the `X-API-Key` header on every request. `nil` when no key is stored.
     var apiKey: String? {
         UserDefaults.standard.string(forKey: "apiKey")
+    }
+
+    /// Whether a non-empty API key is configured in `UserDefaults`.
+    var hasAPIKey: Bool {
+        guard let key = apiKey else { return false }
+        return !key.isEmpty
     }
 
     // MARK: - Private Properties
@@ -81,7 +89,7 @@ final class APIClient {
 
     /// Returns the server health status.
     func health() async throws -> HealthResponse {
-        try await request(path: "/health", method: "GET", body: nil, contentType: nil, timeout: 10)
+        try await request(path: "/health", method: "GET", body: nil, contentType: nil, timeout: 10, requiresAuth: false)
     }
 
     /// Returns all bins sorted by bin ID alphanumeric ascending.
@@ -398,8 +406,16 @@ final class APIClient {
         method: String,
         body: Data?,
         contentType: String?,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        requiresAuth: Bool = true
     ) async throws -> T {
+        if requiresAuth {
+            guard hasAPIKey else {
+                print("[API] \(method) \(path) BLOCKED: no API key configured")
+                throw APIClientError.missingAPIKey
+            }
+        }
+
         let urlString = baseURL + path
         guard let url = URL(string: urlString) else {
             print("[API] Invalid URL: \(urlString)")

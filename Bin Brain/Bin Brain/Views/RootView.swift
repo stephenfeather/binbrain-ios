@@ -60,6 +60,7 @@ struct RootView: View {
     @State private var toast = ToastViewModel()
     @State private var selectedSection: SidebarSection? = .bins
     @State private var selectedBinId: String?
+    @State private var showingAPIKeyPrompt = false
 
     // MARK: - Body
 
@@ -77,6 +78,26 @@ struct RootView: View {
             get: { toast.isShowing },
             set: { if !$0 { toast.dismiss() } }
         ))
+        .onAppear { checkAPIKey() }
+        .onChange(of: showingAPIKeyPrompt) { _, isShowing in
+            if !isShowing { checkAPIKey() }
+        }
+        .fullScreenCover(isPresented: $showingAPIKeyPrompt) {
+            NavigationStack {
+                SettingsView()
+                    .environment(\.embeddedInSplitView, true)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                showingAPIKeyPrompt = false
+                            }
+                            .disabled(!apiClient.hasAPIKey)
+                        }
+                    }
+                    .interactiveDismissDisabled(!apiClient.hasAPIKey)
+            }
+        }
         .task { await retryPendingAnalyses() }
     }
 
@@ -156,6 +177,13 @@ struct RootView: View {
     }
 
     // MARK: - Private
+
+    /// Presents the Settings screen when no API key is configured.
+    private func checkAPIKey() {
+        if !apiClient.hasAPIKey {
+            showingAPIKeyPrompt = true
+        }
+    }
 
     /// Fetches all interrupted `PendingAnalysis` entries and retries the suggest call.
     ///
