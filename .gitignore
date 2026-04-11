@@ -45,4 +45,7 @@ fastlane/test_output
 *~
 
 # Claude Code
-.claude/settings.local.json
+.claude/
+.tldr/
+.tldrignore
+thoughts/
