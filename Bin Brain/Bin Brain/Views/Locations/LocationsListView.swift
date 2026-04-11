@@ -119,7 +119,7 @@ private struct LocationRowView: View {
             if let description = location.description, !description.isEmpty {
                 Text(description).font(.subheadline).foregroundStyle(.secondary)
             }
-            Text(location.createdAt, style: .relative).font(.caption).foregroundStyle(.secondary)
+            Text(location.createdAt, format: .dateTime.month().day().year().hour().minute()).font(.caption).foregroundStyle(.secondary)
         }
     }
 }
