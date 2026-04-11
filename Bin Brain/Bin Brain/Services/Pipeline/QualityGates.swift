@@ -16,7 +16,7 @@ import Vision
 /// Blur detection threshold for a 1024px shortest side.
 /// Variance below this value indicates a blurry image.
 /// Scale proportionally for other resolutions.
-let kBlurVarianceThresholdAt1024: Double = 15.0
+let kBlurVarianceThresholdAt1024: Double = 2.0
 
 /// Minimum shortest side in pixels for the resolution gate.
 let kMinimumShortestSide: Int = 1024
