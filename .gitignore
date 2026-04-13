@@ -52,3 +52,4 @@ thoughts/
 
 # Analysis output
 opengrep*
+.worktrees/
