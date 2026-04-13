@@ -10,7 +10,7 @@ import Foundation
 import OSLog
 import UIKit
 
-private let logger = Logger(subsystem: "com.binbrain.app", category: "ImagePipeline")
+private nonisolated let logger = Logger(subsystem: "com.binbrain.app", category: "ImagePipeline")
 
 // MARK: - Image Pipeline
 
