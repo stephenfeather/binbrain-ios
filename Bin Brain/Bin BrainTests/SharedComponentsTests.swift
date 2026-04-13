@@ -9,6 +9,7 @@ import SwiftUI
 
 // MARK: - ConfidenceBadgeTests
 
+@MainActor
 final class ConfidenceBadgeTests: XCTestCase {
 
     func testHighConfidenceLabel() {
@@ -42,6 +43,7 @@ final class ConfidenceBadgeTests: XCTestCase {
 
 // MARK: - ToastViewModelTests
 
+@MainActor
 final class ToastViewModelTests: XCTestCase {
     var sut: ToastViewModel!
 

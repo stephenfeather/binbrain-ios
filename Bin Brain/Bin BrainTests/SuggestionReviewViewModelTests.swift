@@ -64,6 +64,7 @@ private extension URLRequest {
 
 // MARK: - SuggestionReviewViewModelTests
 
+@MainActor
 final class SuggestionReviewViewModelTests: XCTestCase {
 
     var sut: SuggestionReviewViewModel!
