@@ -72,12 +72,14 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        UserDefaults.standard.set("test-key", forKey: "apiKey")
         sut = SuggestionReviewViewModel()
     }
 
     override func tearDown() async throws {
         SuggestionReviewMockURLProtocol.requestHandler = nil
         sut = nil
+        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 

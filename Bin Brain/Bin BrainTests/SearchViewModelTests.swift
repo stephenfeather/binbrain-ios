@@ -49,6 +49,7 @@ final class SearchViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        UserDefaults.standard.set("test-key", forKey: "apiKey")
         suiteName = "SearchViewModelTests.\(UUID().uuidString)"
         testDefaults = UserDefaults(suiteName: suiteName)!
         sut = SearchViewModel(defaults: testDefaults)
@@ -60,6 +61,7 @@ final class SearchViewModelTests: XCTestCase {
         sut = nil
         testDefaults = nil
         suiteName = nil
+        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
