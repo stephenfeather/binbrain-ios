@@ -594,3 +594,165 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(capturedRequest?.httpMethod, "GET")
     }
 }
+
+// MARK: - Host binding gate tests (#13)
+
+final class APIClientHostBindingTests: XCTestCase {
+
+    private var session: URLSession!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        session = URLSession(configuration: config)
+    }
+
+    override func tearDown() async throws {
+        MockURLProtocol.requestHandler = nil
+        UserDefaults.standard.removeObject(forKey: "serverURL")
+        session = nil
+        try await super.tearDown()
+    }
+
+    private static let healthJSON = Data("""
+    {"version":"1","ok":true,"db_ok":true,"embed_model":"BAAI/bge-small-en-v1.5","expected_dims":384,"auth_ok":true,"role":"user"}
+    """.utf8)
+
+    private static func ok(for request: URLRequest) -> HTTPURLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+    }
+
+    private static let binsJSON = Data("""
+    {"version":"1","bins":[]}
+    """.utf8)
+
+    // MARK: - normalizedOrigin
+
+    func testNormalizedOriginIncludesPort() {
+        XCTAssertEqual(APIClient.normalizedOrigin(of: "http://10.1.1.205:8000"),
+                       "http://10.1.1.205:8000")
+    }
+
+    func testNormalizedOriginStripsPathAndTrailingSlash() {
+        XCTAssertEqual(APIClient.normalizedOrigin(of: "https://raspberrypi.local:8000/"),
+                       "https://raspberrypi.local:8000")
+        XCTAssertEqual(APIClient.normalizedOrigin(of: "https://host:8000/api/v1"),
+                       "https://host:8000")
+    }
+
+    func testNormalizedOriginLowercasesHost() {
+        XCTAssertEqual(APIClient.normalizedOrigin(of: "HTTP://Example.COM:8000"),
+                       "http://example.com:8000")
+    }
+
+    func testNormalizedOriginReturnsNilWhenSchemeMissing() {
+        XCTAssertNil(APIClient.normalizedOrigin(of: "10.1.1.205"))
+    }
+
+    func testNormalizedOriginReturnsNilWhenHostMissing() {
+        XCTAssertNil(APIClient.normalizedOrigin(of: "http://"))
+    }
+
+    // MARK: - Gate behavior
+
+    func testAuthenticatedRequestAttachesKeyOnMatchingBoundHost() async throws {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        let keychain = InMemoryKeychainHelper(seeded: [
+            KeychainHelper.apiKeyAccount: "test-key",
+            KeychainHelper.boundHostAccount: "http://10.1.1.205:8000"
+        ])
+        let sut = APIClient(session: session, keychain: keychain)
+
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (Self.ok(for: request), Self.binsJSON)
+        }
+
+        _ = try await sut.listBins()
+
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "X-API-Key"), "test-key",
+                       "X-API-Key must be attached when baseURL origin matches the bound host")
+    }
+
+    func testAuthenticatedRequestOmitsKeyOnMismatchedBoundHost() async throws {
+        UserDefaults.standard.set("http://evil.example.com:8000", forKey: "serverURL")
+        let keychain = InMemoryKeychainHelper(seeded: [
+            KeychainHelper.apiKeyAccount: "test-key",
+            KeychainHelper.boundHostAccount: "http://10.1.1.205:8000"
+        ])
+        let sut = APIClient(session: session, keychain: keychain)
+
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (Self.ok(for: request), Self.binsJSON)
+        }
+
+        _ = try await sut.listBins()
+
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "X-API-Key"),
+                     "X-API-Key MUST NOT leak to a host other than the bound host (F-04)")
+    }
+
+    func testAuthenticatedRequestOmitsKeyWhenBoundHostMissing() async throws {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        let keychain = InMemoryKeychainHelper(seeded: [
+            KeychainHelper.apiKeyAccount: "test-key"
+            // no boundHost — TOFU not yet completed
+        ])
+        let sut = APIClient(session: session, keychain: keychain)
+
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (Self.ok(for: request), Self.binsJSON)
+        }
+
+        _ = try await sut.listBins()
+
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "X-API-Key"),
+                     "X-API-Key must be omitted when no bound host is recorded")
+    }
+
+    func testHealthDefaultDoesNotAttachKey() async throws {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        let keychain = InMemoryKeychainHelper(seeded: [
+            KeychainHelper.apiKeyAccount: "test-key",
+            KeychainHelper.boundHostAccount: "http://10.1.1.205:8000"
+        ])
+        let sut = APIClient(session: session, keychain: keychain)
+
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (Self.ok(for: request), Self.healthJSON)
+        }
+
+        _ = try await sut.health()
+
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "X-API-Key"),
+                     "Default health() probe must not send the key (F-10) — auth_ok inspection is opt-in via probeWithCurrentKey")
+    }
+
+    func testHealthWithProbeAttachesKeyEvenWhenBoundHostMismatched() async throws {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        let keychain = InMemoryKeychainHelper(seeded: [
+            KeychainHelper.apiKeyAccount: "test-key",
+            KeychainHelper.boundHostAccount: "http://other:9000"
+        ])
+        let sut = APIClient(session: session, keychain: keychain)
+
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (Self.ok(for: request), Self.healthJSON)
+        }
+
+        _ = try await sut.health(probeWithCurrentKey: true)
+
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "X-API-Key"), "test-key",
+                       "probeWithCurrentKey is the explicit re-bind escape hatch — must attach the key")
+    }
+}

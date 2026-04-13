@@ -27,6 +27,9 @@ struct Bin_BrainApp: App {
         // One-time migration of the API key out of UserDefaults into Keychain.
         // Idempotent — safe to run on every cold start.
         KeychainHelper.migrateAPIKeyFromUserDefaultsIfNeeded()
+        // Back-fill apiKeyBoundHost for installs that predate host binding (#13).
+        // Must run after the apiKey migration because it reads that entry.
+        KeychainHelper.migrateAPIKeyBoundHostIfNeeded()
     }
 
     // MARK: - SwiftData

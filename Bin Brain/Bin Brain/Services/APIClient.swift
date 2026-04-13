@@ -103,8 +103,23 @@ final class APIClient {
     }
 
     /// Returns the server health status.
-    func health() async throws -> HealthResponse {
-        try await request(path: "/health", method: "GET", body: nil, contentType: nil, timeout: 10, requiresAuth: false)
+    ///
+    /// - Parameter probeWithCurrentKey: When `true`, attaches the configured
+    ///   API key to the request **even if** the current `baseURL` does not
+    ///   match the key's bound host. Used by the Settings "Re-bind key"
+    ///   flow to let the server tell us whether the existing key is valid
+    ///   for a new host. Default `false` — the routine `/health` probe
+    ///   never leaks the key off-host.
+    func health(probeWithCurrentKey: Bool = false) async throws -> HealthResponse {
+        try await request(
+            path: "/health",
+            method: "GET",
+            body: nil,
+            contentType: nil,
+            timeout: 10,
+            requiresAuth: false,
+            probeWithCurrentKey: probeWithCurrentKey
+        )
     }
 
     /// Returns all bins sorted by bin ID alphanumeric ascending.
@@ -416,6 +431,67 @@ final class APIClient {
         )
     }
 
+    // MARK: - Host Binding
+
+    /// Normalizes a URL string to `scheme + host + port` — no path, no
+    /// trailing slash, host lowercased.
+    ///
+    /// Used to compare the `baseURL` against the origin the API key is
+    /// bound to. Returns `nil` if the input lacks a scheme or host, so
+    /// callers can refuse to attach the key rather than guess.
+    static func normalizedOrigin(of urlString: String) -> String? {
+        guard let components = URLComponents(string: urlString),
+              let scheme = components.scheme?.lowercased(), !scheme.isEmpty,
+              let host = components.host?.lowercased(), !host.isEmpty else {
+            return nil
+        }
+        if let port = components.port {
+            return "\(scheme)://\(host):\(port)"
+        }
+        return "\(scheme)://\(host)"
+    }
+
+    /// Whether the `X-API-Key` header should be attached to an outgoing request.
+    ///
+    /// The key is attached only when:
+    /// 1. `probe == true` — caller explicitly opted into a key probe (the
+    ///    Settings "Re-bind" flow), or
+    /// 2. `requiresAuth == true` **and** the key is Keychain-backed **and**
+    ///    the Keychain's bound host matches the normalized origin of the
+    ///    current `baseURL`.
+    ///
+    /// A non-matching bound host, a missing bound host, or an unparseable
+    /// `baseURL` all omit the header — indistinguishable server-side from
+    /// "no key supplied", so `/health` reports `connectedNoKey` /
+    /// authenticated endpoints return 401. Safe default.
+    ///
+    /// The `BuildConfig.defaultAPIKey` fallback has no binding and is
+    /// only attached when `baseURL` matches `BuildConfig.defaultServerURL`,
+    /// preserving Debug-build dev ergonomics while matching the gate's
+    /// intent.
+    private func shouldAttachKey(requiresAuth: Bool, probe: Bool) -> Bool {
+        if probe { return true }
+        guard requiresAuth else { return false }
+        guard let currentOrigin = Self.normalizedOrigin(of: baseURL) else { return false }
+
+        if let keychainKey = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+           !keychainKey.isEmpty {
+            guard let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount),
+                  !bound.isEmpty else {
+                return false
+            }
+            return bound == currentOrigin
+        }
+
+        // Keychain empty → BuildConfig fallback. Attach only when the
+        // request targets the BuildConfig default origin (Debug dev path).
+        guard let defaultURL = BuildConfig.defaultServerURL,
+              let defaultOrigin = Self.normalizedOrigin(of: defaultURL) else {
+            return false
+        }
+        return defaultOrigin == currentOrigin
+    }
+
     // MARK: - Private Helpers
 
     /// Sends an HTTP request and decodes the response into `T`.
@@ -429,7 +505,8 @@ final class APIClient {
         body: Data?,
         contentType: String?,
         timeout: TimeInterval,
-        requiresAuth: Bool = true
+        requiresAuth: Bool = true,
+        probeWithCurrentKey: Bool = false
     ) async throws -> T {
         if requiresAuth {
             guard hasAPIKey else {
@@ -451,7 +528,7 @@ final class APIClient {
         if let contentType {
             urlRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        if let apiKey {
+        if let apiKey, shouldAttachKey(requiresAuth: requiresAuth, probe: probeWithCurrentKey) {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
 

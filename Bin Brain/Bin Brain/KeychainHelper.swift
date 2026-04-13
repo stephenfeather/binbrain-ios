@@ -93,8 +93,6 @@ struct KeychainHelper: KeychainReading {
         let query = baseQuery(for: key)
         let attributes: [String: Any] = [kSecValueData as String: data]
 
-        // TODO(#10): SecItemAdd is a required-reason API under Apple's 2024
-        // rules. Privacy manifest (PrivacyInfo.xcprivacy) is tracked in #10.
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         switch updateStatus {
         case errSecSuccess:
@@ -150,6 +148,14 @@ extension KeychainHelper {
     /// The Keychain account used for the API key.
     static let apiKeyAccount = "apiKey"
 
+    /// The Keychain account that records the host the API key is bound to.
+    ///
+    /// Storing a normalized `scheme + host + port` string here lets
+    /// `APIClient` refuse to attach the key when `baseURL` points at a
+    /// different origin, blocking silent credential exfiltration to
+    /// user-typed malicious URLs (F-04).
+    static let boundHostAccount = "apiKeyBoundHost"
+
     /// Moves the API key from `UserDefaults` into the Keychain on first launch.
     ///
     /// Idempotent and safe to call on every launch:
@@ -186,5 +192,72 @@ extension KeychainHelper {
         } catch {
             logger.error("API key migration failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Back-fills `apiKeyBoundHost` for installs that stored the API key
+    /// before host binding existed.
+    ///
+    /// Idempotent and safe to call on every launch. If `apiKey` is present
+    /// and `apiKeyBoundHost` is absent, the current `serverURL` from
+    /// `UserDefaults` (normalized) is written as the bound host.
+    ///
+    /// Missing or invalid `serverURL` is left unset — the user will be
+    /// prompted to re-bind on the next connection test, which is the
+    /// correct conservative default.
+    ///
+    /// - Parameters:
+    ///   - keychain: The Keychain facade. Defaults to `.shared`.
+    ///   - defaults: The `UserDefaults` suite that stores `serverURL`. Defaults to `.standard`.
+    static func migrateAPIKeyBoundHostIfNeeded(
+        keychain: KeychainReading = KeychainHelper.shared,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let key = keychain.readString(forKey: apiKeyAccount), !key.isEmpty else {
+            return
+        }
+        if let existing = keychain.readString(forKey: boundHostAccount), !existing.isEmpty {
+            return
+        }
+        guard let serverURL = defaults.string(forKey: "serverURL"),
+              let origin = APIClient.normalizedOrigin(of: serverURL) else {
+            return
+        }
+        do {
+            try keychain.writeString(origin, forKey: boundHostAccount)
+        } catch {
+            logger.error("apiKeyBoundHost migration failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+// MARK: - Atomic API-key binding
+
+extension KeychainReading {
+
+    /// Atomically writes the API key and its bound host.
+    ///
+    /// The key is written first; on success, the bound host is written.
+    /// If the bound-host write fails, the key is deleted so the Keychain
+    /// never holds an unbound key. If the key write fails, the error is
+    /// thrown without touching the bound host.
+    ///
+    /// - Parameters:
+    ///   - key: The API key string (non-empty).
+    ///   - boundHost: The normalized origin the key is valid for.
+    func writeAPIKeyBinding(key: String, boundHost: String) throws {
+        try writeString(key, forKey: KeychainHelper.apiKeyAccount)
+        do {
+            try writeString(boundHost, forKey: KeychainHelper.boundHostAccount)
+        } catch {
+            // Roll back to avoid an unbound key leaking on future requests.
+            try? removeValue(forKey: KeychainHelper.apiKeyAccount)
+            throw error
+        }
+    }
+
+    /// Removes both the API key and its bound host. Safe if either is absent.
+    func clearAPIKeyBinding() throws {
+        try removeValue(forKey: KeychainHelper.apiKeyAccount)
+        try removeValue(forKey: KeychainHelper.boundHostAccount)
     }
 }
