@@ -99,7 +99,7 @@ final class ScannerViewModel {
         guard phase == .awaitingPhoto else { return }
         Task {
             do {
-                try await scanner.capturePhoto()
+                _ = try await scanner.capturePhoto()
             } catch {
                 logger.error("capturePhoto failed: \(error.localizedDescription, privacy: .private)")
             }
