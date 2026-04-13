@@ -480,4 +480,75 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isConfirming, "isConfirming should be false after confirm completes")
         XCTAssertTrue(sut.failedIndices.isEmpty, "Upserts succeeded, confirmClass failures are fire-and-forget")
     }
+
+    // MARK: - Test 17: teachFailureCount tracks confirmClass failures
+
+    func testTeachFailureCountIncrementsOnClassFailures() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.teachFailureCount, 2,
+                       "teachFailureCount should equal the number of failed confirmClass calls")
+    }
+
+    // MARK: - Test 18: teachFailureCount stays zero on success
+
+    func testTeachFailureCountZeroWhenAllClassesSucceed() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.teachFailureCount, 0,
+                       "teachFailureCount should be 0 when all confirmClass calls succeed")
+    }
+
+    // MARK: - Test 19: teachFailureCount resets at start of confirm
+
+    func testTeachFailureCountResetsBetweenConfirms() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        // First confirm: teach failures
+        let failClient = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+        await sut.confirm(binId: "BIN-0001", apiClient: failClient)
+        XCTAssertEqual(sut.teachFailureCount, 2, "precondition: teach failures recorded")
+
+        // Second confirm: all succeed
+        let okClient = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+        await sut.confirm(binId: "BIN-0001", apiClient: okClient)
+
+        XCTAssertEqual(sut.teachFailureCount, 0,
+                       "teachFailureCount should reset at the start of each confirm")
+    }
 }

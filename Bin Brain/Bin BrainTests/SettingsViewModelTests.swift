@@ -137,6 +137,38 @@ final class SettingsViewModelTests: XCTestCase {
                        "connectionStatus should be .failed after a 500 health response")
     }
 
+    // MARK: - Test 3b: testConnection sets connectionErrorMessage on failure
+
+    func testTestConnectionSetsErrorMessageOnFailure() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertNotNil(sut.connectionErrorMessage,
+                        "connectionErrorMessage should be populated after a failing health check")
+    }
+
+    // MARK: - Test 3c: testConnection clears connectionErrorMessage on success
+
+    func testTestConnectionClearsErrorMessageOnSuccess() async {
+        let failClient = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
+        }
+        await sut.testConnection(apiClient: failClient)
+        XCTAssertNotNil(sut.connectionErrorMessage,
+                        "precondition: failure populates connectionErrorMessage")
+
+        let successClient = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+        }
+        await sut.testConnection(apiClient: successClient)
+
+        XCTAssertNil(sut.connectionErrorMessage,
+                     "connectionErrorMessage should clear on a successful health check")
+    }
+
     // MARK: - Test 4: connectionStatus resets to .unknown before each call
 
     func testTestConnectionResetsStatusBeforeCall() async {
