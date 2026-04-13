@@ -30,6 +30,9 @@ struct Bin_BrainApp: App {
         // Back-fill apiKeyBoundHost for installs that predate host binding (#13).
         // Must run after the apiKey migration because it reads that entry.
         KeychainHelper.migrateAPIKeyBoundHostIfNeeded()
+        // Apply complete file protection to the SwiftData store so queued
+        // pending uploads are unreadable when the device is locked (#9, F-08).
+        Self.applyFileProtection(to: sharedModelContainer)
     }
 
     // MARK: - SwiftData
@@ -86,6 +89,37 @@ struct Bin_BrainApp: App {
             }
         } catch {
             logger.error("Notification authorization failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    /// Applies `.completeFileProtection` to the SwiftData store file and its
+    /// SQLite WAL/SHM siblings. Idempotent and safe to call on every launch.
+    ///
+    /// File protection only enforces on a locked device, but the attribute is
+    /// persisted and readable in tests. Failures log but do not crash, since
+    /// the sidecar files may not exist on first launch.
+    static func applyFileProtection(to container: ModelContainer) {
+        guard let storeURL = container.configurations.first?.url else {
+            logger.error("[SwiftData] could not resolve store URL for file protection")
+            return
+        }
+        let parent = storeURL.deletingLastPathComponent()
+        let base = storeURL.lastPathComponent
+        let urls = [
+            storeURL,
+            parent.appendingPathComponent("\(base)-wal"),
+            parent.appendingPathComponent("\(base)-shm"),
+        ]
+        let fileManager = FileManager.default
+        for url in urls where fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.setAttributes(
+                    [.protectionKey: FileProtectionType.complete],
+                    ofItemAtPath: url.path
+                )
+            } catch {
+                logger.error("[SwiftData] failed to set file protection on \(url.lastPathComponent, privacy: .private): \(error.localizedDescription, privacy: .private)")
+            }
         }
     }
 }
