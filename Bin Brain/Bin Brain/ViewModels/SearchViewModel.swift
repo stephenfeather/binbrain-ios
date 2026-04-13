@@ -37,6 +37,26 @@ final class SearchViewModel {
     // MARK: - Private State
 
     private var searchTask: Task<Void, Never>?
+    private let defaults: UserDefaults
+
+    // MARK: - Initializer
+
+    /// Creates a `SearchViewModel`, reading the user's similarity threshold from `defaults`.
+    ///
+    /// - Parameter defaults: The `UserDefaults` suite to read. Defaults to `.standard`.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    // MARK: - Helpers
+
+    /// Whether tapping a search result row should navigate to the bin detail view.
+    ///
+    /// Returns `false` when the result has no associated bins, preventing navigation to
+    /// `BinDetailView(binId: "")` which renders a broken detail screen.
+    static func shouldEnableNavigation(for result: SearchResultItem) -> Bool {
+        !result.bins.isEmpty
+    }
 
     // MARK: - Actions
 
@@ -69,8 +89,11 @@ final class SearchViewModel {
     func performSearch(apiClient: APIClient) async {
         guard !query.isEmpty else { results = []; error = nil; return }
         isSearching = true
-        let minScoreRaw = UserDefaults.standard.double(forKey: "similarityThreshold")
-        let minScore: Double? = minScoreRaw > 0 ? minScoreRaw : nil
+        // object(forKey:) distinguishes "user set 0" from "never set". If the user
+        // deliberately picked 0, pass it through; the server's min_score=0 excludes
+        // only results with negative scores (distance > 1.0), which differs from nil
+        // (no filter at all) per the /search endpoint contract in openapi.yaml.
+        let minScore = defaults.object(forKey: "similarityThreshold") as? Double
         do {
             let response = try await apiClient.search(query: query, minScore: minScore)
             results = response.results

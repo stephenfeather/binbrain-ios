@@ -52,7 +52,12 @@ struct SearchView: View {
                 .foregroundStyle(.secondary)
         } else {
             List(viewModel.results, id: \.itemId) { result in
-                NavigationLink(destination: BinDetailView(binId: result.bins.first ?? "")) {
+                if SearchViewModel.shouldEnableNavigation(for: result),
+                   let binId = result.bins.first {
+                    NavigationLink(destination: BinDetailView(binId: binId)) {
+                        SearchResultRowView(result: result)
+                    }
+                } else {
                     SearchResultRowView(result: result)
                 }
             }

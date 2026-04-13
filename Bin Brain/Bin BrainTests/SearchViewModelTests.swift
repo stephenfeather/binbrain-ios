@@ -42,19 +42,24 @@ final class SearchMockURLProtocol: URLProtocol {
 final class SearchViewModelTests: XCTestCase {
 
     var sut: SearchViewModel!
+    var testDefaults: UserDefaults!
+    var suiteName: String!
 
     // MARK: - Lifecycle
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.removeObject(forKey: "similarityThreshold")
-        sut = SearchViewModel()
+        suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        testDefaults = UserDefaults(suiteName: suiteName)!
+        sut = SearchViewModel(defaults: testDefaults)
     }
 
     override func tearDown() async throws {
         SearchMockURLProtocol.requestHandler = nil
-        UserDefaults.standard.removeObject(forKey: "similarityThreshold")
+        testDefaults.removePersistentDomain(forName: suiteName)
         sut = nil
+        testDefaults = nil
+        suiteName = nil
         try await super.tearDown()
     }
 
@@ -234,5 +239,81 @@ final class SearchViewModelTests: XCTestCase {
 
         XCTAssertTrue(capturedURL?.absoluteString.contains("q=widget") == true,
                       "URL should contain q=widget")
+    }
+
+    // MARK: - Test 8: explicit threshold of 0 is passed to the API (Issue #7)
+
+    func testPerformSearchPassesExplicitZeroThreshold() async {
+        testDefaults.set(0.0, forKey: "similarityThreshold")
+        // Re-create sut so it reads the just-persisted value at call time.
+        sut = SearchViewModel(defaults: testDefaults)
+
+        var capturedURL: URL?
+        let client = makeMockAPIClient { [self] request in
+            capturedURL = request.url
+            return (mockResponse(statusCode: 200, for: request), searchSuccessJSON)
+        }
+        sut.query = "widget"
+        await sut.performSearch(apiClient: client)
+
+        let absolute = capturedURL?.absoluteString ?? ""
+        XCTAssertTrue(absolute.contains("min_score=0"),
+                      "When the user explicitly sets threshold to 0, min_score=0 must be sent to the server. Got: \(absolute)")
+    }
+
+    // MARK: - Test 9: unset threshold omits min_score (Issue #7)
+
+    func testPerformSearchOmitsMinScoreWhenUnset() async {
+        // testDefaults has no similarityThreshold key
+        var capturedURL: URL?
+        let client = makeMockAPIClient { [self] request in
+            capturedURL = request.url
+            return (mockResponse(statusCode: 200, for: request), searchSuccessJSON)
+        }
+        sut.query = "widget"
+        await sut.performSearch(apiClient: client)
+
+        let absolute = capturedURL?.absoluteString ?? ""
+        XCTAssertFalse(absolute.contains("min_score"),
+                       "When threshold is unset, min_score should be omitted from the request. Got: \(absolute)")
+    }
+
+    // MARK: - Test 10: user-set threshold is passed through (Issue #7)
+
+    func testPerformSearchPassesUserThreshold() async {
+        testDefaults.set(0.7, forKey: "similarityThreshold")
+        sut = SearchViewModel(defaults: testDefaults)
+
+        var capturedURL: URL?
+        let client = makeMockAPIClient { [self] request in
+            capturedURL = request.url
+            return (mockResponse(statusCode: 200, for: request), searchSuccessJSON)
+        }
+        sut.query = "widget"
+        await sut.performSearch(apiClient: client)
+
+        let absolute = capturedURL?.absoluteString ?? ""
+        XCTAssertTrue(absolute.contains("min_score=0.7"),
+                      "User-set threshold should be forwarded as min_score. Got: \(absolute)")
+    }
+
+    // MARK: - Test 11: navigation disabled when bins empty (Issue #5)
+
+    func testShouldEnableNavigationReturnsFalseWhenBinsEmpty() {
+        let result = SearchResultItem(
+            itemId: 42, name: "Orphan", category: nil, upc: nil, score: 0.9, bins: []
+        )
+        XCTAssertFalse(SearchViewModel.shouldEnableNavigation(for: result),
+                       "Navigation must be disabled when result.bins is empty")
+    }
+
+    // MARK: - Test 12: navigation enabled when bins present (Issue #5)
+
+    func testShouldEnableNavigationReturnsTrueWhenBinsPresent() {
+        let result = SearchResultItem(
+            itemId: 42, name: "Widget", category: nil, upc: nil, score: 0.9, bins: ["BIN-0001"]
+        )
+        XCTAssertTrue(SearchViewModel.shouldEnableNavigation(for: result),
+                      "Navigation must be enabled when result.bins has at least one bin")
     }
 }
