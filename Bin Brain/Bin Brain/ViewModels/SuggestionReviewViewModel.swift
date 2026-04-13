@@ -42,12 +42,12 @@ struct EditableSuggestion: Identifiable {
 
 // MARK: - SuggestionReviewViewModel
 
+private let logger = Logger(subsystem: "com.binbrain.app", category: "SuggestionReview")
+
 /// Manages the review + confirmation step of the cataloging workflow.
 ///
 /// Call `loadSuggestions(_:)` to populate from `AnalysisViewModel.suggestions`.
 /// Then call `confirm(binId:apiClient:)` to upsert all included items.
-private let logger = Logger(subsystem: "com.binbrain.app", category: "SuggestionReview")
-
 @Observable
 final class SuggestionReviewViewModel {
 
