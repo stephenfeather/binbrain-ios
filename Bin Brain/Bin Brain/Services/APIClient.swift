@@ -433,14 +433,14 @@ final class APIClient {
     ) async throws -> T {
         if requiresAuth {
             guard hasAPIKey else {
-                logger.warning("\(method) \(path) BLOCKED: no API key configured")
+                logger.warning("\(method, privacy: .public) \(path, privacy: .private) BLOCKED: no API key configured")
                 throw APIClientError.missingAPIKey
             }
         }
 
         let urlString = baseURL + path
         guard let url = URL(string: urlString) else {
-            logger.error("Invalid URL: \(urlString)")
+            logger.error("Invalid URL: \(urlString, privacy: .private)")
             throw APIClientError.invalidURL(urlString)
         }
         var urlRequest = URLRequest(url: url, timeoutInterval: timeout)
@@ -456,40 +456,42 @@ final class APIClient {
         }
 
         let bodySize = body.map { "\($0.count) bytes" } ?? "none"
-        logger.debug("\(method) \(urlString) (body: \(bodySize), timeout: \(timeout)s)")
+        logger.debug("\(method, privacy: .public) \(urlString, privacy: .private) (body: \(bodySize, privacy: .public), timeout: \(timeout, privacy: .public)s)")
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: urlRequest)
         } catch {
-            logger.error("\(method) \(path) NETWORK ERROR: \(error.localizedDescription)")
+            logger.error("\(method, privacy: .public) \(path, privacy: .private) NETWORK ERROR: \(error.localizedDescription, privacy: .private)")
             throw error
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            logger.error("\(method) \(path) ERROR: non-HTTP response")
+            logger.error("\(method, privacy: .public) \(path, privacy: .private) ERROR: non-HTTP response")
             throw APIClientError.unexpectedStatusCode(-1)
         }
 
+        logger.debug("\(method, privacy: .public) \(path, privacy: .private) → \(httpResponse.statusCode, privacy: .public) (\(data.count, privacy: .public) bytes)")
+        #if DEBUG
         let preview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary \(data.count) bytes>"
-        logger.debug("\(method) \(path) → \(httpResponse.statusCode) (\(data.count) bytes)")
-        logger.debug("Response: \(preview)")
+        logger.debug("Response: \(preview, privacy: .private)")
+        #endif
 
         if (200...299).contains(httpResponse.statusCode) {
             do {
                 let decoded = try JSONDecoder.binBrain.decode(T.self, from: data)
                 return decoded
             } catch {
-                logger.error("\(method) \(path) DECODE ERROR: \(error.localizedDescription)")
+                logger.error("\(method, privacy: .public) \(path, privacy: .private) DECODE ERROR: \(error.localizedDescription, privacy: .private)")
                 throw error
             }
         } else {
             if let apiError = try? JSONDecoder.binBrain.decode(APIError.self, from: data) {
-                logger.error("\(method) \(path) API ERROR: \(apiError.localizedDescription)")
+                logger.error("\(method, privacy: .public) \(path, privacy: .private) API ERROR: \(apiError.localizedDescription, privacy: .private)")
                 throw apiError
             }
-            logger.error("\(method) \(path) HTTP ERROR: \(httpResponse.statusCode)")
+            logger.error("\(method, privacy: .public) \(path, privacy: .private) HTTP ERROR: \(httpResponse.statusCode, privacy: .public)")
             throw APIClientError.unexpectedStatusCode(httpResponse.statusCode)
         }
     }

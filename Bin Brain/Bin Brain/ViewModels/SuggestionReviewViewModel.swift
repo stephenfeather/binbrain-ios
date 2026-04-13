@@ -118,7 +118,7 @@ final class SuggestionReviewViewModel {
         failedIndices = []
         teachFailureCount = 0
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
-        logger.debug("confirm: \(self.editableSuggestions.count) total, \(includedIndices.count) included")
+        logger.debug("confirm: \(self.editableSuggestions.count, privacy: .public) total, \(includedIndices.count, privacy: .public) included")
         for idx in includedIndices {
             let s = editableSuggestions[idx]
             let quantity = Double(s.editedQuantity)
@@ -146,7 +146,7 @@ final class SuggestionReviewViewModel {
             do {
                 _ = try await apiClient.confirmClass(className: s.editedName, category: category)
             } catch {
-                logger.error("confirmClass failed for '\(s.editedName)': \(error.localizedDescription)")
+                logger.error("confirmClass failed for '\(s.editedName, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 teachFailureCount += 1
             }
         }

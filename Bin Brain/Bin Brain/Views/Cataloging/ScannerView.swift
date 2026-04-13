@@ -83,10 +83,10 @@ struct ScannerView: UIViewControllerRepresentable {
             Task {
                 do {
                     let photo = try await scanner.capturePhoto()
-                    logger.debug("capturePhoto returned: \(photo.size.width)x\(photo.size.height)")
+                    logger.debug("capturePhoto returned: \(photo.size.width, privacy: .public)x\(photo.size.height, privacy: .public)")
                     photoCallback(photo)
                 } catch {
-                    logger.error("capturePhoto error: \(error.localizedDescription)")
+                    logger.error("capturePhoto error: \(error.localizedDescription, privacy: .private)")
                 }
             }
         }
@@ -95,7 +95,7 @@ struct ScannerView: UIViewControllerRepresentable {
         do {
             try scanner.startScanning()
         } catch {
-            logger.error("Failed to start scanning: \(error.localizedDescription)")
+            logger.error("Failed to start scanning: \(error.localizedDescription, privacy: .private)")
         }
         return container
     }

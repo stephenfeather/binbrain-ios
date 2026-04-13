@@ -173,7 +173,7 @@ final class SettingsViewModel {
                 connectionStatus = .connectedNoKey
             }
         } catch {
-            logger.error("testConnection failed: \(error.localizedDescription)")
+            logger.error("testConnection failed: \(error.localizedDescription, privacy: .private)")
             connectionStatus = .unreachable(errorMessage: error.localizedDescription)
             connectionErrorMessage = error.localizedDescription
         }

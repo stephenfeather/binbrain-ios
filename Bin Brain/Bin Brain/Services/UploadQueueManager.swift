@@ -70,7 +70,7 @@ final class UploadQueueManager {
                 .filter { $0.status == .pending }
                 .sorted { $0.queuedAt < $1.queuedAt }
         } catch {
-            logger.error("Failed to fetch pending uploads: \(error.localizedDescription)")
+            logger.error("Failed to fetch pending uploads: \(error.localizedDescription, privacy: .private)")
             return
         }
 
@@ -90,7 +90,7 @@ final class UploadQueueManager {
             // Mark as in-progress before the network call.
             upload.status = .uploading
             do { try context.save() } catch {
-                logger.error("Save after marking .uploading failed: \(error.localizedDescription)")
+                logger.error("Save after marking .uploading failed: \(error.localizedDescription, privacy: .private)")
             }
 
             do {
@@ -102,15 +102,15 @@ final class UploadQueueManager {
                 // Success: remove from queue.
                 context.delete(upload)
                 do { try context.save() } catch {
-                    logger.error("Save after delete failed: \(error.localizedDescription)")
+                    logger.error("Save after delete failed: \(error.localizedDescription, privacy: .private)")
                 }
             } catch {
                 // Failure: increment retry count and keep pending for next drain cycle.
-                logger.error("Ingest failed for bin '\(upload.binId)': \(error.localizedDescription)")
+                logger.error("Ingest failed for bin '\(upload.binId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 upload.retryCount += 1
                 upload.status = .pending
                 do { try context.save() } catch {
-                    logger.error("Save after failure handling failed: \(error.localizedDescription)")
+                    logger.error("Save after failure handling failed: \(error.localizedDescription, privacy: .private)")
                 }
             }
 
@@ -126,7 +126,7 @@ final class UploadQueueManager {
         do {
             all = try context.fetch(FetchDescriptor<PendingUpload>())
         } catch {
-            logger.error("clearQueue fetch failed: \(error.localizedDescription)")
+            logger.error("clearQueue fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
         for upload in all {
@@ -135,7 +135,7 @@ final class UploadQueueManager {
         do {
             try context.save()
         } catch {
-            logger.error("clearQueue save failed: \(error.localizedDescription)")
+            logger.error("clearQueue save failed: \(error.localizedDescription, privacy: .private)")
         }
         refreshCount(context: context)
     }
@@ -155,7 +155,7 @@ final class UploadQueueManager {
         do {
             all = try context.fetch(FetchDescriptor<PendingUpload>())
         } catch {
-            logger.error("pruneExpired fetch failed: \(error.localizedDescription)")
+            logger.error("pruneExpired fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
         var pruned = false
@@ -167,7 +167,7 @@ final class UploadQueueManager {
             do {
                 try context.save()
             } catch {
-                logger.error("pruneExpired save failed: \(error.localizedDescription)")
+                logger.error("pruneExpired save failed: \(error.localizedDescription, privacy: .private)")
             }
             refreshCount(context: context)
         }
@@ -184,7 +184,7 @@ final class UploadQueueManager {
         do {
             all = try context.fetch(FetchDescriptor<PendingUpload>())
         } catch {
-            logger.error("refreshCount fetch failed: \(error.localizedDescription)")
+            logger.error("refreshCount fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
         pendingCount = all.filter { $0.status == .pending || $0.status == .failed }.count

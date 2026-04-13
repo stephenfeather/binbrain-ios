@@ -82,7 +82,7 @@ struct Bin_BrainApp: App {
                 logger.info("User declined notification permission")
             }
         } catch {
-            logger.error("Notification authorization failed: \(error.localizedDescription)")
+            logger.error("Notification authorization failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 }

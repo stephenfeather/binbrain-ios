@@ -99,7 +99,7 @@ final class SearchViewModel {
             results = response.results
             error = nil
         } catch {
-            logger.error("search failed: \(error.localizedDescription)")
+            logger.error("search failed: \(error.localizedDescription, privacy: .private)")
             results = []
             self.error = error.localizedDescription
         }

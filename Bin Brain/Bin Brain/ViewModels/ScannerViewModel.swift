@@ -80,7 +80,7 @@ final class ScannerViewModel {
             do {
                 try await scanner.capturePhoto()
             } catch {
-                logger.error("capturePhoto failed: \(error.localizedDescription)")
+                logger.error("capturePhoto failed: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
