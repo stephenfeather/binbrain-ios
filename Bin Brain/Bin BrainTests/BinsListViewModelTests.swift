@@ -47,12 +47,14 @@ final class BinsListViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        UserDefaults.standard.set("test-key", forKey: "apiKey")
         sut = BinsListViewModel()
     }
 
     override func tearDown() async throws {
         BinsListMockURLProtocol.requestHandler = nil
         sut = nil
+        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
