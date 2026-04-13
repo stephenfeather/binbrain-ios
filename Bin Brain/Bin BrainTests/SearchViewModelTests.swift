@@ -39,6 +39,7 @@ final class SearchMockURLProtocol: URLProtocol {
 
 // MARK: - SearchViewModelTests
 
+@MainActor
 final class SearchViewModelTests: XCTestCase {
 
     var sut: SearchViewModel!

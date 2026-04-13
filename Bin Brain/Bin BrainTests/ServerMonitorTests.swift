@@ -51,6 +51,7 @@ private func makeServerMonitorResponse(statusCode: Int) -> HTTPURLResponse {
 
 // MARK: - ServerMonitorTests
 
+@MainActor
 final class ServerMonitorTests: XCTestCase {
 
     var sut: ServerMonitor!

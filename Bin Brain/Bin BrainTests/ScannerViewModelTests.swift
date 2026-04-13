@@ -17,6 +17,7 @@ final class MockCapturedPhoto: PhotoCapturing {}
 
 // MARK: - ScannerViewModelTests
 
+@MainActor
 final class ScannerViewModelTests: XCTestCase {
 
     var sut: ScannerViewModel!

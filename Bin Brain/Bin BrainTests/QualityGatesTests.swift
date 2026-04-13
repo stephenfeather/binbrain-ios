@@ -8,6 +8,7 @@ import XCTest
 import CoreGraphics
 @testable import Bin_Brain
 
+@MainActor
 final class QualityGatesTests: XCTestCase {
 
     private let gates = QualityGates()

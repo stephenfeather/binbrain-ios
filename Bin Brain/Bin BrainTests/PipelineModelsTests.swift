@@ -7,6 +7,7 @@
 import XCTest
 @testable import Bin_Brain
 
+@MainActor
 final class PipelineModelsTests: XCTestCase {
 
     // MARK: - JSON Encoder/Decoder

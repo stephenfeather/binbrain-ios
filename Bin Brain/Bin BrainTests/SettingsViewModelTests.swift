@@ -39,6 +39,7 @@ final class SettingsMockURLProtocol: URLProtocol {
 
 // MARK: - SettingsViewModelTests
 
+@MainActor
 final class SettingsViewModelTests: XCTestCase {
 
     var sut: SettingsViewModel!
