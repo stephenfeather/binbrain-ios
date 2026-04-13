@@ -73,9 +73,9 @@ binbrain-ios/
 
 ### Backend Setup
 
-The backend server runs separately on a Raspberry Pi 5. Configure the server URL in the app's Settings tab (default: `https://raspberrypi.local:8000`).
+The backend server runs separately on a Raspberry Pi 5. Configure the server URL in the app's Settings tab.
 
-TLS is handled via `mkcert` — trust the root CA on your device to avoid certificate warnings. No `NSAllowsArbitraryLoads` is required.
+For a TLS-terminated deployment, `mkcert` provides a local CA and trusted certificates; install the root CA on each device. For home-LAN deployments without TLS, the app currently ships with `NSAllowsArbitraryLoads` enabled — see the Security section below for the implications and threat model.
 
 ## API
 
@@ -91,8 +91,19 @@ The backend API is fully specified in [`openapi.yaml`](./openapi.yaml). Key endp
 | `GET /bins/{id}` | Get bin contents |
 | `GET /search?q=` | Semantic search |
 
+## Security & Threat Model
+
+Bin Brain is designed for **single-user, home-LAN deployment against your own self-hosted backend**. It is not designed for, and has not been hardened for, multi-tenant or internet-exposed use. The expected deployment environment has these properties:
+
+- A small number of trusted devices on a private network
+- A backend you control (the Raspberry Pi running Bin Brain server)
+- TLS is optional — many home LANs do not run a CA or don't want to manage `mkcert` trust
+- Physical device security is the user's responsibility (device passcode, automatic lock)
+
+Under this threat model, some common iOS security postures (certificate pinning, forced HTTPS, App-Store privacy manifest) are intentionally deprioritized. Others — protecting the API key at rest, avoiding credential leakage to misconfigured URLs, not logging PII — still matter.
+
+A full read-only security assessment is kept in the repository at [`SECURITY_ASSESSMENT_130426.md`](./SECURITY_ASSESSMENT_130426.md). Findings are triaged against the threat model above: findings tagged as transport-layer (ATS, cert pinning, cleartext default) are documented but accepted for home-LAN use; findings about credential handling (Keychain, URL-to-key binding, log redaction) and data-at-rest (file protection class) are tracked for remediation.
+
 ## Status
 
-**Pre-implementation.** Specification and API contract are complete. iOS domain code has not yet been written — the Xcode project currently contains the default template only.
-
-See [`SPEC.md`](./SPEC.md) for the full product specification including navigation structure, UI flows, data model, and architectural decisions.
+iOS client implements the core cataloguing workflow: QR scan → photo capture → on-device image pipeline (quality gates, crop, extract metadata) → upload → AI-assisted suggestion review → confirm → search. See [`SPEC.md`](./SPEC.md) for the full product specification including navigation structure, UI flows, data model, and architectural decisions.
