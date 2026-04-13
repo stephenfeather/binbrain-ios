@@ -10,6 +10,25 @@ import Observation
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "APIClient")
 
+// MARK: - URL Path Encoding
+
+private extension String {
+    /// Percent-encodes the receiver for use as a single URL path component.
+    ///
+    /// Defense-in-depth against IDs that contain `/`, `?`, `#`, or other
+    /// reserved characters. Applied to every ID interpolated into a path,
+    /// not just scanner-sourced values (see issue #15 / F-07). Returns the
+    /// original string unchanged if encoding fails (rare — only with
+    /// malformed Unicode scalars).
+    var urlPathComponentEncoded: String {
+        // `.urlPathAllowed` permits `/` because paths contain segment
+        // separators; for a single segment we must also encode `/`,
+        // otherwise a bin ID like `../../foo` would traverse the path.
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
+    }
+}
+
 // MARK: - Error Types
 
 /// Errors thrown by `APIClient` itself (not decoded from the server).
@@ -95,7 +114,7 @@ final class APIClient {
     ///   - photoId: The photo ID returned by a prior `ingest` call.
     ///   - width: Optional width in pixels (16–4096). `nil` returns the original.
     func photoFileURL(photoId: Int, width: Int? = nil) -> URL? {
-        var path = "\(baseURL)/photos/\(photoId)/file"
+        var path = "\(baseURL)/photos/\(String(photoId).urlPathComponentEncoded)/file"
         if let width {
             path += "?w=\(width)"
         }
@@ -140,7 +159,7 @@ final class APIClient {
     /// - Parameter binId: The alphanumeric bin identifier (e.g. `BIN-0001`).
     func getBin(_ binId: String) async throws -> GetBinResponse {
         try await request(
-            path: "/bins/\(binId)", method: "GET", body: nil, contentType: nil, timeout: 10
+            path: "/bins/\(binId.urlPathComponentEncoded)", method: "GET", body: nil, contentType: nil, timeout: 10
         )
     }
 
@@ -182,7 +201,7 @@ final class APIClient {
     /// - Parameter photoId: The photo ID returned by a prior `ingest` call.
     func suggest(photoId: Int) async throws -> PhotoSuggestResponse {
         try await request(
-            path: "/photos/\(photoId)/suggest",
+            path: "/photos/\(String(photoId).urlPathComponentEncoded)/suggest",
             method: "GET",
             body: nil,
             contentType: nil,
@@ -237,7 +256,7 @@ final class APIClient {
     @discardableResult
     func removeItem(itemId: Int, binId: String) async throws -> RemoveItemResponse {
         try await request(
-            path: "/bins/\(binId)/items/\(itemId)",
+            path: "/bins/\(binId.urlPathComponentEncoded)/items/\(String(itemId).urlPathComponentEncoded)",
             method: "DELETE",
             body: nil,
             contentType: nil,
@@ -264,7 +283,7 @@ final class APIClient {
         if let confidence { fields["confidence"] = confidence }
         let body = try JSONSerialization.data(withJSONObject: fields)
         return try await request(
-            path: "/bins/\(binId)/items/\(itemId)",
+            path: "/bins/\(binId.urlPathComponentEncoded)/items/\(String(itemId).urlPathComponentEncoded)",
             method: "PATCH",
             body: body,
             contentType: "application/json",
@@ -401,7 +420,7 @@ final class APIClient {
     @discardableResult
     func deleteLocation(_ locationId: Int) async throws -> DeleteLocationResponse {
         try await request(
-            path: "/locations/\(locationId)",
+            path: "/locations/\(String(locationId).urlPathComponentEncoded)",
             method: "DELETE",
             body: nil,
             contentType: nil,
@@ -423,7 +442,7 @@ final class APIClient {
             body = try JSONSerialization.data(withJSONObject: ["location_id": NSNull()])
         }
         return try await request(
-            path: "/bins/\(binId)/location",
+            path: "/bins/\(binId.urlPathComponentEncoded)/location",
             method: "PATCH",
             body: body,
             contentType: "application/json",

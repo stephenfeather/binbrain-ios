@@ -54,17 +54,38 @@ final class ScannerViewModel {
     /// The photo captured after QR detection; non-nil only in the `.captured` phase.
     private(set) var capturedPhoto: (any PhotoCapturing)? = nil
 
+    /// User-facing message when the most recent QR payload is rejected by the
+    /// bin-id format check. Cleared on the next successful scan or `reset()`.
+    var scanError: String? = nil
+
+    // MARK: - Validation
+
+    /// Strict bin-id pattern: 1–32 ASCII letters, digits, hyphens, or underscores.
+    ///
+    /// Rejects anything that could manipulate the URL path (`/`, `.`, `?`, `#`, `%`),
+    /// inject query parameters, or carry non-ASCII content. See issue #15 / F-07.
+    private static let binIdPattern = #"^[A-Za-z0-9_-]{1,32}$"#
+
     // MARK: - Actions
 
     /// Handles a decoded QR code from the scanner.
     ///
-    /// Transitions `phase` to `.awaitingPhoto` and stores the bin ID.
+    /// Trims whitespace, validates the payload against `binIdPattern`, and
+    /// transitions `phase` to `.awaitingPhoto` on success. On rejection,
+    /// sets `scanError` and leaves `phase` at `.scanning` so the user can retry.
     /// Ignores duplicate QR events when the phase is already past `.scanning`.
     ///
     /// - Parameter code: The raw string payload from the QR barcode.
     func qrDetected(_ code: String) {
         guard phase == .scanning else { return }
-        scannedBinId = code
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.range(of: Self.binIdPattern, options: .regularExpression) != nil else {
+            logger.warning("Rejected QR payload: format mismatch")
+            scanError = "QR payload doesn't match expected bin-id format"
+            return
+        }
+        scanError = nil
+        scannedBinId = trimmed
         phase = .awaitingPhoto
     }
 
@@ -100,5 +121,6 @@ final class ScannerViewModel {
         phase = .scanning
         scannedBinId = nil
         capturedPhoto = nil
+        scanError = nil
     }
 }

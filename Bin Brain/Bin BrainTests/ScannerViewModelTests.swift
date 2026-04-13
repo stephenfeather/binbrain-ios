@@ -100,4 +100,88 @@ final class ScannerViewModelTests: XCTestCase {
         XCTAssertEqual(sut.phase, .awaitingPhoto, "qrDetected after reset should transition to .awaitingPhoto")
         XCTAssertEqual(sut.scannedBinId, "BIN-0042", "scannedBinId should reflect the new code after reset")
     }
+
+    // MARK: - Issue #15 / F-07: QR payload sanitization
+
+    func testQRDetectedAcceptsValidBinId() {
+        sut.qrDetected("BIN-0001")
+        XCTAssertEqual(sut.scannedBinId, "BIN-0001")
+        XCTAssertEqual(sut.phase, .awaitingPhoto)
+        XCTAssertNil(sut.scanError)
+    }
+
+    func testQRDetectedTrimsWhitespace() {
+        sut.qrDetected("  BIN-0001\n")
+        XCTAssertEqual(sut.scannedBinId, "BIN-0001", "Leading/trailing whitespace must be trimmed")
+        XCTAssertEqual(sut.phase, .awaitingPhoto)
+    }
+
+    func testQRDetectedRejectsQueryStringInjection() {
+        sut.qrDetected("BIN-0001?admin=1")
+        XCTAssertNil(sut.scannedBinId, "Query-param injection must be rejected")
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsPathTraversal() {
+        sut.qrDetected("../../OTHER")
+        XCTAssertNil(sut.scannedBinId, "Path traversal sequences must be rejected")
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsFragment() {
+        sut.qrDetected("BIN-0001#frag")
+        XCTAssertNil(sut.scannedBinId, "URL fragments must be rejected")
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsEmptyPayload() {
+        sut.qrDetected("")
+        XCTAssertNil(sut.scannedBinId)
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsWhitespaceOnlyPayload() {
+        sut.qrDetected("   ")
+        XCTAssertNil(sut.scannedBinId)
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsOverlongPayload() {
+        let tooLong = String(repeating: "A", count: 33)
+        sut.qrDetected(tooLong)
+        XCTAssertNil(sut.scannedBinId, "Payloads over 32 characters must be rejected")
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedRejectsNonASCII() {
+        sut.qrDetected("BIN-0001é")
+        XCTAssertNil(sut.scannedBinId, "Non-ASCII characters must be rejected")
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    func testQRDetectedClearsErrorOnValidRetry() {
+        sut.qrDetected("BAD?x=1")
+        XCTAssertNotNil(sut.scanError)
+
+        sut.qrDetected("BIN-0002")
+
+        XCTAssertNil(sut.scanError, "scanError should clear once a valid payload is accepted")
+        XCTAssertEqual(sut.scannedBinId, "BIN-0002")
+    }
+
+    func testResetClearsScanError() {
+        sut.qrDetected("BAD/path")
+        XCTAssertNotNil(sut.scanError)
+
+        sut.reset()
+
+        XCTAssertNil(sut.scanError, "reset should clear scanError")
+    }
 }
