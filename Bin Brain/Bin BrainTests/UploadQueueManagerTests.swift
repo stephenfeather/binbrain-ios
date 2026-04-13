@@ -55,7 +55,10 @@ private func makeMockAPIClient(
     if let handler { UploadQueueMockURLProtocol.requestHandler = handler }
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [UploadQueueMockURLProtocol.self]
-    return APIClient(session: URLSession(configuration: config))
+    return APIClient(
+        session: URLSession(configuration: config),
+        keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+    )
 }
 
 private let successIngestJSON = Data("""
@@ -83,13 +86,10 @@ final class UploadQueueManagerTests: XCTestCase {
         container = try ModelContainer(for: schema, configurations: config)
         context = ModelContext(container)
         sut = UploadQueueManager()
-        // Ensure APIClient.hasAPIKey returns true during tests.
-        UserDefaults.standard.set("test-key", forKey: "apiKey")
     }
 
     override func tearDown() async throws {
         UploadQueueMockURLProtocol.requestHandler = nil
-        UserDefaults.standard.removeObject(forKey: "apiKey")
         container = nil
         context = nil
         sut = nil

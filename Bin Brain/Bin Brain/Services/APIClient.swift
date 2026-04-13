@@ -49,18 +49,19 @@ final class APIClient {
     }
 
     /// The API key read at call time, resolved in priority order:
-    /// `UserDefaults("apiKey")` (when non-empty) → `BuildConfig.defaultAPIKey`
+    /// Keychain (via the injected `keychain`) → `BuildConfig.defaultAPIKey`
     /// (from `Development.xcconfig` via `Info.plist` in Debug) → `nil`.
     ///
     /// Sent as the `X-API-Key` header on every request when non-nil.
     var apiKey: String? {
-        if let stored = UserDefaults.standard.string(forKey: "apiKey"), !stored.isEmpty {
+        if let stored = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+           !stored.isEmpty {
             return stored
         }
         return BuildConfig.defaultAPIKey
     }
 
-    /// Whether a non-empty API key is configured in `UserDefaults`.
+    /// Whether a non-empty API key is configured.
     var hasAPIKey: Bool {
         guard let key = apiKey else { return false }
         return !key.isEmpty
@@ -69,14 +70,18 @@ final class APIClient {
     // MARK: - Private Properties
 
     private let session: URLSession
+    private let keychain: KeychainReading
 
     // MARK: - Initializer
 
-    /// Creates an `APIClient` with an optional `URLSession` for testability.
+    /// Creates an `APIClient` with an optional `URLSession` and `KeychainReading` for testability.
     ///
-    /// - Parameter session: The session used for all network calls. Defaults to `.shared`.
-    init(session: URLSession = .shared) {
+    /// - Parameters:
+    ///   - session: The session used for all network calls. Defaults to `.shared`.
+    ///   - keychain: The Keychain facade used to resolve the API key. Defaults to `KeychainHelper.shared`.
+    init(session: URLSession = .shared, keychain: KeychainReading = KeychainHelper.shared) {
         self.session = session
+        self.keychain = keychain
     }
 
     // MARK: - Public API

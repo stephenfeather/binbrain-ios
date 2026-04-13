@@ -21,6 +21,14 @@ struct Bin_BrainApp: App {
     @State private var uploadQueueManager = UploadQueueManager()
     @State private var serverMonitor = ServerMonitor()
 
+    // MARK: - Initializer
+
+    init() {
+        // One-time migration of the API key out of UserDefaults into Keychain.
+        // Idempotent — safe to run on every cold start.
+        KeychainHelper.migrateAPIKeyFromUserDefaultsIfNeeded()
+    }
+
     // MARK: - SwiftData
 
     var sharedModelContainer: ModelContainer = {

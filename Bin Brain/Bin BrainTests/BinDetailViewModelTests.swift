@@ -47,14 +47,12 @@ final class BinDetailViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.set("test-key", forKey: "apiKey")
         sut = BinDetailViewModel()
     }
 
     override func tearDown() async throws {
         BinDetailMockURLProtocol.requestHandler = nil
         sut = nil
-        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
@@ -66,7 +64,10 @@ final class BinDetailViewModelTests: XCTestCase {
         BinDetailMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [BinDetailMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+        )
     }
 
     private func mockResponse(statusCode: Int, for request: URLRequest) -> HTTPURLResponse {

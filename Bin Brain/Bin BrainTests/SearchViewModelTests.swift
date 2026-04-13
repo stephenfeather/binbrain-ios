@@ -49,7 +49,6 @@ final class SearchViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.set("test-key", forKey: "apiKey")
         suiteName = "SearchViewModelTests.\(UUID().uuidString)"
         testDefaults = UserDefaults(suiteName: suiteName)!
         sut = SearchViewModel(defaults: testDefaults)
@@ -61,7 +60,6 @@ final class SearchViewModelTests: XCTestCase {
         sut = nil
         testDefaults = nil
         suiteName = nil
-        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
@@ -73,7 +71,10 @@ final class SearchViewModelTests: XCTestCase {
         SearchMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SearchMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+        )
     }
 
     private func mockResponse(statusCode: Int, for request: URLRequest) -> HTTPURLResponse {

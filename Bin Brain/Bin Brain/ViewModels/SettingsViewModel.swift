@@ -59,6 +59,9 @@ final class SettingsViewModel {
     /// In-flight debounce task for `debouncedSave()`. Cancelled on each new call.
     private var saveTask: Task<Void, Never>?
 
+    /// Keychain facade used to persist `apiKey`. Injected for testability.
+    private let keychain: KeychainReading
+
     // MARK: - Image Size State
 
     /// The current max image dimension (longest side in pixels) for vision inference.
@@ -91,12 +94,19 @@ final class SettingsViewModel {
 
     // MARK: - Initializer
 
-    /// Creates a `SettingsViewModel`, loading persisted values from `defaults`.
+    /// Creates a `SettingsViewModel`, loading persisted values from `defaults`
+    /// and the API key from `keychain`.
     ///
-    /// - Parameter defaults: The `UserDefaults` suite to read/write. Defaults to `.standard`.
-    init(defaults: UserDefaults = .standard) {
-        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.205:8000"
-        apiKey = defaults.string(forKey: "apiKey") ?? ""
+    /// - Parameters:
+    ///   - defaults: The `UserDefaults` suite for non-secret settings. Defaults to `.standard`.
+    ///   - keychain: The Keychain facade for the API key. Defaults to `KeychainHelper.shared`.
+    init(
+        defaults: UserDefaults = .standard,
+        keychain: KeychainReading = KeychainHelper.shared
+    ) {
+        self.keychain = keychain
+        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
+        apiKey = keychain.readString(forKey: KeychainHelper.apiKeyAccount) ?? ""
         // Use object(forKey:) so a user-set value of 0 is distinguishable from "never set".
         // double(forKey:) returns 0 for both cases, which conflates them.
         similarityThreshold = defaults.object(forKey: "similarityThreshold") as? Double ?? 0.5
@@ -104,13 +114,21 @@ final class SettingsViewModel {
 
     // MARK: - Actions
 
-    /// Persists `serverURL` and `similarityThreshold` to `defaults`.
+    /// Persists `serverURL` and `similarityThreshold` to `defaults`, and
+    /// `apiKey` to the Keychain.
+    ///
+    /// An empty `apiKey` removes the Keychain entry so the API client falls
+    /// back to `BuildConfig.defaultAPIKey` (if any) or `nil`.
     ///
     /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
     func save(to defaults: UserDefaults = .standard) {
         defaults.set(serverURL, forKey: "serverURL")
-        defaults.set(apiKey, forKey: "apiKey")
         defaults.set(similarityThreshold, forKey: "similarityThreshold")
+        if apiKey.isEmpty {
+            try? keychain.removeValue(forKey: KeychainHelper.apiKeyAccount)
+        } else {
+            try? keychain.writeString(apiKey, forKey: KeychainHelper.apiKeyAccount)
+        }
     }
 
     /// Schedules a debounced save after a 0.5-second pause.
