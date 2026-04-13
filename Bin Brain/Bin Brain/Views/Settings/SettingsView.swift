@@ -87,7 +87,7 @@ struct SettingsView: View {
                         switch viewModel.connectionStatus {
                         case .connected:
                             feedback = .success
-                        case .connectedKeyInvalid, .connectedNoKey:
+                        case .connectedKeyInvalid, .connectedNoKey, .connectedKeyNotBoundToHost:
                             feedback = .warning
                         case .unreachable, .unknown:
                             feedback = .error
@@ -116,6 +116,9 @@ struct SettingsView: View {
         case .connectedNoKey:
             Image(systemName: "key.slash")
                 .foregroundStyle(.orange)
+        case .connectedKeyNotBoundToHost:
+            Image(systemName: "lock.trianglebadge.exclamationmark")
+                .foregroundStyle(.orange)
         case .unreachable:
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.red)
@@ -139,6 +142,18 @@ struct SettingsView: View {
             Text("Server reachable, no API key configured")
                 .font(.caption)
                 .foregroundStyle(.orange)
+        case .connectedKeyNotBoundToHost(let canRebind):
+            VStack(alignment: .leading, spacing: 4) {
+                Text("API key is bound to a different host. Re-bind to \(viewModel.serverURL)?")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                if canRebind {
+                    Button("Re-bind key to this host") {
+                        Task { await viewModel.rebindKey(apiClient: apiClient) }
+                    }
+                    .font(.caption)
+                }
+            }
         case .unreachable(let errorMessage):
             Text(errorMessage)
                 .font(.caption)

@@ -22,6 +22,13 @@ enum ConnectionStatus: Equatable {
     case connectedKeyInvalid
     /// The server is reachable but no API key is configured (or sent).
     case connectedNoKey
+    /// The server is reachable and a key exists in the Keychain, but
+    /// that key is bound to a different host than `serverURL`.
+    ///
+    /// `canRebind` reflects whether the current state allows the UI to
+    /// offer a "Re-bind key to this host" action (always `true` when a
+    /// key is present; kept as an associated value for future UX gating).
+    case connectedKeyNotBoundToHost(canRebind: Bool)
     /// The request failed (network error, non-2xx status, decoding error).
     case unreachable(errorMessage: String)
 }
@@ -115,19 +122,38 @@ final class SettingsViewModel {
     // MARK: - Actions
 
     /// Persists `serverURL` and `similarityThreshold` to `defaults`, and
-    /// `apiKey` to the Keychain.
+    /// `apiKey` (with its bound host) to the Keychain.
     ///
-    /// An empty `apiKey` removes the Keychain entry so the API client falls
-    /// back to `BuildConfig.defaultAPIKey` (if any) or `nil`.
+    /// Binding rules (F-04 / #13):
+    /// - Clearing the key removes both `apiKey` and `apiKeyBoundHost` so
+    ///   the next network call falls through the attach gate cleanly.
+    /// - Setting a non-empty key requires a parseable `serverURL`; the
+    ///   origin is recorded in `apiKeyBoundHost`. Writes are atomic:
+    ///   if the bound-host write fails, the key is rolled back so an
+    ///   unbound key is never persisted.
+    /// - An unparseable `serverURL` silently skips the key write — the
+    ///   UI surfaces the parse failure elsewhere and the existing key is
+    ///   left untouched.
     ///
     /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
     func save(to defaults: UserDefaults = .standard) {
         defaults.set(serverURL, forKey: "serverURL")
         defaults.set(similarityThreshold, forKey: "similarityThreshold")
         if apiKey.isEmpty {
-            try? keychain.removeValue(forKey: KeychainHelper.apiKeyAccount)
-        } else {
-            try? keychain.writeString(apiKey, forKey: KeychainHelper.apiKeyAccount)
+            try? keychain.clearAPIKeyBinding()
+            return
+        }
+        guard let origin = APIClient.normalizedOrigin(of: serverURL) else {
+            // Can't bind without a parseable serverURL. Don't persist an
+            // unbound key — user will see their field holds the typed value
+            // but it won't be saved until they fix the URL.
+            logger.warning("Skipping apiKey save: serverURL has no parseable origin")
+            return
+        }
+        do {
+            try keychain.writeAPIKeyBinding(key: apiKey, boundHost: origin)
+        } catch {
+            logger.error("apiKey binding write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -170,13 +196,75 @@ final class SettingsViewModel {
             case .some(false):
                 connectionStatus = .connectedKeyInvalid
             case .none:
-                connectionStatus = .connectedNoKey
+                // `/health` reached the server but no key was sent. Two sub-cases:
+                // (a) user has no key → `.connectedNoKey`.
+                // (b) user has a key bound to a different host → the attach gate
+                //     stripped the header → `.connectedKeyNotBoundToHost`.
+                connectionStatus = keyExistsButUnboundForCurrentHost()
+                    ? .connectedKeyNotBoundToHost(canRebind: true)
+                    : .connectedNoKey
             }
         } catch {
             logger.error("testConnection failed: \(error.localizedDescription, privacy: .private)")
             connectionStatus = .unreachable(errorMessage: error.localizedDescription)
             connectionErrorMessage = error.localizedDescription
         }
+    }
+
+    /// Re-binds the existing Keychain API key to the current `serverURL`.
+    ///
+    /// Sends a `/health` probe with the key attached regardless of the
+    /// current binding. On `auth_ok: true`, the key is valid for this host
+    /// and we persist the new binding. On `auth_ok: false`, the key isn't
+    /// valid for this host either — don't touch the binding; surface a
+    /// `.connectedKeyInvalid` so the user re-enters.
+    ///
+    /// Only meaningful when `connectionStatus == .connectedKeyNotBoundToHost`.
+    ///
+    /// - Parameter apiClient: The `APIClient` used to probe `/health`.
+    func rebindKey(apiClient: APIClient) async {
+        connectionErrorMessage = nil
+        do {
+            let response = try await apiClient.health(probeWithCurrentKey: true)
+            switch response.authOk {
+            case .some(true):
+                guard let origin = APIClient.normalizedOrigin(of: serverURL) else {
+                    connectionStatus = .unreachable(errorMessage: "Server URL has no parseable origin")
+                    return
+                }
+                do {
+                    try keychain.writeString(origin, forKey: KeychainHelper.boundHostAccount)
+                    connectionStatus = .connected(role: response.role ?? .user)
+                } catch {
+                    logger.error("rebind write failed: \(error.localizedDescription, privacy: .public)")
+                    connectionStatus = .unreachable(errorMessage: error.localizedDescription)
+                    connectionErrorMessage = error.localizedDescription
+                }
+            case .some(false):
+                connectionStatus = .connectedKeyInvalid
+            case .none:
+                // Probe was supposed to send the key. If the server still
+                // reports no key, treat it as invalid for this host.
+                connectionStatus = .connectedKeyInvalid
+            }
+        } catch {
+            logger.error("rebindKey failed: \(error.localizedDescription, privacy: .private)")
+            connectionStatus = .unreachable(errorMessage: error.localizedDescription)
+            connectionErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Returns true when the Keychain holds an API key whose bound host
+    /// does not match the normalized origin of the current `serverURL`
+    /// (including the "bound host missing entirely" sub-case).
+    private func keyExistsButUnboundForCurrentHost() -> Bool {
+        guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+              !key.isEmpty else {
+            return false
+        }
+        let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
+        let current = APIClient.normalizedOrigin(of: serverURL)
+        return bound != current
     }
 
     // MARK: - Image Size Actions

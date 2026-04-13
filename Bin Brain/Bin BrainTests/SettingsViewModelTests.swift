@@ -344,4 +344,101 @@ final class SettingsViewModelTests: XCTestCase {
                      "authOk must be nil when no X-API-Key header was sent")
         XCTAssertNil(decoded.role)
     }
+
+    // MARK: - Host binding (#13)
+
+    func testTestConnectionReportsKeyNotBoundWhenHostMismatched() async {
+        // Seed a key bound to a different host.
+        try? testKeychain.writeAPIKeyBinding(
+            key: "k", boundHost: "http://10.1.1.205:8000"
+        )
+        sut.serverURL = "http://10.1.1.207:8000"
+
+        // Default health() does not send the key, so the server reports auth_ok absent.
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthNoKeyJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus,
+                       .connectedKeyNotBoundToHost(canRebind: true),
+                       "When auth_ok is absent and a Keychain key exists bound to another host, status must be .connectedKeyNotBoundToHost(canRebind: true)")
+    }
+
+    func testTestConnectionStaysNoKeyWhenKeychainEmpty() async {
+        // No key in keychain, server reports auth_ok absent.
+        sut.serverURL = "http://10.1.1.207:8000"
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthNoKeyJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedNoKey,
+                       "Without a Keychain key, auth_ok absent maps to .connectedNoKey, not .connectedKeyNotBoundToHost")
+    }
+
+    func testRebindKeyUpdatesBoundHostOnAuthOkTrue() async {
+        try? testKeychain.writeAPIKeyBinding(
+            key: "k", boundHost: "http://old:8000"
+        )
+        sut.serverURL = "http://new:8000"
+
+        // Probe with key returns auth_ok: true.
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+        }
+
+        await sut.rebindKey(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connected(role: .user))
+        XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.boundHostAccount),
+                       "http://new:8000",
+                       "Successful re-bind must persist the new origin to the Keychain")
+    }
+
+    func testRebindKeyReportsInvalidKeyOnAuthOkFalse() async {
+        try? testKeychain.writeAPIKeyBinding(
+            key: "k", boundHost: "http://old:8000"
+        )
+        sut.serverURL = "http://new:8000"
+
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthInvalidKeyJSON)
+        }
+
+        await sut.rebindKey(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedKeyInvalid,
+                       "auth_ok=false on re-bind probe means the key isn't valid for this host either")
+        XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.boundHostAccount),
+                       "http://old:8000",
+                       "Failed re-bind must NOT touch the existing bound host")
+    }
+
+    // MARK: - Save persists binding
+
+    func testSavePersistsAPIKeyAndBoundHost() {
+        sut.serverURL = "http://host:8000"
+        sut.apiKey = "fresh-key"
+
+        sut.save(to: testDefaults)
+
+        XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount), "fresh-key")
+        XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.boundHostAccount), "http://host:8000",
+                       "save() must record the normalized origin alongside the key")
+    }
+
+    func testSaveClearsBindingWhenAPIKeyEmpty() {
+        try? testKeychain.writeAPIKeyBinding(
+            key: "old", boundHost: "http://host:8000"
+        )
+        sut.apiKey = ""
+
+        sut.save(to: testDefaults)
+
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount))
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.boundHostAccount))
+    }
 }
