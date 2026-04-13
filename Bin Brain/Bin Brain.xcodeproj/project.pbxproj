@@ -3,12 +3,8 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 100;
 	objects = {
-
-/* Begin PBXBuildFile section */
-		5DACDE942F8D4B8C00E4F4F2 /* Development.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */; };
-/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		5DF45F1D2F4FBE290022FF18 /* PBXContainerItemProxy */ = {
@@ -55,24 +51,18 @@
 /* Begin PBXFrameworksBuildPhase section */
 		5DF45F0A2F4FBE270022FF18 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F192F4FBE290022FF18 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F232F4FBE290022FF18 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -111,14 +101,10 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				5DF45F0F2F4FBE270022FF18 /* Bin Brain */,
 			);
 			name = "Bin Brain";
-			packageProductDependencies = (
-			);
 			productName = "Bin Brain";
 			productReference = 5DF45F0D2F4FBE270022FF18 /* Bin Brain.app */;
 			productType = "com.apple.product-type.application";
@@ -140,8 +126,6 @@
 				5DF45F1F2F4FBE290022FF18 /* Bin BrainTests */,
 			);
 			name = "Bin BrainTests";
-			packageProductDependencies = (
-			);
 			productName = "Bin BrainTests";
 			productReference = 5DF45F1C2F4FBE290022FF18 /* Bin BrainTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -163,8 +147,6 @@
 				5DF45F292F4FBE290022FF18 /* Bin BrainUITests */,
 			);
 			name = "Bin BrainUITests";
-			packageProductDependencies = (
-			);
 			productName = "Bin BrainUITests";
 			productReference = 5DF45F262F4FBE290022FF18 /* Bin BrainUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -177,7 +159,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 2640;
+				ORGANIZATIONNAME = "Stephen Feather";
 				TargetAttributes = {
 					5DF45F0C2F4FBE270022FF18 = {
 						CreatedOnToolsVersion = 26.2;
@@ -201,7 +184,7 @@
 			);
 			mainGroup = 5DF45F042F4FBE270022FF18;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = 5DF45F0E2F4FBE270022FF18 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -216,49 +199,36 @@
 /* Begin PBXResourcesBuildPhase section */
 		5DF45F0B2F4FBE270022FF18 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
-				5DACDE942F8D4B8C00E4F4F2 /* Development.xcconfig in Resources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F1A2F4FBE290022FF18 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F242F4FBE290022FF18 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5DF45F092F4FBE270022FF18 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F182F4FBE290022FF18 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5DF45F222F4FBE290022FF18 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -276,7 +246,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		5DF45F2E2F4FBE290022FF18 /* Debug */ = {
+		5DF45F2E2F4FBE290022FF18 /* Debug configuration for PBXProject "Bin Brain" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -341,7 +311,7 @@
 			};
 			name = Debug;
 		};
-		5DF45F2F2F4FBE290022FF18 /* Release */ = {
+		5DF45F2F2F4FBE290022FF18 /* Release configuration for PBXProject "Bin Brain" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -399,7 +369,7 @@
 			};
 			name = Release;
 		};
-		5DF45F312F4FBE290022FF18 /* Debug */ = {
+		5DF45F312F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin Brain" */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */;
 			buildSettings = {
@@ -434,7 +404,7 @@
 			};
 			name = Debug;
 		};
-		5DF45F322F4FBE290022FF18 /* Release */ = {
+		5DF45F322F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin Brain" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -468,8 +438,9 @@
 			};
 			name = Release;
 		};
-		5DF45F342F4FBE290022FF18 /* Debug */ = {
+		5DF45F342F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin BrainTests" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -489,7 +460,7 @@
 			};
 			name = Debug;
 		};
-		5DF45F352F4FBE290022FF18 /* Release */ = {
+		5DF45F352F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin BrainTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -510,8 +481,9 @@
 			};
 			name = Release;
 		};
-		5DF45F372F4FBE290022FF18 /* Debug */ = {
+		5DF45F372F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin BrainUITests" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -529,7 +501,7 @@
 			};
 			name = Debug;
 		};
-		5DF45F382F4FBE290022FF18 /* Release */ = {
+		5DF45F382F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin BrainUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -554,38 +526,34 @@
 		5DF45F082F4FBE270022FF18 /* Build configuration list for PBXProject "Bin Brain" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				5DF45F2E2F4FBE290022FF18 /* Debug */,
-				5DF45F2F2F4FBE290022FF18 /* Release */,
+				5DF45F2E2F4FBE290022FF18 /* Debug configuration for PBXProject "Bin Brain" */,
+				5DF45F2F2F4FBE290022FF18 /* Release configuration for PBXProject "Bin Brain" */,
 			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		5DF45F302F4FBE290022FF18 /* Build configuration list for PBXNativeTarget "Bin Brain" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				5DF45F312F4FBE290022FF18 /* Debug */,
-				5DF45F322F4FBE290022FF18 /* Release */,
+				5DF45F312F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin Brain" */,
+				5DF45F322F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin Brain" */,
 			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		5DF45F332F4FBE290022FF18 /* Build configuration list for PBXNativeTarget "Bin BrainTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				5DF45F342F4FBE290022FF18 /* Debug */,
-				5DF45F352F4FBE290022FF18 /* Release */,
+				5DF45F342F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin BrainTests" */,
+				5DF45F352F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin BrainTests" */,
 			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		5DF45F362F4FBE290022FF18 /* Build configuration list for PBXNativeTarget "Bin BrainUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				5DF45F372F4FBE290022FF18 /* Debug */,
-				5DF45F382F4FBE290022FF18 /* Release */,
+				5DF45F372F4FBE290022FF18 /* Debug configuration for PBXNativeTarget "Bin BrainUITests" */,
+				5DF45F382F4FBE290022FF18 /* Release configuration for PBXNativeTarget "Bin BrainUITests" */,
 			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
 	};

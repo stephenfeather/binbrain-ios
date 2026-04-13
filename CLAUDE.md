@@ -1,3 +1,21 @@
+<!-- SESSION-INSTRUCTIONS-START -->
+# Session Management
+
+## On Session Start
+At the beginning of each new session, read the following files to understand your role and project context:
+
+### Guidance
+- `.swarm/Guidance/TMUX_TEAM.md`
+- `.swarm/Guidance/ARCHITECTURE_GUIDELINES.md`
+- `.swarm/Guidance/WORKING_METHODS.md`
+
+### Persona
+- `.swarm/Personas/TMUX_ARCHITECT_MANAGER.md`
+
+## On Context Compaction
+When context is being compacted, re-read the guidance and persona files listed above to maintain full context of your role and project standards.
+<!-- SESSION-INSTRUCTIONS-END -->
+
 ## Core Swift Language Best Practices
 ### Embrace Value Types: 
 Prefer structs and enums over classes for data models and other data that doesn't require identity or inheritance. This can lead to more predictable, thread-safe code and improved performance by avoiding reference counting overhead.
