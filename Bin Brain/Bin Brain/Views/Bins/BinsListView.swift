@@ -132,6 +132,20 @@ struct BinsListView: View {
                 )
                 .ignoresSafeArea()
 
+                if let message = scannerViewModel.scanError {
+                    VStack {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                            .padding(.top, 16)
+                        Spacer()
+                    }
+                    .accessibilityLabel("Scan error: \(message)")
+                }
+
                 if showShutterButton, let binId = scannerViewModel.scannedBinId {
                     VStack {
                         Text(binId)

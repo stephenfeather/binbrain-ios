@@ -569,6 +569,84 @@ final class APIClientTests: XCTestCase {
 
     // MARK: - Test 15: getBin() sends GET to correct path
 
+    // MARK: - Issue #15 / F-07: path-component percent-encoding
+
+    func testGetBinPercentEncodesSlashInBinId() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","bin_id":"a/b","items":[],"photos":[]}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try? await sut.getBin("a/b")
+
+        let url = try XCTUnwrap(captured?.url?.absoluteString)
+        XCTAssertTrue(url.contains("/bins/a%2Fb"),
+                      "`/` in bin ID must be percent-encoded to prevent path traversal; got \(url)")
+        XCTAssertFalse(url.contains("/bins/a/b"),
+                       "Raw `/` must not appear in the encoded segment; got \(url)")
+    }
+
+    func testGetBinPercentEncodesQueryAndFragmentChars() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","bin_id":"x","items":[],"photos":[]}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try? await sut.getBin("BIN?admin=1")
+        let urlQ = try XCTUnwrap(captured?.url?.absoluteString)
+        XCTAssertTrue(urlQ.contains("BIN%3Fadmin"),
+                      "`?` must be percent-encoded in path segment to prevent query injection; got \(urlQ)")
+        XCTAssertFalse(urlQ.contains("?admin"),
+                       "Raw `?` must not appear — would split path into query; got \(urlQ)")
+
+        _ = try? await sut.getBin("BIN#frag")
+        let urlH = try XCTUnwrap(captured?.url?.absoluteString)
+        XCTAssertTrue(urlH.contains("BIN%23frag"),
+                      "`#` must be percent-encoded in path segment; got \(urlH)")
+    }
+
+    func testRemoveItemPercentEncodesBinIdInPath() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","bin_id":"a/b","item_id":5,"removed":true}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try? await sut.removeItem(itemId: 5, binId: "a/b")
+
+        let url = try XCTUnwrap(captured?.url?.absoluteString)
+        XCTAssertTrue(url.contains("/bins/a%2Fb/items/5"),
+                      "Bin ID `/` must be encoded; got \(url)")
+    }
+
+    func testAssignLocationPercentEncodesBinId() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","bin_id":"a?b","location_id":1}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try? await sut.assignLocation(binId: "a?b", locationId: 1)
+
+        let url = try XCTUnwrap(captured?.url?.absoluteString)
+        XCTAssertTrue(url.contains("/bins/a%3Fb/location"),
+                      "Bin ID `?` must be encoded; got \(url)")
+    }
+
     func testGetBinUsesCorrectBinIdInPath() async throws {
         var capturedRequest: URLRequest?
         MockURLProtocol.requestHandler = { request in
