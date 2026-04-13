@@ -16,10 +16,14 @@ private let logger = Logger(subsystem: "com.binbrain.app", category: "Settings")
 enum ConnectionStatus: Equatable {
     /// No test has been run yet, or a test is in progress.
     case unknown
-    /// The health check succeeded.
-    case ok
-    /// The health check failed or the server was unreachable.
-    case failed
+    /// The server is reachable and the configured API key was accepted.
+    case connected(role: HealthResponse.Role)
+    /// The server is reachable but rejected the configured API key.
+    case connectedKeyInvalid
+    /// The server is reachable but no API key is configured (or sent).
+    case connectedNoKey
+    /// The request failed (network error, non-2xx status, decoding error).
+    case unreachable(errorMessage: String)
 }
 
 // MARK: - SettingsViewModel
@@ -126,19 +130,33 @@ final class SettingsViewModel {
 
     /// Tests the connection to the backend and updates `connectionStatus`.
     ///
-    /// Resets `connectionStatus` to `.unknown` before the network call.
-    /// Sets `.ok` on success, `.failed` on any error.
+    /// Resets `connectionStatus` to `.unknown` before the network call, then
+    /// maps the server's `auth_ok` field to one of:
+    /// - `.connected(role:)` when `auth_ok == true`,
+    /// - `.connectedKeyInvalid` when `auth_ok == false`,
+    /// - `.connectedNoKey` when `auth_ok` is absent,
+    /// - `.unreachable(errorMessage:)` on any thrown error (also populates
+    ///   `connectionErrorMessage`).
     ///
     /// - Parameter apiClient: The `APIClient` used to call `GET /health`.
     func testConnection(apiClient: APIClient) async {
         connectionStatus = .unknown
         connectionErrorMessage = nil
         do {
-            _ = try await apiClient.health()
-            connectionStatus = .ok
+            let response = try await apiClient.health()
+            switch response.authOk {
+            case .some(true):
+                // Server docs guarantee `role` is present when authOk is true.
+                // If the server omits it, fall back to `.user` to keep the UI coherent.
+                connectionStatus = .connected(role: response.role ?? .user)
+            case .some(false):
+                connectionStatus = .connectedKeyInvalid
+            case .none:
+                connectionStatus = .connectedNoKey
+            }
         } catch {
             logger.error("testConnection failed: \(error.localizedDescription)")
-            connectionStatus = .failed
+            connectionStatus = .unreachable(errorMessage: error.localizedDescription)
             connectionErrorMessage = error.localizedDescription
         }
     }
