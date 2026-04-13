@@ -21,6 +21,9 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
+    /// Tracks focus on the API key field so we can commit to Keychain on blur.
+    @FocusState private var apiKeyFocused: Bool
+
     // MARK: - Body
 
     var body: some View {
@@ -74,8 +77,16 @@ struct SettingsView: View {
             SecureField("API Key", text: $viewModel.apiKey)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-                .onChange(of: viewModel.apiKey) {
-                    viewModel.debouncedSave()
+                .focused($apiKeyFocused)
+                .submitLabel(.done)
+                .onSubmit {
+                    viewModel.commitAPIKey()
+                }
+                .onChange(of: apiKeyFocused) { _, isFocused in
+                    // Persist to Keychain on blur only — never on every keystroke.
+                    if !isFocused {
+                        viewModel.commitAPIKey()
+                    }
                 }
 
             HStack {

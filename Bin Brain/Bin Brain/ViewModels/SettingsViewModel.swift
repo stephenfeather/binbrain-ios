@@ -121,8 +121,23 @@ final class SettingsViewModel {
 
     // MARK: - Actions
 
-    /// Persists `serverURL` and `similarityThreshold` to `defaults`, and
-    /// `apiKey` (with its bound host) to the Keychain.
+    /// Persists `serverURL` and `similarityThreshold` to `defaults`.
+    ///
+    /// Does NOT write the API key — that flows through `commitAPIKey()` on
+    /// explicit user commit (blur, Return, or clear). See F-12 / #11:
+    /// debounced persistence of a credential while the user is still typing
+    /// creates Keychain churn and races the bound-host write from #13.
+    ///
+    /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(serverURL, forKey: "serverURL")
+        defaults.set(similarityThreshold, forKey: "similarityThreshold")
+    }
+
+    /// Persists the current `apiKey` (with its bound host) to the Keychain.
+    ///
+    /// Call on explicit user commit only: field blur, Return/Done submit,
+    /// or an explicit Save/Clear action. Never from debounced typing.
     ///
     /// Binding rules (F-04 / #13):
     /// - Clearing the key removes both `apiKey` and `apiKeyBoundHost` so
@@ -134,20 +149,13 @@ final class SettingsViewModel {
     /// - An unparseable `serverURL` silently skips the key write — the
     ///   UI surfaces the parse failure elsewhere and the existing key is
     ///   left untouched.
-    ///
-    /// - Parameter defaults: The `UserDefaults` suite to write to. Defaults to `.standard`.
-    func save(to defaults: UserDefaults = .standard) {
-        defaults.set(serverURL, forKey: "serverURL")
-        defaults.set(similarityThreshold, forKey: "similarityThreshold")
+    func commitAPIKey() {
         if apiKey.isEmpty {
             try? keychain.clearAPIKeyBinding()
             return
         }
         guard let origin = APIClient.normalizedOrigin(of: serverURL) else {
-            // Can't bind without a parseable serverURL. Don't persist an
-            // unbound key — user will see their field holds the typed value
-            // but it won't be saved until they fix the URL.
-            logger.warning("Skipping apiKey save: serverURL has no parseable origin")
+            logger.warning("Skipping apiKey commit: serverURL has no parseable origin")
             return
         }
         do {

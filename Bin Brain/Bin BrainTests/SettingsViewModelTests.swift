@@ -417,28 +417,61 @@ final class SettingsViewModelTests: XCTestCase {
                        "Failed re-bind must NOT touch the existing bound host")
     }
 
-    // MARK: - Save persists binding
+    // MARK: - API key commit persistence (#11)
 
-    func testSavePersistsAPIKeyAndBoundHost() {
+    func testCommitAPIKeyPersistsKeyAndBoundHost() {
         sut.serverURL = "http://host:8000"
         sut.apiKey = "fresh-key"
 
-        sut.save(to: testDefaults)
+        sut.commitAPIKey()
 
         XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount), "fresh-key")
         XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.boundHostAccount), "http://host:8000",
-                       "save() must record the normalized origin alongside the key")
+                       "commitAPIKey() must record the normalized origin alongside the key")
     }
 
-    func testSaveClearsBindingWhenAPIKeyEmpty() {
+    func testCommitAPIKeyClearsBindingWhenEmpty() {
         try? testKeychain.writeAPIKeyBinding(
             key: "old", boundHost: "http://host:8000"
         )
         sut.apiKey = ""
 
+        sut.commitAPIKey()
+
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount),
+                     "Clearing apiKey + commit must remove the key from Keychain immediately")
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.boundHostAccount))
+    }
+
+    func testSaveDoesNotWriteAPIKeyToKeychain() {
+        // Simulates the debounce path: user is mid-edit, save() fires on timer.
+        // With #11, save() must no longer touch Keychain for the apiKey field —
+        // persistence is reserved for explicit commit (blur / Return / Save).
+        sut.serverURL = "http://host:8000"
+        sut.apiKey = "partial-key-being-typed"
+
         sut.save(to: testDefaults)
 
-        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount))
-        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.boundHostAccount))
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount),
+                     "save() (debounce path) must NOT persist a half-typed apiKey to Keychain")
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.boundHostAccount),
+                     "save() must not record a bound host for an uncommitted key")
+    }
+
+    @MainActor
+    func testDebouncedSaveDoesNotPersistAPIKey() async throws {
+        // Regression guard for F-12 / #11: the debounce path is for
+        // non-credential settings only. Typing in the apiKey field — even
+        // after the debounce settles — must leave Keychain untouched.
+        sut.serverURL = "http://host:8000"
+        sut.apiKey = "abc"
+        sut.debouncedSave(to: testDefaults)
+        sut.apiKey = "abcd"
+        sut.debouncedSave(to: testDefaults)
+
+        try await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount),
+                     "Debounced typing in apiKey field must not reach Keychain — commitAPIKey() is the only persistence path")
     }
 }
