@@ -246,4 +246,26 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(loaded.similarityThreshold, 0.8,
                        "SettingsViewModel should load persisted similarityThreshold from defaults")
     }
+
+    // MARK: - Test 9: user-set threshold of 0 is preserved across reloads (Issue #7)
+
+    func testThresholdZeroIsPreservedAcrossReloads() {
+        sut.similarityThreshold = 0.0
+        sut.save(to: testDefaults)
+
+        let reloaded = SettingsViewModel(defaults: testDefaults)
+
+        XCTAssertEqual(reloaded.similarityThreshold, 0.0,
+                       "A user-set threshold of 0 must not be silently reset to 0.5 on reload")
+    }
+
+    // MARK: - Test 10: unset threshold still defaults to 0.5 (Issue #7)
+
+    func testUnsetThresholdDefaultsToHalf() {
+        // testDefaults has no similarityThreshold key set
+        let loaded = SettingsViewModel(defaults: testDefaults)
+
+        XCTAssertEqual(loaded.similarityThreshold, 0.5,
+                       "An unset threshold should default to 0.5")
+    }
 }

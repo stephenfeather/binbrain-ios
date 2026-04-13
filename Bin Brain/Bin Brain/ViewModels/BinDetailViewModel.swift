@@ -48,16 +48,6 @@ final class BinDetailViewModel {
         isLoading = false
     }
 
-    /// Upserts a new item into the bin, then reloads the bin contents.
-    ///
-    /// On failure, sets `error`. The subsequent `load` call manages the loading indicator.
-    ///
-    /// - Parameters:
-    ///   - name: Item name (required).
-    ///   - category: Optional category.
-    ///   - quantity: Optional quantity.
-    ///   - binId: Bin to associate the item with.
-    ///   - apiClient: API client for network calls.
     /// Removes an item from this bin, then reloads the bin contents.
     ///
     /// - Parameters:
@@ -90,6 +80,16 @@ final class BinDetailViewModel {
         }
     }
 
+    /// Upserts a new item into the bin, then reloads the bin contents.
+    ///
+    /// On failure, sets `error`. The subsequent `load` call manages the loading indicator.
+    ///
+    /// - Parameters:
+    ///   - name: Item name (required).
+    ///   - category: Optional category.
+    ///   - quantity: Optional quantity.
+    ///   - binId: Bin to associate the item with.
+    ///   - apiClient: API client for network calls.
     func addItem(name: String, category: String?, quantity: Double?, binId: String, apiClient: APIClient) async {
         do {
             _ = try await apiClient.upsertItem(

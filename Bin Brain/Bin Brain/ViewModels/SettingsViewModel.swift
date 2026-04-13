@@ -93,8 +93,9 @@ final class SettingsViewModel {
     init(defaults: UserDefaults = .standard) {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
         apiKey = defaults.string(forKey: "apiKey") ?? ""
-        let stored = defaults.double(forKey: "similarityThreshold")
-        similarityThreshold = stored == 0.0 ? 0.5 : stored
+        // Use object(forKey:) so a user-set value of 0 is distinguishable from "never set".
+        // double(forKey:) returns 0 for both cases, which conflates them.
+        similarityThreshold = defaults.object(forKey: "similarityThreshold") as? Double ?? 0.5
     }
 
     // MARK: - Actions
