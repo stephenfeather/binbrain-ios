@@ -16,16 +16,16 @@ import Vision
 /// Blur detection threshold for a 1024px shortest side.
 /// Variance below this value indicates a blurry image.
 /// Scale proportionally for other resolutions.
-let kBlurVarianceThresholdAt1024: Double = 2.0
+nonisolated let kBlurVarianceThresholdAt1024: Double = 2.0
 
 /// Minimum shortest side in pixels for the resolution gate.
-let kMinimumShortestSide: Int = 1024
+nonisolated let kMinimumShortestSide: Int = 1024
 
 /// Fraction of pixels in extreme bins that triggers exposure failure.
-let kExposureExtremeFraction: Double = 0.70
+nonisolated let kExposureExtremeFraction: Double = 0.70
 
 /// Number of bottom/top histogram bins considered "extreme."
-let kExposureExtremeBinCount: Int = 26 // ~10% of 256
+nonisolated let kExposureExtremeBinCount: Int = 26 // ~10% of 256
 
 // MARK: - Quality Gates
 
