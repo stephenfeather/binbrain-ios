@@ -49,7 +49,9 @@ fastlane/test_output
 .tldr/
 .tldrignore
 thoughts/
+.worktrees/
 
 # Analysis output
 opengrep*
-.worktrees/
+.codegraph/
+

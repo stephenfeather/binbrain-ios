@@ -95,7 +95,7 @@ final class SettingsViewModel {
     ///
     /// - Parameter defaults: The `UserDefaults` suite to read/write. Defaults to `.standard`.
     init(defaults: UserDefaults = .standard) {
-        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
+        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.205:8000"
         apiKey = defaults.string(forKey: "apiKey") ?? ""
         // Use object(forKey:) so a user-set value of 0 is distinguishable from "never set".
         // double(forKey:) returns 0 for both cases, which conflates them.
