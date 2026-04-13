@@ -631,6 +631,53 @@ final class APIClientTests: XCTestCase {
                       "Bin ID `/` must be encoded; got \(url)")
     }
 
+    // MARK: - F-11: createLocation sends JSON body
+
+    func testCreateLocationSendsJSONBodyWithNameAndDescription() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","location":{"location_id":1,"name":"Garage","description":"North wall","created_at":"2025-01-01T00:00:00Z"}}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.createLocation(name: "Garage", description: "North wall")
+
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let bodyData = try XCTUnwrap(captured?.bodyData)
+        let payload = try JSONDecoder().decode([String: String].self, from: bodyData)
+        XCTAssertEqual(payload["name"], "Garage")
+        XCTAssertEqual(payload["description"], "North wall")
+    }
+
+    func testCreateLocationOmitsDescriptionWhenNil() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"version":"1","location":{"location_id":2,"name":"Shed","description":null,"created_at":"2025-01-01T00:00:00Z"}}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.createLocation(name: "Shed", description: nil)
+
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let bodyData = try XCTUnwrap(captured?.bodyData)
+        // Encoded JSON should contain name but encode description as null or omit it.
+        let object = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+        let obj = try XCTUnwrap(object)
+        XCTAssertEqual(obj["name"] as? String, "Shed")
+        // Swift's default JSONEncoder encodes Optional.none as null unless the key is omitted;
+        // with a plain `String?` property it's emitted as `null`. Either behavior is acceptable.
+        if let descAny = obj["description"] {
+            XCTAssertTrue(descAny is NSNull, "description should be null when nil, got \(descAny)")
+        }
+    }
+
     func testAssignLocationPercentEncodesBinId() async throws {
         var captured: URLRequest?
         MockURLProtocol.requestHandler = { request in
