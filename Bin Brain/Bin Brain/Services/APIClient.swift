@@ -39,18 +39,25 @@ final class APIClient {
 
     // MARK: - Computed Properties
 
-    /// The base URL read from `UserDefaults` at call time.
-    ///
-    /// Defaults to `http://10.1.1.206:8000` when no value is stored.
+    /// The base URL read at call time, resolved in priority order:
+    /// `UserDefaults("serverURL")` → `BuildConfig.defaultServerURL` (from
+    /// `Development.xcconfig` via `Info.plist` in Debug) → hardcoded fallback.
     var baseURL: String {
-        UserDefaults.standard.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
+        UserDefaults.standard.string(forKey: "serverURL")
+            ?? BuildConfig.defaultServerURL
+            ?? "http://10.1.1.206:8000"
     }
 
-    /// The API key read from `UserDefaults` at call time.
+    /// The API key read at call time, resolved in priority order:
+    /// `UserDefaults("apiKey")` (when non-empty) → `BuildConfig.defaultAPIKey`
+    /// (from `Development.xcconfig` via `Info.plist` in Debug) → `nil`.
     ///
-    /// Sent as the `X-API-Key` header on every request. `nil` when no key is stored.
+    /// Sent as the `X-API-Key` header on every request when non-nil.
     var apiKey: String? {
-        UserDefaults.standard.string(forKey: "apiKey")
+        if let stored = UserDefaults.standard.string(forKey: "apiKey"), !stored.isEmpty {
+            return stored
+        }
+        return BuildConfig.defaultAPIKey
     }
 
     /// Whether a non-empty API key is configured in `UserDefaults`.
