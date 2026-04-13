@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5DACDE942F8D4B8C00E4F4F2 /* Development.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		5DF45F1D2F4FBE290022FF18 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		5DF45F0D2F4FBE270022FF18 /* Bin Brain.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bin Brain.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DF45F1C2F4FBE290022FF18 /* Bin BrainTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Bin BrainTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DF45F262F4FBE290022FF18 /* Bin BrainUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Bin BrainUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -75,6 +80,7 @@
 		5DF45F042F4FBE270022FF18 = {
 			isa = PBXGroup;
 			children = (
+				5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */,
 				5DF45F0F2F4FBE270022FF18 /* Bin Brain */,
 				5DF45F1F2F4FBE290022FF18 /* Bin BrainTests */,
 				5DF45F292F4FBE290022FF18 /* Bin BrainUITests */,
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5DACDE942F8D4B8C00E4F4F2 /* Development.xcconfig in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -394,6 +401,7 @@
 		};
 		5DF45F312F4FBE290022FF18 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5DACDE932F8D4B8C00E4F4F2 /* Development.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
