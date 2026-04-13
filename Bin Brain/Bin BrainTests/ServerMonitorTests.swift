@@ -77,7 +77,10 @@ final class ServerMonitorTests: XCTestCase {
         ServerMonitorMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [ServerMonitorMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper()
+        )
     }
 
     // MARK: - Test 1: Initial state

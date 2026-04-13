@@ -59,14 +59,12 @@ final class AnalysisViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.set("test-api-key", forKey: "apiKey")
         sut = AnalysisViewModel()
     }
 
     override func tearDown() async throws {
         AnalysisMockURLProtocol.requestHandler = nil
         sut = nil
-        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
@@ -78,7 +76,10 @@ final class AnalysisViewModelTests: XCTestCase {
         AnalysisMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [AnalysisMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-api-key"])
+        )
     }
 
     private var ingestSuccessJSON: Data {

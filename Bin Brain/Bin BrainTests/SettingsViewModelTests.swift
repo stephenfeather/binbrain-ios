@@ -44,6 +44,7 @@ final class SettingsViewModelTests: XCTestCase {
     var sut: SettingsViewModel!
     var testDefaults: UserDefaults!
     var suiteName: String!
+    var testKeychain: InMemoryKeychainHelper!
 
     // MARK: - Lifecycle
 
@@ -56,7 +57,8 @@ final class SettingsViewModelTests: XCTestCase {
         // subsequent set(_:forKey:) calls are not reliably readable.
         suiteName = "SettingsViewModelTests.\(UUID().uuidString)"
         testDefaults = UserDefaults(suiteName: suiteName)!
-        sut = SettingsViewModel(defaults: testDefaults)
+        testKeychain = InMemoryKeychainHelper()
+        sut = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
     }
 
     override func tearDown() async throws {
@@ -65,6 +67,7 @@ final class SettingsViewModelTests: XCTestCase {
         sut = nil
         testDefaults = nil
         suiteName = nil
+        testKeychain = nil
         try await super.tearDown()
     }
 
@@ -76,7 +79,10 @@ final class SettingsViewModelTests: XCTestCase {
         SettingsMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SettingsMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+        )
     }
 
     private func mockResponse(statusCode: Int, for request: URLRequest) -> HTTPURLResponse {

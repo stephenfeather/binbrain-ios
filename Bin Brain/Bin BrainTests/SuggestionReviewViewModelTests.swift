@@ -72,14 +72,12 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.set("test-key", forKey: "apiKey")
         sut = SuggestionReviewViewModel()
     }
 
     override func tearDown() async throws {
         SuggestionReviewMockURLProtocol.requestHandler = nil
         sut = nil
-        UserDefaults.standard.removeObject(forKey: "apiKey")
         try await super.tearDown()
     }
 
@@ -91,7 +89,10 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         SuggestionReviewMockURLProtocol.requestHandler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SuggestionReviewMockURLProtocol.self]
-        return APIClient(session: URLSession(configuration: config))
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+        )
     }
 
     private func makeSuggestions() throws -> [SuggestionItem] {
