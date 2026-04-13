@@ -8,6 +8,7 @@
 import XCTest
 @testable import Bin_Brain
 
+@MainActor
 final class BuildConfigTests: XCTestCase {
 
     override func tearDown() async throws {

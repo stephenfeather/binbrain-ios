@@ -74,6 +74,7 @@ private func makeResponse(statusCode: Int) -> HTTPURLResponse {
 
 // MARK: - APIClientTests
 
+@MainActor
 final class APIClientTests: XCTestCase {
 
     var sut: APIClient!
@@ -675,6 +676,7 @@ final class APIClientTests: XCTestCase {
 
 // MARK: - Host binding gate tests (#13)
 
+@MainActor
 final class APIClientHostBindingTests: XCTestCase {
 
     private var session: URLSession!
