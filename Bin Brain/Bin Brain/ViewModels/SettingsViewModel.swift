@@ -112,8 +112,12 @@ final class SettingsViewModel {
         keychain: KeychainReading = KeychainHelper.shared
     ) {
         self.keychain = keychain
-        serverURL = defaults.string(forKey: "serverURL") ?? "http://10.1.1.206:8000"
-        apiKey = keychain.readString(forKey: KeychainHelper.apiKeyAccount) ?? ""
+        serverURL = defaults.string(forKey: "serverURL")
+            ?? BuildConfig.defaultServerURL
+            ?? "http://10.1.1.206:8000"
+        apiKey = keychain.readString(forKey: KeychainHelper.apiKeyAccount)
+            ?? BuildConfig.defaultAPIKey
+            ?? ""
         // Use object(forKey:) so a user-set value of 0 is distinguishable from "never set".
         // double(forKey:) returns 0 for both cases, which conflates them.
         similarityThreshold = defaults.object(forKey: "similarityThreshold") as? Double ?? 0.5

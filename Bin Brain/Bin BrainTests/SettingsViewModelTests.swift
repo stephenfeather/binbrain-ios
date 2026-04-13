@@ -58,12 +58,16 @@ final class SettingsViewModelTests: XCTestCase {
         suiteName = "SettingsViewModelTests.\(UUID().uuidString)"
         testDefaults = UserDefaults(suiteName: suiteName)!
         testKeychain = InMemoryKeychainHelper()
+        // Isolate tests from the host bundle's Info.plist so BuildConfig
+        // defaults don't bleed into tests that assert the hardcoded fallback.
+        BuildConfig.lookup = { _ in nil }
         sut = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
     }
 
     override func tearDown() async throws {
         SettingsMockURLProtocol.requestHandler = nil
         testDefaults.removePersistentDomain(forName: suiteName)
+        BuildConfig.lookup = { key in Bundle.main.object(forInfoDictionaryKey: key) }
         sut = nil
         testDefaults = nil
         suiteName = nil
@@ -134,6 +138,46 @@ final class SettingsViewModelTests: XCTestCase {
                        "similarityThreshold should default to 0.5 when unset")
         XCTAssertEqual(sut.connectionStatus, .unknown,
                        "connectionStatus should be .unknown on init")
+    }
+
+    // MARK: - Test 1b: BuildConfig defaults populate fields when UserDefaults/Keychain are empty
+
+    func testBuildConfigDefaultsPopulateServerURLWhenUserDefaultsEmpty() {
+        BuildConfig.lookup = { key in
+            key == "DefaultServerURL" ? "http://dev.local:9000" : nil
+        }
+        let vm = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
+        XCTAssertEqual(vm.serverURL, "http://dev.local:9000",
+                       "serverURL should pick up BuildConfig value when UserDefaults has no override")
+    }
+
+    func testBuildConfigDefaultsPopulateAPIKeyWhenKeychainEmpty() {
+        BuildConfig.lookup = { key in
+            key == "DefaultAPIKey" ? "bb_devkey_123" : nil
+        }
+        let vm = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
+        XCTAssertEqual(vm.apiKey, "bb_devkey_123",
+                       "apiKey should pick up BuildConfig value when Keychain has no entry")
+    }
+
+    func testUserDefaultsOverridesBuildConfigServerURL() {
+        testDefaults.set("http://user.override:7000", forKey: "serverURL")
+        BuildConfig.lookup = { key in
+            key == "DefaultServerURL" ? "http://dev.local:9000" : nil
+        }
+        let vm = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
+        XCTAssertEqual(vm.serverURL, "http://user.override:7000",
+                       "UserDefaults value should win over BuildConfig default")
+    }
+
+    func testKeychainOverridesBuildConfigAPIKey() throws {
+        try testKeychain.writeString("user-entered-key", forKey: KeychainHelper.apiKeyAccount)
+        BuildConfig.lookup = { key in
+            key == "DefaultAPIKey" ? "bb_devkey_123" : nil
+        }
+        let vm = SettingsViewModel(defaults: testDefaults, keychain: testKeychain)
+        XCTAssertEqual(vm.apiKey, "user-entered-key",
+                       "Keychain value should win over BuildConfig default")
     }
 
     // MARK: - Test 2: testConnection sets .connected(role:) when key is valid
