@@ -20,6 +20,8 @@ struct SuggestionReviewView: View {
     /// The view model managing suggestion state and confirmation logic.
     @Bindable var viewModel: SuggestionReviewViewModel
 
+    @Environment(\.toast) private var toast
+
     /// The bin identifier to associate confirmed items with.
     let binId: String
 
@@ -54,7 +56,11 @@ struct SuggestionReviewView: View {
         }
         .navigationTitle("Review Items")
         .onChange(of: viewModel.isConfirming) { _, newValue in
-            if !newValue && viewModel.failedIndices.isEmpty && !viewModel.editableSuggestions.isEmpty {
+            guard !newValue else { return }
+            if viewModel.teachFailureCount > 0 {
+                toast.show("\(viewModel.teachFailureCount) class teach request(s) failed")
+            }
+            if viewModel.failedIndices.isEmpty && !viewModel.editableSuggestions.isEmpty {
                 onDone()
             }
         }

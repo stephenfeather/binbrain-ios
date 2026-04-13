@@ -160,9 +160,9 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertTrue(sut.results.isEmpty, "results should be empty when query is empty")
     }
 
-    // MARK: - Test 4: performSearch silently handles error
+    // MARK: - Test 4: performSearch surfaces error
 
-    func testPerformSearchSilentlyHandlesError() async {
+    func testPerformSearchSetsErrorOnFailure() async {
         let client = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
         }
@@ -171,6 +171,23 @@ final class SearchViewModelTests: XCTestCase {
 
         XCTAssertTrue(sut.results.isEmpty, "results should be empty on error")
         XCTAssertFalse(sut.isSearching, "isSearching should be false after error")
+        XCTAssertNotNil(sut.error, "error should be populated on failure")
+    }
+
+    func testPerformSearchClearsErrorOnSuccess() async {
+        let failClient = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+        }
+        sut.query = "widget"
+        await sut.performSearch(apiClient: failClient)
+        XCTAssertNotNil(sut.error, "error should be set after failure")
+
+        let successClient = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), searchSuccessJSON)
+        }
+        await sut.performSearch(apiClient: successClient)
+
+        XCTAssertNil(sut.error, "error should be cleared on successful search")
     }
 
     // MARK: - Test 5: Score calculation

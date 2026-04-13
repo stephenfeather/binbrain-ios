@@ -65,6 +65,12 @@ final class SuggestionReviewViewModel {
     /// Indices (into `editableSuggestions`) of included items that failed or were not yet attempted.
     private(set) var failedIndices: [Int] = []
 
+    /// Number of `confirmClass` (teach) requests that failed during the most
+    /// recent `confirm(binId:apiClient:)` call. Upserts are the primary
+    /// confirmation; teach failures are secondary. Resets at the start of each
+    /// `confirm` invocation so views can surface a toast when > 0.
+    private(set) var teachFailureCount: Int = 0
+
     // MARK: - Setup
 
     /// Populates `editableSuggestions` from a raw `SuggestionItem` array.
@@ -110,6 +116,7 @@ final class SuggestionReviewViewModel {
     func confirm(binId: String, apiClient: APIClient) async {
         isConfirming = true
         failedIndices = []
+        teachFailureCount = 0
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
         logger.debug("confirm: \(self.editableSuggestions.count) total, \(includedIndices.count) included")
         for idx in includedIndices {
@@ -140,6 +147,7 @@ final class SuggestionReviewViewModel {
                 _ = try await apiClient.confirmClass(className: s.editedName, category: category)
             } catch {
                 logger.error("confirmClass failed for '\(s.editedName)': \(error.localizedDescription)")
+                teachFailureCount += 1
             }
         }
 

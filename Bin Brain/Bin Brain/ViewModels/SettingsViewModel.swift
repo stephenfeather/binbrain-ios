@@ -6,6 +6,9 @@
 
 import Foundation
 import Observation
+import OSLog
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "Settings")
 
 // MARK: - ConnectionStatus
 
@@ -44,6 +47,10 @@ final class SettingsViewModel {
     ///
     /// Set only by `testConnection(apiClient:)`. Starts as `.unknown`.
     private(set) var connectionStatus: ConnectionStatus = .unknown
+
+    /// Localized error description from the most recent failed connection test,
+    /// or `nil` if the last test succeeded (or none has been run).
+    private(set) var connectionErrorMessage: String?
 
     /// In-flight debounce task for `debouncedSave()`. Cancelled on each new call.
     private var saveTask: Task<Void, Never>?
@@ -124,11 +131,14 @@ final class SettingsViewModel {
     /// - Parameter apiClient: The `APIClient` used to call `GET /health`.
     func testConnection(apiClient: APIClient) async {
         connectionStatus = .unknown
+        connectionErrorMessage = nil
         do {
             _ = try await apiClient.health()
             connectionStatus = .ok
         } catch {
+            logger.error("testConnection failed: \(error.localizedDescription)")
             connectionStatus = .failed
+            connectionErrorMessage = error.localizedDescription
         }
     }
 

@@ -52,6 +52,23 @@ extension EnvironmentValues {
     }
 }
 
+// MARK: - ToastViewModel
+
+struct ToastViewModelKey: EnvironmentKey {
+    static let defaultValue = ToastViewModel()
+}
+
+extension EnvironmentValues {
+    /// The shared `ToastViewModel` used to surface transient user-facing messages.
+    ///
+    /// Injected by `RootView`. Child views read this to post toasts
+    /// (e.g. partial background-failure notices) without instantiating their own.
+    var toast: ToastViewModel {
+        get { self[ToastViewModelKey.self] }
+        set { self[ToastViewModelKey.self] = newValue }
+    }
+}
+
 // MARK: - ServerMonitor
 
 struct ServerMonitorKey: EnvironmentKey {

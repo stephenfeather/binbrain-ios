@@ -81,6 +81,7 @@ struct RootView: View {
             get: { toast.isShowing },
             set: { if !$0 { toast.dismiss() } }
         ))
+        .environment(\.toast, toast)
         .onAppear { checkAPIKey() }
         .onChange(of: showingAPIKeyPrompt) { _, isShowing in
             if !isShowing { checkAPIKey() }
