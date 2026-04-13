@@ -383,6 +383,11 @@ final class APIClient {
 
     // MARK: - Locations
 
+    private struct CreateLocationBody: Encodable {
+        let name: String
+        let description: String?
+    }
+
     /// Returns all active locations sorted by name.
     func listLocations() async throws -> [LocationSummary] {
         let response: ListLocationsResponse = try await request(
@@ -399,17 +404,12 @@ final class APIClient {
     ///   - name: The location name (required).
     ///   - description: Optional description.
     func createLocation(name: String, description: String?) async throws -> CreateLocationResponse {
-        var components = URLComponents()
-        components.queryItems = [URLQueryItem(name: "name", value: name)]
-        if let description {
-            components.queryItems?.append(URLQueryItem(name: "description", value: description))
-        }
-        let body = Data((components.percentEncodedQuery ?? "").utf8)
+        let body = try JSONEncoder().encode(CreateLocationBody(name: name, description: description))
         return try await request(
             path: "/locations",
             method: "POST",
             body: body,
-            contentType: "application/x-www-form-urlencoded",
+            contentType: "application/json",
             timeout: 10
         )
     }
