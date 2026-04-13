@@ -39,6 +39,7 @@ final class BinDetailMockURLProtocol: URLProtocol {
 
 // MARK: - BinDetailViewModelTests
 
+@MainActor
 final class BinDetailViewModelTests: XCTestCase {
 
     var sut: BinDetailViewModel!

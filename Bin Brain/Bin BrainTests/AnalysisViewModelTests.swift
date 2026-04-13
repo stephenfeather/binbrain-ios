@@ -51,6 +51,7 @@ private func makeAnalysisMockResponse(statusCode: Int) -> HTTPURLResponse {
 
 // MARK: - AnalysisViewModelTests
 
+@MainActor
 final class AnalysisViewModelTests: XCTestCase {
 
     var sut: AnalysisViewModel!

@@ -6,6 +6,7 @@
 import XCTest
 @testable import Bin_Brain
 
+@MainActor
 final class APIModelsTests: XCTestCase {
 
     // MARK: - Helpers
@@ -46,7 +47,7 @@ final class APIModelsTests: XCTestCase {
         """
         let summary = try decode(BinSummary.self, from: json)
 
-        var formatter = ISO8601DateFormatter()
+        let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         let expectedDate = try XCTUnwrap(formatter.date(from: "2025-02-25T12:00:00Z"))
         XCTAssertEqual(summary.lastUpdated, expectedDate)

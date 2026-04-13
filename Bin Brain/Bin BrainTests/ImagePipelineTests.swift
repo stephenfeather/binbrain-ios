@@ -6,6 +6,7 @@
 import XCTest
 @testable import Bin_Brain
 
+@MainActor
 final class ImagePipelineTests: XCTestCase {
 
     private var pipeline: ImagePipeline!

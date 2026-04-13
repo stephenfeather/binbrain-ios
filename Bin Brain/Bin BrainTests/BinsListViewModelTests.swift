@@ -39,6 +39,7 @@ final class BinsListMockURLProtocol: URLProtocol {
 
 // MARK: - BinsListViewModelTests
 
+@MainActor
 final class BinsListViewModelTests: XCTestCase {
 
     var sut: BinsListViewModel!

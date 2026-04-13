@@ -46,6 +46,7 @@ final class InMemoryKeychainHelper: KeychainReading, @unchecked Sendable {
 
 // MARK: - KeychainHelperTests
 
+@MainActor
 final class KeychainHelperTests: XCTestCase {
 
     var sut: KeychainHelper!
@@ -107,6 +108,7 @@ final class KeychainHelperTests: XCTestCase {
 
 // MARK: - Migration tests
 
+@MainActor
 final class KeychainMigrationTests: XCTestCase {
 
     var keychain: InMemoryKeychainHelper!
@@ -195,6 +197,7 @@ final class KeychainMigrationTests: XCTestCase {
 
 // MARK: - Atomic API-key binding tests
 
+@MainActor
 final class KeychainAtomicBindingTests: XCTestCase {
 
     func testWriteAPIKeyBindingPersistsBoth() throws {
@@ -233,6 +236,7 @@ final class KeychainAtomicBindingTests: XCTestCase {
 
 // MARK: - Bound-host migration tests
 
+@MainActor
 final class KeychainBoundHostMigrationTests: XCTestCase {
 
     var keychain: InMemoryKeychainHelper!
