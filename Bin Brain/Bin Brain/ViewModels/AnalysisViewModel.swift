@@ -187,7 +187,7 @@ final class AnalysisViewModel {
             do {
                 try context.save()
             } catch {
-                logger.error("Failed to persist PendingAnalysis for photoId '\(photoId)': \(error.localizedDescription)")
+                logger.error("Failed to persist PendingAnalysis for photoId '\(photoId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
             }
         }
 
@@ -202,7 +202,7 @@ final class AnalysisViewModel {
                 do {
                     all = try context.fetch(FetchDescriptor<PendingAnalysis>())
                 } catch {
-                    logger.error("Failed to fetch PendingAnalysis for cleanup: \(error.localizedDescription)")
+                    logger.error("Failed to fetch PendingAnalysis for cleanup: \(error.localizedDescription, privacy: .private)")
                     all = []
                 }
                 for entry in all where entry.photoId == photoId {
@@ -211,7 +211,7 @@ final class AnalysisViewModel {
                 do {
                     try context.save()
                 } catch {
-                    logger.error("Failed to save after PendingAnalysis cleanup: \(error.localizedDescription)")
+                    logger.error("Failed to save after PendingAnalysis cleanup: \(error.localizedDescription, privacy: .private)")
                 }
             }
         } catch is CancellationError {

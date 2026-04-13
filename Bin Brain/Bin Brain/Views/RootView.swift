@@ -199,7 +199,7 @@ struct RootView: View {
         do {
             entries = try modelContext.fetch(descriptor)
         } catch {
-            logger.error("retryPendingAnalyses fetch failed: \(error.localizedDescription)")
+            logger.error("retryPendingAnalyses fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
         guard !entries.isEmpty else { return }
@@ -212,7 +212,7 @@ struct RootView: View {
                 do {
                     try modelContext.save()
                 } catch {
-                    logger.error("retryPendingAnalyses save after success failed: \(error.localizedDescription)")
+                    logger.error("retryPendingAnalyses save after success failed: \(error.localizedDescription, privacy: .private)")
                 }
             } catch {
                 entry.retryCount += 1
@@ -221,7 +221,7 @@ struct RootView: View {
                     do {
                         try modelContext.save()
                     } catch {
-                        logger.error("retryPendingAnalyses save after max retries failed: \(error.localizedDescription)")
+                        logger.error("retryPendingAnalyses save after max retries failed: \(error.localizedDescription, privacy: .private)")
                     }
                 }
             }

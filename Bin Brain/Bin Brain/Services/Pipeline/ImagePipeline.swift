@@ -115,7 +115,7 @@ actor ImagePipeline {
         do {
             saliencyBox = try await qualityGates.checkSaliencyOnly(cgImage)
         } catch {
-            logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription)")
+            logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription, privacy: .private)")
             saliencyBox = nil
         }
 

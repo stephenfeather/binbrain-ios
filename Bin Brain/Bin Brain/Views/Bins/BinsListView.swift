@@ -108,10 +108,10 @@ struct BinsListView: View {
                         scannerViewModel.qrDetected(code)
                     },
                     onPhotoCapture: { image in
-                        logger.debug("onPhotoCapture called, image: \(image.size.width)x\(image.size.height)")
+                        logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public)")
                         guard let binId = scannerViewModel.scannedBinId,
                               let rawData = image.jpegData(compressionQuality: 1.0) else { return }
-                        logger.debug("JPEG data: \(rawData.count) bytes, binId: \(binId)")
+                        logger.debug("JPEG data: \(rawData.count, privacy: .public) bytes, binId: \(binId, privacy: .private)")
                         capturedPhotoData = rawData
                         capturedBinId = binId
                         catalogingPath.append(.analysis)
