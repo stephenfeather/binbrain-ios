@@ -83,14 +83,22 @@ struct SettingsView: View {
                     Task {
                         await viewModel.testConnection(apiClient: apiClient)
                         let generator = UINotificationFeedbackGenerator()
-                        generator.notificationOccurred(
-                            viewModel.connectionStatus == .ok ? .success : .error
-                        )
+                        let feedback: UINotificationFeedbackGenerator.FeedbackType
+                        switch viewModel.connectionStatus {
+                        case .connected:
+                            feedback = .success
+                        case .connectedKeyInvalid, .connectedNoKey:
+                            feedback = .warning
+                        case .unreachable, .unknown:
+                            feedback = .error
+                        }
+                        generator.notificationOccurred(feedback)
                     }
                 }
                 Spacer()
                 connectionIndicator
             }
+            connectionStatusRow
         }
     }
 
@@ -99,11 +107,41 @@ struct SettingsView: View {
         switch viewModel.connectionStatus {
         case .unknown:
             EmptyView()
-        case .ok:
-            Image(systemName: "checkmark.circle.fill")
+        case .connected:
+            Image(systemName: "checkmark.seal.fill")
                 .foregroundStyle(.green)
-        case .failed:
+        case .connectedKeyInvalid:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        case .connectedNoKey:
+            Image(systemName: "key.slash")
+                .foregroundStyle(.orange)
+        case .unreachable:
             Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var connectionStatusRow: some View {
+        switch viewModel.connectionStatus {
+        case .unknown:
+            EmptyView()
+        case .connected(let role):
+            Text("Connected · role \(role.rawValue)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .connectedKeyInvalid:
+            Text("Server reachable, API key invalid")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .connectedNoKey:
+            Text("Server reachable, no API key configured")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .unreachable(let errorMessage):
+            Text(errorMessage)
+                .font(.caption)
                 .foregroundStyle(.red)
         }
     }

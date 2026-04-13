@@ -89,6 +89,7 @@ final class SettingsViewModelTests: XCTestCase {
     }
 
     private var healthSuccessJSON: Data {
+        // Legacy shape (no auth_ok) — decodes as `connectedNoKey`.
         Data("""
         {"version":"1","ok":true,"db_ok":true,"embed_model":"nomic-embed-text","expected_dims":768}
         """.utf8)
@@ -97,6 +98,24 @@ final class SettingsViewModelTests: XCTestCase {
     private var healthErrorJSON: Data {
         Data("""
         {"version":"1","error":{"code":"server_error","message":"Internal server error"}}
+        """.utf8)
+    }
+
+    private var healthValidKeyUserJSON: Data {
+        Data("""
+        {"version":"1","ok":true,"db_ok":true,"embed_model":"BAAI/bge-small-en-v1.5","expected_dims":384,"auth_ok":true,"role":"user"}
+        """.utf8)
+    }
+
+    private var healthInvalidKeyJSON: Data {
+        Data("""
+        {"version":"1","ok":true,"db_ok":true,"embed_model":"BAAI/bge-small-en-v1.5","expected_dims":384,"auth_ok":false}
+        """.utf8)
+    }
+
+    private var healthNoKeyJSON: Data {
+        Data("""
+        {"version":"1","ok":true,"db_ok":true,"embed_model":"BAAI/bge-small-en-v1.5","expected_dims":384}
         """.utf8)
     }
 
@@ -111,30 +130,58 @@ final class SettingsViewModelTests: XCTestCase {
                        "connectionStatus should be .unknown on init")
     }
 
-    // MARK: - Test 2: testConnection sets .ok on 200
+    // MARK: - Test 2: testConnection sets .connected(role:) when key is valid
 
-    func testTestConnectionSetsOkOnSuccess() async {
+    func testTestConnectionSetsConnectedWhenKeyIsValid() async {
         let client = makeMockAPIClient { [self] request in
-            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+            return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
         }
 
         await sut.testConnection(apiClient: client)
 
-        XCTAssertEqual(sut.connectionStatus, .ok,
-                       "connectionStatus should be .ok after a successful health check")
+        XCTAssertEqual(sut.connectionStatus, .connected(role: .user),
+                       "connectionStatus should be .connected(role: .user) when auth_ok=true")
     }
 
-    // MARK: - Test 3: testConnection sets .failed on 500
+    // MARK: - Test 2b: testConnection sets .connectedKeyInvalid when server rejects key
 
-    func testTestConnectionSetsFailedOnError() async {
+    func testTestConnectionSetsKeyInvalidWhenAuthFails() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthInvalidKeyJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedKeyInvalid,
+                       "connectionStatus should be .connectedKeyInvalid when auth_ok=false")
+    }
+
+    // MARK: - Test 2c: testConnection sets .connectedNoKey when auth_ok is absent
+
+    func testTestConnectionSetsNoKeyWhenAuthOkAbsent() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthNoKeyJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedNoKey,
+                       "connectionStatus should be .connectedNoKey when auth_ok is missing")
+    }
+
+    // MARK: - Test 3: testConnection sets .unreachable on non-2xx
+
+    func testTestConnectionSetsUnreachableOnError() async {
         let client = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
         }
 
         await sut.testConnection(apiClient: client)
 
-        XCTAssertEqual(sut.connectionStatus, .failed,
-                       "connectionStatus should be .failed after a 500 health response")
+        guard case .unreachable = sut.connectionStatus else {
+            XCTFail("connectionStatus should be .unreachable after a 500 health response; got \(sut.connectionStatus)")
+            return
+        }
     }
 
     // MARK: - Test 3b: testConnection sets connectionErrorMessage on failure
@@ -169,25 +216,26 @@ final class SettingsViewModelTests: XCTestCase {
                      "connectionErrorMessage should clear on a successful health check")
     }
 
-    // MARK: - Test 4: connectionStatus resets to .unknown before each call
+    // MARK: - Test 4: connectionStatus transitions from unreachable to connected
 
-    func testTestConnectionResetsStatusBeforeCall() async {
-        // First call: put sut into .failed state
+    func testTestConnectionTransitionsFromUnreachableToConnected() async {
+        // First call: put sut into .unreachable state
         let failClient = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
         }
         await sut.testConnection(apiClient: failClient)
-        XCTAssertEqual(sut.connectionStatus, .failed,
-                       "connectionStatus should be .failed after the first (failing) call")
+        guard case .unreachable = sut.connectionStatus else {
+            XCTFail("precondition: first call should leave status .unreachable; got \(sut.connectionStatus)")
+            return
+        }
 
-        // Second call: a successful call should end in .ok
-        // (the .unknown reset happens internally before the network call)
+        // Second call: a successful authenticated call should end in .connected(role: .user)
         let successClient = makeMockAPIClient { [self] request in
-            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+            return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
         }
         await sut.testConnection(apiClient: successClient)
-        XCTAssertEqual(sut.connectionStatus, .ok,
-                       "connectionStatus should be .ok after the second (successful) call")
+        XCTAssertEqual(sut.connectionStatus, .connected(role: .user),
+                       "connectionStatus should be .connected(role: .user) after the second (successful) call")
     }
 
     // MARK: - Test 5: save persists serverURL
@@ -267,5 +315,27 @@ final class SettingsViewModelTests: XCTestCase {
 
         XCTAssertEqual(loaded.similarityThreshold, 0.5,
                        "An unset threshold should default to 0.5")
+    }
+
+    // MARK: - HealthResponse decode tests (Issue #8)
+
+    func testHealthResponseDecodesValidKeyShape() throws {
+        let decoded = try JSONDecoder.binBrain.decode(HealthResponse.self, from: healthValidKeyUserJSON)
+        XCTAssertEqual(decoded.authOk, true)
+        XCTAssertEqual(decoded.role, .user)
+    }
+
+    func testHealthResponseDecodesInvalidKeyShape() throws {
+        let decoded = try JSONDecoder.binBrain.decode(HealthResponse.self, from: healthInvalidKeyJSON)
+        XCTAssertEqual(decoded.authOk, false)
+        XCTAssertNil(decoded.role,
+                     "role must be nil when the server rejected the key")
+    }
+
+    func testHealthResponseDecodesNoKeyShape() throws {
+        let decoded = try JSONDecoder.binBrain.decode(HealthResponse.self, from: healthNoKeyJSON)
+        XCTAssertNil(decoded.authOk,
+                     "authOk must be nil when no X-API-Key header was sent")
+        XCTAssertNil(decoded.role)
     }
 }
