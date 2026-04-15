@@ -519,4 +519,53 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertNil(testKeychain.readString(forKey: KeychainHelper.apiKeyAccount),
                      "Debounced typing in apiKey field must not reach Keychain — commitAPIKey() is the only persistence path")
     }
+
+    // MARK: - Finding #9: inline model-select feedback
+
+    private var selectModelSuccessJSON: Data {
+        Data("""
+        {"version":"1","previous_model":"llava:latest","active_model":"llava-phi3:latest"}
+        """.utf8)
+    }
+
+    func testSelectModelClearsSelectingIdAndSwitchingAfterSuccess() async {
+        XCTAssertNil(sut.selectingModelId, "precondition: no selection in progress")
+        XCTAssertFalse(sut.isSwitchingModel, "precondition: not switching")
+
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), selectModelSuccessJSON)
+        }
+        await sut.selectModel("llava-phi3:latest", apiClient: client)
+
+        XCTAssertFalse(sut.isSwitchingModel, "isSwitchingModel should clear after response")
+        XCTAssertNil(sut.selectingModelId, "selectingModelId should clear after response")
+        XCTAssertEqual(sut.activeModel, "llava-phi3:latest", "activeModel should update on success")
+    }
+
+    func testSelectModelIncrementsSuccessTickOnSuccess() async {
+        let startTick = sut.modelSelectSuccessTick
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), selectModelSuccessJSON)
+        }
+
+        await sut.selectModel("llava-phi3:latest", apiClient: client)
+
+        XCTAssertEqual(sut.modelSelectSuccessTick, startTick + 1,
+                       "modelSelectSuccessTick should increment on a 200 response")
+        XCTAssertNil(sut.modelError, "modelError should stay nil on success")
+    }
+
+    func testSelectModelDoesNotIncrementSuccessTickOnFailure() async {
+        let startTick = sut.modelSelectSuccessTick
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
+        }
+
+        await sut.selectModel("llava-phi3:latest", apiClient: client)
+
+        XCTAssertEqual(sut.modelSelectSuccessTick, startTick,
+                       "modelSelectSuccessTick must not increment on failure")
+        XCTAssertNil(sut.selectingModelId, "selectingModelId should still clear on failure")
+        XCTAssertFalse(sut.isSwitchingModel, "isSwitchingModel should clear on failure")
+    }
 }

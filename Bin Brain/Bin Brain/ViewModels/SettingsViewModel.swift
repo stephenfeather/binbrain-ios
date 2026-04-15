@@ -96,6 +96,17 @@ final class SettingsViewModel {
     /// Whether a model switch is in progress (can take 5–30 s).
     private(set) var isSwitchingModel: Bool = false
 
+    /// Name of the model the user most recently tapped while `isSwitchingModel`
+    /// is true. Drives the inline spinner in `SettingsView` so the progress
+    /// indicator lives next to the tapped row instead of at the section bottom
+    /// (Finding #9).
+    private(set) var selectingModelId: String?
+
+    /// Tick counter that increments each time `selectModel` succeeds. Views
+    /// observe the change to fire a haptic + toast. Using a tick avoids having
+    /// to reset a Bool; each increment is a distinct successful event.
+    private(set) var modelSelectSuccessTick: Int = 0
+
     /// Error message from the last model operation, if any.
     private(set) var modelError: String?
 
@@ -332,13 +343,16 @@ final class SettingsViewModel {
     /// - Parameter model: The model name to switch to.
     func selectModel(_ model: String, apiClient: APIClient) async {
         isSwitchingModel = true
+        selectingModelId = model
         modelError = nil
         do {
             let response = try await apiClient.selectModel(model)
             activeModel = response.activeModel
+            modelSelectSuccessTick &+= 1
         } catch {
             modelError = error.localizedDescription
         }
         isSwitchingModel = false
+        selectingModelId = nil
     }
 }

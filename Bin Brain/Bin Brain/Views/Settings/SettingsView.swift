@@ -24,6 +24,10 @@ struct SettingsView: View {
     /// Tracks focus on the API key field so we can commit to Keychain on blur.
     @FocusState private var apiKeyFocused: Bool
 
+    /// Controls the transient success toast shown after a successful model switch
+    /// (Finding #9). Kept in the view, not the view model, because it's pure UI.
+    @State private var showModelSelectToast: Bool = false
+
     // MARK: - Body
 
     var body: some View {
@@ -50,6 +54,27 @@ struct SettingsView: View {
             async let imageSize: () = viewModel.loadImageSize(apiClient: apiClient)
             _ = await (models, imageSize)
         }
+        .onChange(of: viewModel.modelSelectSuccessTick) { _, _ in
+            // Finding #9 — fire haptic + brief toast on each successful switch.
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            showModelSelectToast = true
+            Task {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                showModelSelectToast = false
+            }
+        }
+        .overlay(alignment: .top) {
+            if showModelSelectToast {
+                Text("Model switched")
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: showModelSelectToast)
     }
 
     // MARK: - Bindings
@@ -186,6 +211,10 @@ struct SettingsView: View {
             } else {
                 ForEach(viewModel.availableModels, id: \.name) { model in
                     Button {
+                        // Ignore taps while a switch is in flight so siblings
+                        // feel tappable (not greyed-out) but only the first
+                        // tap is honored. (Finding #9)
+                        guard !viewModel.isSwitchingModel else { return }
                         guard model.name != viewModel.activeModel else { return }
                         Task { await viewModel.selectModel(model.name, apiClient: apiClient) }
                     } label: {
@@ -199,20 +228,16 @@ struct SettingsView: View {
                                 }
                             }
                             Spacer()
-                            if model.name == viewModel.activeModel {
+                            // Inline spinner next to the tapped row (Finding #9)
+                            if viewModel.selectingModelId == model.name {
+                                ProgressView()
+                            } else if model.name == viewModel.activeModel {
                                 Image(systemName: "checkmark")
                                     .foregroundStyle(.blue)
                             }
                         }
                     }
                     .tint(.primary)
-                    .disabled(viewModel.isSwitchingModel)
-                }
-            }
-            if viewModel.isSwitchingModel {
-                HStack {
-                    ProgressView()
-                    Text("Switching model…").foregroundStyle(.secondary)
                 }
             }
             if let error = viewModel.modelError {
