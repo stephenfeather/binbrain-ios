@@ -203,29 +203,28 @@ nonisolated struct QualityGates: Sendable {
             shortestSide: shortest,
             baseThresholdAt1024: kBlurVarianceThresholdAt1024
         )
-        let passed = variance >= scaledThreshold
 
-        // Finding #4 — per-photo telemetry so Stephen can calibrate the threshold
-        // against real device samples. Same Logger pattern as APIClient
-        // (subsystem com.binbrain.app, .debug level) so it surfaces in Xcode's
-        // debug console on Debug builds — where APIClient's request/response
-        // logs are already visible.
+        // Finding #4 resolution — the whole-frame Laplacian variance metric
+        // does NOT separate blurry from sharp on real device photos (Stephen's
+        // n=7 calibration: fuzzy mean 0.00108 > clear mean 0.00066, overlapping
+        // distributions). Root cause: background texture dominates the metric
+        // when the subject is ~5% of the frame. No threshold works; the gate
+        // is disabled pending a salience-cropped redesign (Finding #4-REDESIGN,
+        // pairs with Finding #5). Instrumentation log is preserved so we keep
+        // collecting telemetry for the redesign.
+        let passed = true
+
         blurGateLogger.debug(
             """
             blur_gate variance=\(variance, privacy: .public) \
             threshold=\(scaledThreshold, privacy: .public) \
             base_threshold=\(kBlurVarianceThresholdAt1024, privacy: .public) \
             shortest_side=\(Int(shortest), privacy: .public) \
-            passed=\(passed, privacy: .public)
+            passed=\(passed, privacy: .public) \
+            gate_enabled=false
             """
         )
 
-        guard passed else {
-            return (variance, QualityGateFailure(
-                gate: .blur,
-                message: "Hold steady — photo is blurry"
-            ))
-        }
         return (variance, nil)
     }
 
