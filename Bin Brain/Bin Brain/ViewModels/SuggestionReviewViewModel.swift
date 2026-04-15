@@ -154,12 +154,20 @@ final class SuggestionReviewViewModel {
             let category = s.editedCategory.isEmpty ? nil : s.editedCategory
             let confidence = editableSuggestions[idx].confidence
             do {
-                _ = try await apiClient.upsertItem(
+                // Finding #6: /items alone leaves bin_items empty. Follow with
+                // /associate to guarantee the join row is created.
+                let upsert = try await apiClient.upsertItem(
                     name: s.editedName,
                     category: category,
                     quantity: quantity,
                     confidence: confidence,
                     binId: binId
+                )
+                _ = try await apiClient.associateItem(
+                    binId: binId,
+                    itemId: upsert.itemId,
+                    confidence: confidence,
+                    quantity: quantity
                 )
             } catch {
                 failedIndices = includedIndices.filter { $0 >= idx }
@@ -332,12 +340,18 @@ final class SuggestionReviewViewModel {
             let category = s.editedCategory.isEmpty ? nil : s.editedCategory
             let confidence = editableSuggestions[idx].confidence
             do {
-                _ = try await apiClient.upsertItem(
+                let upsert = try await apiClient.upsertItem(
                     name: s.editedName,
                     category: category,
                     quantity: quantity,
                     confidence: confidence,
                     binId: binId
+                )
+                _ = try await apiClient.associateItem(
+                    binId: binId,
+                    itemId: upsert.itemId,
+                    confidence: confidence,
+                    quantity: quantity
                 )
             } catch {
                 failedIndices = toRetry.filter { $0 >= idx }

@@ -248,6 +248,48 @@ final class APIClient {
         )
     }
 
+    /// Associates an existing item with a bin via `POST /associate`.
+    ///
+    /// The `/items` upsert path does not reliably create the `bin_items` join
+    /// row when callers pass `bin_id` as a multipart field (see walkthrough
+    /// Finding #6 — DB verification showed `bin_items` empty despite 200
+    /// responses). Callers should upsert via `upsertItem(...)` and then follow
+    /// up with `associateItem(...)` to guarantee the join row exists.
+    ///
+    /// - Parameters:
+    ///   - binId: The bin identifier to associate the item with.
+    ///   - itemId: The item ID returned by a prior `upsertItem(...)` call.
+    ///   - confidence: Optional association confidence 0–1.
+    ///   - quantity: Optional quantity in the bin.
+    @discardableResult
+    func associateItem(
+        binId: String,
+        itemId: Int,
+        confidence: Double?,
+        quantity: Double?
+    ) async throws -> AssociateItemResponse {
+        var fields: [String: String] = [
+            "bin_id": binId,
+            "item_id": String(itemId)
+        ]
+        if let confidence { fields["confidence"] = String(confidence) }
+        if let quantity { fields["quantity"] = String(quantity) }
+
+        let (body, boundary) = multipartBody(
+            fields: fields,
+            fileData: nil,
+            fileName: nil,
+            mimeType: nil
+        )
+        return try await request(
+            path: "/associate",
+            method: "POST",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            timeout: 10
+        )
+    }
+
     /// Removes an item from a bin (deletes the association, not the item itself).
     ///
     /// - Parameters:

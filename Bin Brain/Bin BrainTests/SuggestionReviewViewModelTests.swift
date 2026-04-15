@@ -112,6 +112,12 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         """.utf8)
     }
 
+    private var associateSuccessJSON: Data {
+        Data("""
+        {"ok":true,"bin_id":"BIN-0001","item_id":101}
+        """.utf8)
+    }
+
     private var confirmClassSuccessJSON: Data {
         Data("""
         {"version":"1","class_name":"Widget","added":true,"active_class_count":47,"reload_triggered":true}
@@ -177,10 +183,15 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         sut.loadSuggestions(suggestions)
 
         var upsertCount = 0
+        var associateCount = 0
         let client = makeMockAPIClient { [self] request in
             let path = request.url?.path ?? ""
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                associateCount += 1
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
             }
             upsertCount += 1
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
@@ -191,6 +202,7 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isConfirming, "isConfirming should be false after confirm completes")
         XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty after successful confirm")
         XCTAssertEqual(upsertCount, 2, "Should have made 2 upsert calls (one per included suggestion)")
+        XCTAssertEqual(associateCount, 2, "Should have made 2 associate calls (one per upsert)")
     }
 
     // MARK: - Test 4: confirm skips excluded suggestions
@@ -205,6 +217,9 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             let path = request.url?.path ?? ""
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
             }
             upsertCount += 1
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
@@ -251,6 +266,10 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             if attempt == 1 {
                 return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
             }
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
@@ -261,6 +280,10 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         // Now retry with a client that always succeeds
         let succeedClient = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
@@ -304,8 +327,14 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         var capturedBody: String?
         let client = makeMockAPIClient { [self] request in
-            if let data = request.bodyData {
+            let path = request.url?.path ?? ""
+            // Only capture the /items body — /associate bodies overwrite and
+            // would mask the assertion about the edited name.
+            if path == "/items", let data = request.bodyData {
                 capturedBody = String(data: data, encoding: .utf8)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
             }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
@@ -433,16 +462,21 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                 """.utf8)
                 return (mockResponse(statusCode: 200, for: request), json)
             }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
         await sut.confirm(binId: "BIN-0001", apiClient: client)
 
-        // 2 upsert calls + 1 confirmClass call (only first item has teach=true)
+        // 2 upsert calls + 2 associate calls + 1 confirmClass call (only first item has teach=true)
         let confirmCalls = requestPaths.filter { $0.contains("/classes/confirm") }
         XCTAssertEqual(confirmCalls.count, 1, "Should call confirmClass once for the taught item")
-        let upsertCalls = requestPaths.filter { $0.contains("/items") }
+        let upsertCalls = requestPaths.filter { $0 == "/items" }
         XCTAssertEqual(upsertCalls.count, 2, "Should call upsert for both included items")
+        let associateCalls = requestPaths.filter { $0.hasSuffix("/associate") }
+        XCTAssertEqual(associateCalls.count, 2, "Should call associate for each upsert")
     }
 
     // MARK: - Test 15: confirm does not call confirmClass when teach is false for all
@@ -455,7 +489,11 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         var requestPaths: [String] = []
         let client = makeMockAPIClient { [self] request in
-            requestPaths.append(request.url?.path ?? "")
+            let path = request.url?.path ?? ""
+            requestPaths.append(path)
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
@@ -475,6 +513,9 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             let path = request.url?.path ?? ""
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
             }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
@@ -496,6 +537,9 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
             }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
@@ -515,6 +559,9 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             let path = request.url?.path ?? ""
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
             }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
@@ -537,6 +584,9 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
             }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
         await sut.confirm(binId: "BIN-0001", apiClient: failClient)
@@ -554,5 +604,102 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         XCTAssertEqual(sut.teachFailureCount, 0,
                        "teachFailureCount should reset at the start of each confirm")
+    }
+
+    // MARK: - Test 20: Finding #6 — /items 200 + /associate 200 → success
+
+    func testConfirmItemsAndAssociateBothSucceed() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        var itemsCount = 0
+        var associateCount = 0
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                associateCount += 1
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            if path == "/items" {
+                itemsCount += 1
+                return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(itemsCount, 2, "Should POST /items once per included suggestion")
+        XCTAssertEqual(associateCount, 2, "Should POST /associate once per successful /items")
+        XCTAssertTrue(sut.failedIndices.isEmpty, "Pair succeeded — no failed indices")
+    }
+
+    // MARK: - Test 21: Finding #6 — /items 200 + /associate 500 → index marked failed
+
+    func testConfirmAssociateFailureMarksIndexFailed() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/associate") {
+                // /associate fails on the first call — this makes the pair fail
+                // and halts the loop before the second index is attempted.
+                return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertFalse(sut.isConfirming, "isConfirming should be false after failure")
+        XCTAssertTrue(sut.failedIndices.contains(0),
+                      "Index 0 should be marked failed when its /associate fails")
+        XCTAssertTrue(sut.failedIndices.contains(1),
+                      "Index 1 should be marked failed (not attempted)")
+    }
+
+    // MARK: - Test 22: Finding #6 — retryRemaining re-runs both /items and /associate
+
+    func testRetryRemainingReRunsBothCalls() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        // Seed failedIndices = [0, 1] via an /associate failure on the first call.
+        let seedClient = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 500, for: request), serverErrorJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+        await sut.confirm(binId: "BIN-0001", apiClient: seedClient)
+        XCTAssertEqual(Set(sut.failedIndices), Set([0, 1]),
+                       "precondition: both indices should be queued for retry")
+
+        // Retry: both /items and /associate should be re-issued for each index.
+        var retryItems = 0
+        var retryAssociate = 0
+        let retryClient = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path == "/items" {
+                retryItems += 1
+                return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                retryAssociate += 1
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.retryRemaining(binId: "BIN-0001", apiClient: retryClient)
+
+        XCTAssertEqual(retryItems, 2, "retry should re-issue /items for both queued indices")
+        XCTAssertEqual(retryAssociate, 2, "retry should re-issue /associate for both queued indices")
+        XCTAssertTrue(sut.failedIndices.isEmpty, "all retried pairs succeeded")
     }
 }

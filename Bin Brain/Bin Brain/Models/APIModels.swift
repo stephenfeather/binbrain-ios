@@ -227,6 +227,19 @@ struct UpsertItemResponse: Decodable {
     }
 }
 
+/// The response returned by `POST /associate` (link an item to a bin).
+struct AssociateItemResponse: Decodable {
+    let ok: Bool
+    let binId: String
+    let itemId: Int
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case binId = "bin_id"
+        case itemId = "item_id"
+    }
+}
+
 // MARK: - Suggestions
 
 /// A catalogue item matched to a vision suggestion by embedding similarity.
