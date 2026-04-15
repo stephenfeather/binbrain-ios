@@ -62,6 +62,11 @@ struct BinDetailView: View {
     @State private var reviewViewModel = SuggestionReviewViewModel()
     @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
+    /// True once preliminary on-device chips have been loaded and navigation
+    /// to `.review` happened early (Mode A). Drives how `onComplete` merges.
+    @State private var navigatedOnPreliminary = false
+    /// Top-K chips to surface as preliminary (Mode A, Phase 1).
+    private static let preliminaryTopK = 3
 
     // Model escalation
     private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]
@@ -245,13 +250,18 @@ struct BinDetailView: View {
         AnalysisProgressView(
             viewModel: analysisViewModel,
             onComplete: { suggestions in
-                reviewViewModel.loadSuggestions(suggestions)
-                catalogingPath.append(.review)
+                if navigatedOnPreliminary {
+                    reviewViewModel.applyServerSuggestions(suggestions)
+                } else {
+                    reviewViewModel.loadSuggestions(suggestions)
+                    catalogingPath.append(.review)
+                }
             },
             onRetry: {
                 Task {
                     guard let data = capturedPhotoData else { return }
                     analysisViewModel.reset()
+                    navigatedOnPreliminary = false
                     await analysisViewModel.run(
                         jpegData: data,
                         binId: binId,
@@ -263,6 +273,7 @@ struct BinDetailView: View {
             onOverride: {
                 Task {
                     guard let data = capturedPhotoData else { return }
+                    navigatedOnPreliminary = false
                     await analysisViewModel.overrideQualityGate(
                         jpegData: data,
                         binId: binId,
@@ -270,6 +281,14 @@ struct BinDetailView: View {
                         context: modelContext
                     )
                 }
+            },
+            onPreliminaryReady: { classifications in
+                reviewViewModel.loadPreliminaryClassifications(
+                    classifications,
+                    topK: Self.preliminaryTopK
+                )
+                navigatedOnPreliminary = true
+                catalogingPath.append(.review)
             }
         )
     }
@@ -320,6 +339,7 @@ struct BinDetailView: View {
         captureProxy.action = nil
         capturedPhotoData = nil
         currentModelIndex = 0
+        navigatedOnPreliminary = false
     }
 
     // MARK: - Content

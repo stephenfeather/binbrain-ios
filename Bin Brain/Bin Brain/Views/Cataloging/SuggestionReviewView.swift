@@ -134,18 +134,28 @@ struct SuggestionReviewView: View {
 
     private func suggestionRow(at idx: Int) -> some View {
         let suggestion = viewModel.editableSuggestions[idx]
+        let isPreliminary = suggestion.origin == .preliminary
         return VStack(alignment: .leading, spacing: 8) {
+            if isPreliminary {
+                Text("Preliminary — confirming with AI")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Preliminary suggestion, confirming with AI")
+            }
             HStack {
                 Toggle(
                     isOn: $viewModel.editableSuggestions[idx].included
                 ) {
                     Text(suggestion.editedName)
                         .font(.headline)
+                        .foregroundStyle(isPreliminary ? .secondary : .primary)
                 }
 
-                Text(String(format: "%.0f%%", suggestion.confidence * 100))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if !isPreliminary {
+                    Text(String(format: "%.0f%%", suggestion.confidence * 100))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if suggestion.isMatched {
@@ -171,13 +181,22 @@ struct SuggestionReviewView: View {
 
             TextField("Name", text: $viewModel.editableSuggestions[idx].editedName)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: viewModel.editableSuggestions[idx].editedName) { _, _ in
+                    viewModel.markEditedIfPreliminary(index: idx)
+                }
 
             TextField("Category", text: $viewModel.editableSuggestions[idx].editedCategory)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: viewModel.editableSuggestions[idx].editedCategory) { _, _ in
+                    viewModel.markEditedIfPreliminary(index: idx)
+                }
 
             TextField("Quantity", text: $viewModel.editableSuggestions[idx].editedQuantity)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.decimalPad)
+                .onChange(of: viewModel.editableSuggestions[idx].editedQuantity) { _, _ in
+                    viewModel.markEditedIfPreliminary(index: idx)
+                }
 
             Toggle(isOn: $viewModel.editableSuggestions[idx].teach) {
                 Label("Teach for future detection", systemImage: "brain")
@@ -188,5 +207,14 @@ struct SuggestionReviewView: View {
             .tint(.green)
         }
         .padding(.vertical, 4)
+        .padding(.horizontal, isPreliminary ? 8 : 0)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .foregroundStyle(.secondary)
+                .opacity(isPreliminary ? 1 : 0)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityHint(isPreliminary ? "Preliminary — will be confirmed by the server" : "")
     }
 }
