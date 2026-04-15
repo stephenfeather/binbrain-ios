@@ -58,6 +58,8 @@ struct BinsListView: View {
     @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
     @State private var capturedBinId: String?
+    @State private var navigatedOnPreliminary = false
+    private static let preliminaryTopK = 3
 
     // Model escalation
     private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]
@@ -193,14 +195,19 @@ struct BinsListView: View {
         AnalysisProgressView(
             viewModel: analysisViewModel,
             onComplete: { suggestions in
-                reviewViewModel.loadSuggestions(suggestions)
-                catalogingPath.append(.review)
+                if navigatedOnPreliminary {
+                    reviewViewModel.applyServerSuggestions(suggestions)
+                } else {
+                    reviewViewModel.loadSuggestions(suggestions)
+                    catalogingPath.append(.review)
+                }
             },
             onRetry: {
                 Task {
                     guard let data = capturedPhotoData,
                           let binId = capturedBinId else { return }
                     analysisViewModel.reset()
+                    navigatedOnPreliminary = false
                     await analysisViewModel.run(
                         jpegData: data,
                         binId: binId,
@@ -213,6 +220,7 @@ struct BinsListView: View {
                 Task {
                     guard let data = capturedPhotoData,
                           let binId = capturedBinId else { return }
+                    navigatedOnPreliminary = false
                     await analysisViewModel.overrideQualityGate(
                         jpegData: data,
                         binId: binId,
@@ -220,6 +228,14 @@ struct BinsListView: View {
                         context: modelContext
                     )
                 }
+            },
+            onPreliminaryReady: { classifications in
+                reviewViewModel.loadPreliminaryClassifications(
+                    classifications,
+                    topK: Self.preliminaryTopK
+                )
+                navigatedOnPreliminary = true
+                catalogingPath.append(.review)
             }
         )
     }
@@ -272,6 +288,7 @@ struct BinsListView: View {
         capturedPhotoData = nil
         capturedBinId = nil
         currentModelIndex = 0
+        navigatedOnPreliminary = false
     }
 
     // MARK: - Content

@@ -51,6 +51,14 @@ final class AnalysisViewModel {
     /// The item suggestions returned by vision inference; populated when `phase == .complete`.
     private(set) var suggestions: [SuggestionItem] = []
 
+    /// On-device `VNClassifyImageRequest` classifications, populated the moment
+    /// Stage 3 of `ImagePipeline.process(_:)` succeeds (before `.uploading`).
+    ///
+    /// The parent view uses this to render preliminary chips in
+    /// `SuggestionReviewView` during the ~40 s server call. See
+    /// `thoughts/shared/designs/coreml-mode-a-merge-ux.md`.
+    private(set) var preliminaryClassifications: [ClassificationResult] = []
+
     /// The photo ID from the last successful ingest; `nil` until ingest completes.
     private(set) var lastPhotoId: Int?
 
@@ -79,6 +87,7 @@ final class AnalysisViewModel {
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func run(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
         lastQualityFailure = nil
+        preliminaryClassifications = []
 
         // Boxes allow mutation from the synchronously-called expiration handler.
         final class WorkTaskBox: @unchecked Sendable {
@@ -130,6 +139,7 @@ final class AnalysisViewModel {
         do {
             let result = try await pipeline.process(jpegData)
             uploadData = result.optimizedImageData
+            preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             let jsonData = try JSONEncoder().encode(result.deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch let error as PipelineError {
@@ -233,6 +243,7 @@ final class AnalysisViewModel {
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
         lastQualityFailure = nil
+        preliminaryClassifications = []
         phase = .processingImage
 
         var uploadData: Data
@@ -241,6 +252,7 @@ final class AnalysisViewModel {
         do {
             let result = try await pipeline.processSkippingQualityGates(jpegData)
             uploadData = result.optimizedImageData
+            preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             let jsonData = try JSONEncoder().encode(result.deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch {
@@ -310,6 +322,7 @@ final class AnalysisViewModel {
     func reset() {
         phase = .idle
         suggestions = []
+        preliminaryClassifications = []
         lastPhotoId = nil
         lastQualityFailure = nil
     }

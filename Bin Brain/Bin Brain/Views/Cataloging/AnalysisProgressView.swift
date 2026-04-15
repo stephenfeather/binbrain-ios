@@ -29,6 +29,19 @@ struct AnalysisProgressView: View {
     /// Called when the user taps "Upload Anyway" after a `.qualityFailed` phase.
     let onOverride: () -> Void
 
+    /// Called once, when on-device `VNClassifyImageRequest` classifications
+    /// become available (Stage 3 of `ImagePipeline` succeeded) — *before* the
+    /// ~40 s server call completes. The parent uses this to render preliminary
+    /// chips in `SuggestionReviewView` and navigate early, delivering the
+    /// Mode A perceived-latency win.
+    ///
+    /// `nil` (default) preserves the pre-Mode-A blocking-progress behavior.
+    var onPreliminaryReady: (([ClassificationResult]) -> Void)?
+
+    // MARK: - Private state
+
+    @State private var didFirePreliminary = false
+
     // MARK: - Body
 
     var body: some View {
@@ -79,6 +92,16 @@ struct AnalysisProgressView: View {
             if case .complete = newPhase {
                 onComplete(viewModel.suggestions)
             }
+        }
+        .onChange(of: viewModel.preliminaryClassifications.isEmpty) { _, isEmpty in
+            guard !isEmpty,
+                  !didFirePreliminary,
+                  let onPreliminaryReady else { return }
+            didFirePreliminary = true
+            onPreliminaryReady(viewModel.preliminaryClassifications)
+        }
+        .onChange(of: viewModel.phase) { _, newPhase in
+            if case .idle = newPhase { didFirePreliminary = false }
         }
     }
 }
