@@ -10,6 +10,12 @@ import CoreGraphics
 import CoreImage
 import Accelerate
 import Vision
+import OSLog
+
+/// Logger for blur-gate variance telemetry (Finding #4 calibration pass).
+/// Subsystem/category match the app convention so Console filters are stable.
+/// `Logger` is `Sendable`, so a plain `let` is safe from nonisolated contexts.
+nonisolated private let blurGateLogger = Logger(subsystem: "com.binbrain.app", category: "quality")
 
 // MARK: - Thresholds
 
@@ -193,15 +199,46 @@ nonisolated struct QualityGates: Sendable {
 
         // Scale threshold proportionally to resolution
         let shortest = Double(min(width, height))
-        let scaledThreshold = kBlurVarianceThresholdAt1024 * (shortest / 1024.0)
+        let scaledThreshold = Self.scaledBlurThreshold(
+            shortestSide: shortest,
+            baseThresholdAt1024: kBlurVarianceThresholdAt1024
+        )
+        let passed = variance >= scaledThreshold
 
-        guard variance >= scaledThreshold else {
+        // Finding #4 — per-photo telemetry so we can calibrate the threshold
+        // against real device samples. Values are non-sensitive image statistics.
+        blurGateLogger.info(
+            """
+            blur_gate variance=\(variance, privacy: .public) \
+            threshold=\(scaledThreshold, privacy: .public) \
+            base_threshold=\(kBlurVarianceThresholdAt1024, privacy: .public) \
+            shortest_side=\(Int(shortest), privacy: .public) \
+            passed=\(passed, privacy: .public)
+            """
+        )
+
+        guard passed else {
             return (variance, QualityGateFailure(
                 gate: .blur,
                 message: "Hold steady — photo is blurry"
             ))
         }
         return (variance, nil)
+    }
+
+    /// Pure function: scale the 1024px-shortest-side blur threshold for a given resolution.
+    ///
+    /// Exposed `static` so tests can exercise the threshold math without constructing
+    /// a CGImage. The live path in `checkBlur(_:)` is the sole production caller.
+    static func scaledBlurThreshold(shortestSide: Double, baseThresholdAt1024: Double) -> Double {
+        baseThresholdAt1024 * (shortestSide / 1024.0)
+    }
+
+    /// Pure function: given a Laplacian variance and the scaled threshold, return
+    /// whether the blur gate passes. Used by tests to validate the decision logic
+    /// independently of the vImage-based variance computation.
+    static func blurGatePasses(variance: Double, scaledThreshold: Double) -> Bool {
+        variance >= scaledThreshold
     }
 
     // MARK: - Gate 3: Exposure

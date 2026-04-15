@@ -231,6 +231,35 @@ final class QualityGatesTests: XCTestCase {
 
     // MARK: - Sequential Ordering
 
+    // MARK: - Pure Blur Threshold Math (Finding #4)
+
+    func testScaledBlurThresholdAt1024IsBaseline() {
+        // At the reference resolution the scaled threshold must equal the base.
+        let scaled = QualityGates.scaledBlurThreshold(shortestSide: 1024, baseThresholdAt1024: 2.0)
+        XCTAssertEqual(scaled, 2.0, accuracy: 1e-9)
+    }
+
+    func testScaledBlurThresholdScalesLinearly() {
+        // Halving the shortest side halves the threshold.
+        let scaled = QualityGates.scaledBlurThreshold(shortestSide: 512, baseThresholdAt1024: 2.0)
+        XCTAssertEqual(scaled, 1.0, accuracy: 1e-9)
+    }
+
+    func testBlurGatePassesWhenVarianceAboveThreshold() {
+        XCTAssertTrue(QualityGates.blurGatePasses(variance: 3.0, scaledThreshold: 2.0))
+    }
+
+    func testBlurGateFailsWhenVarianceBelowThreshold() {
+        XCTAssertFalse(QualityGates.blurGatePasses(variance: 1.0, scaledThreshold: 2.0))
+    }
+
+    func testBlurGatePassesAtExactThreshold() {
+        // Inclusive lower bound — variance == threshold counts as pass.
+        XCTAssertTrue(QualityGates.blurGatePasses(variance: 2.0, scaledThreshold: 2.0))
+    }
+
+    // MARK: - Sequential Ordering
+
     func testGatesRunInOrder() async throws {
         // An image that fails resolution should not have blur computed
         let tinyImage = makeSolidImage(width: 50, height: 50)
