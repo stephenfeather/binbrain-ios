@@ -6,6 +6,7 @@
 // all testable logic lives in AnalysisViewModel.
 
 import XCTest
+import UIKit
 @testable import Bin_Brain
 
 // MARK: - AnalysisMockURLProtocol
@@ -256,5 +257,65 @@ final class AnalysisViewModelTests: XCTestCase {
 
         XCTAssertEqual(sut.phase, .complete, "Phase should be .complete even with zero suggestions")
         XCTAssertTrue(sut.suggestions.isEmpty, "Suggestions should be empty")
+    }
+
+    // MARK: - Finding #4-UX: preview the rejected photo on quality failure
+
+    /// Builds a valid JPEG that will fail the resolution quality gate
+    /// (shortest side < 1024). Drives the `qualityGateFailed` path in
+    /// `ImagePipeline.process` deterministically.
+    private func makeTinyJPEG(width: Int = 64, height: Int = 64) -> Data? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.setFillColor(UIColor.gray.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let cg = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.9)
+    }
+
+    func testLastRejectedPhotoDataIsPopulatedOnQualityFailure() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG(), "failed to synthesize tiny JPEG for test")
+        let client = makeMockAPIClient { _ in
+            // Quality gate should reject before any network call is made.
+            XCTFail("No network call expected when resolution gate fails")
+            throw URLError(.cancelled)
+        }
+
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+
+        if case .qualityFailed = sut.phase {
+            // expected
+        } else {
+            XCTFail("Phase should be .qualityFailed for a 64x64 image, got \(sut.phase)")
+        }
+        XCTAssertEqual(sut.lastRejectedPhotoData, tinyJPEG,
+                       "lastRejectedPhotoData must retain the exact bytes the user just captured so the rejection screen can render a thumbnail")
+        XCTAssertNotNil(sut.lastQualityFailure, "lastQualityFailure should also be recorded")
+    }
+
+    func testLastRejectedPhotoDataIsInitiallyNil() {
+        XCTAssertNil(sut.lastRejectedPhotoData, "should start nil before any run")
+    }
+
+    func testResetClearsLastRejectedPhotoData() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG())
+        let client = makeMockAPIClient { _ in
+            throw URLError(.cancelled)
+        }
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+        XCTAssertNotNil(sut.lastRejectedPhotoData, "precondition: preview populated after rejection")
+
+        sut.reset()
+
+        XCTAssertNil(sut.lastRejectedPhotoData, "reset() must clear the preview bytes")
+        XCTAssertNil(sut.lastQualityFailure, "reset() must clear the failure")
     }
 }

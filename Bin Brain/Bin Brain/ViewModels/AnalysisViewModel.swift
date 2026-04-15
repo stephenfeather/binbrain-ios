@@ -65,6 +65,14 @@ final class AnalysisViewModel {
     /// The last quality gate failure, if any. Set when `phase == .qualityFailed`.
     private(set) var lastQualityFailure: QualityGateFailure?
 
+    /// Raw bytes of the photo that was just rejected by a quality gate.
+    ///
+    /// Populated when `phase` transitions to `.qualityFailed` so the rejection
+    /// screen can render a thumbnail — otherwise the user has no way to judge
+    /// whether to retry or force-accept (Finding #4-UX). Cleared at the start
+    /// of each new `run(...)` and on retry.
+    private(set) var lastRejectedPhotoData: Data?
+
     // MARK: - Dependencies
 
     /// The on-device image processing pipeline.
@@ -87,6 +95,7 @@ final class AnalysisViewModel {
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func run(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
         lastQualityFailure = nil
+        lastRejectedPhotoData = nil
         preliminaryClassifications = []
 
         // Boxes allow mutation from the synchronously-called expiration handler.
@@ -146,6 +155,9 @@ final class AnalysisViewModel {
             switch error {
             case .qualityGateFailed(let failure):
                 lastQualityFailure = failure
+                // Finding #4-UX: keep the raw bytes so the rejection screen
+                // can render a thumbnail of what the camera actually captured.
+                lastRejectedPhotoData = jpegData
                 phase = .qualityFailed(failure.message)
                 return
             case .invalidImageData:
@@ -243,6 +255,7 @@ final class AnalysisViewModel {
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
         lastQualityFailure = nil
+        lastRejectedPhotoData = nil
         preliminaryClassifications = []
         phase = .processingImage
 
@@ -325,5 +338,6 @@ final class AnalysisViewModel {
         preliminaryClassifications = []
         lastPhotoId = nil
         lastQualityFailure = nil
+        lastRejectedPhotoData = nil
     }
 }

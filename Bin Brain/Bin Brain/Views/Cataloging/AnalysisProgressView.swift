@@ -5,6 +5,7 @@
 // Navigation on completion is handled by the parent — this view calls onComplete.
 
 import SwiftUI
+import UIKit
 
 // MARK: - AnalysisProgressView
 
@@ -54,6 +55,23 @@ struct AnalysisProgressView: View {
                 Text(viewModel.phase == .processingImage ? "Processing image..." : "Preparing...")
 
             case .qualityFailed(let message):
+                // Finding #4-UX: show the rejected photo so the user can judge
+                // whether to retry or force-accept. Bytes are the raw capture,
+                // not the optimized upload — what the camera actually saw.
+                if let data = viewModel.lastRejectedPhotoData,
+                   let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 240, maxHeight: 240)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.orange.opacity(0.6), lineWidth: 2)
+                        )
+                        .padding(.bottom, 4)
+                        .accessibilityLabel("Rejected photo preview")
+                }
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 48))
                     .foregroundStyle(.orange)
