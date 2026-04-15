@@ -11,5 +11,10 @@
 //  substitutions resolve to empty strings and `BuildConfig` returns `nil`.
 //  Never put production credentials here.
 //
+//  IMPORTANT: `//` in xcconfig values is parsed as a comment start.
+//  Split the `//` in URL values with an empty inline substitution `$()`
+//  so the final value reconstructs correctly after the comment pass.
+//  Writing `http://host` here would silently become `http:`.
+//
 apiKey = your_local_debug_api_key_here
-serverURL = http://your-dev-host:8000
+serverURL = http:/$()/your-dev-host:8000
