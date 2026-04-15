@@ -229,8 +229,36 @@ final class SettingsViewModel {
             }
         } catch {
             logger.error("testConnection failed: \(error.localizedDescription, privacy: .private)")
-            connectionStatus = .unreachable(errorMessage: error.localizedDescription)
-            connectionErrorMessage = error.localizedDescription
+            let friendly = Self.friendlyConnectionErrorMessage(for: error)
+            connectionStatus = .unreachable(errorMessage: friendly)
+            connectionErrorMessage = friendly
+        }
+    }
+
+    /// Maps a thrown connection error to user-facing copy.
+    ///
+    /// Exposed `static` so tests can validate the mapping without standing
+    /// up an APIClient. Handles ATS (-1022), host-not-found (-1003), and
+    /// cannot-connect (-1004) explicitly; falls back to the system's
+    /// `localizedDescription` for unknown codes (Finding #10).
+    static func friendlyConnectionErrorMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else {
+            return error.localizedDescription
+        }
+        switch nsError.code {
+        case NSURLErrorAppTransportSecurityRequiresSecureConnection: // -1022
+            return "That host isn't allowed by this build. Use a whitelisted host, or rebuild with it added to Info-Debug.plist."
+        case NSURLErrorCannotFindHost: // -1003
+            return "Host not found on this network."
+        case NSURLErrorCannotConnectToHost: // -1004
+            return "Host reachable but connection refused."
+        case NSURLErrorTimedOut: // -1001
+            return "Connection timed out. Check that the server is running and reachable from this network."
+        case NSURLErrorNotConnectedToInternet: // -1009
+            return "No network connection."
+        default:
+            return error.localizedDescription
         }
     }
 

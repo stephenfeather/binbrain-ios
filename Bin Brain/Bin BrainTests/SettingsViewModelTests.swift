@@ -555,6 +555,50 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertNil(sut.modelError, "modelError should stay nil on success")
     }
 
+    // MARK: - Finding #10: friendly URLError copy in Test Connection
+
+    func testFriendlyConnectionErrorMessageMapsATSFailure() {
+        let err = NSError(domain: NSURLErrorDomain,
+                          code: NSURLErrorAppTransportSecurityRequiresSecureConnection)
+        let msg = SettingsViewModel.friendlyConnectionErrorMessage(for: err)
+        XCTAssertEqual(msg,
+                       "That host isn't allowed by this build. Use a whitelisted host, or rebuild with it added to Info-Debug.plist.")
+    }
+
+    func testFriendlyConnectionErrorMessageMapsHostNotFound() {
+        let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost)
+        XCTAssertEqual(SettingsViewModel.friendlyConnectionErrorMessage(for: err),
+                       "Host not found on this network.")
+    }
+
+    func testFriendlyConnectionErrorMessageMapsCannotConnect() {
+        let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost)
+        XCTAssertEqual(SettingsViewModel.friendlyConnectionErrorMessage(for: err),
+                       "Host reachable but connection refused.")
+    }
+
+    func testFriendlyConnectionErrorMessageMapsTimeout() {
+        let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        XCTAssertEqual(SettingsViewModel.friendlyConnectionErrorMessage(for: err),
+                       "Connection timed out. Check that the server is running and reachable from this network.")
+    }
+
+    func testFriendlyConnectionErrorMessageFallsBackForUnknownCode() {
+        let err = NSError(domain: NSURLErrorDomain, code: -9999,
+                          userInfo: [NSLocalizedDescriptionKey: "Some obscure URL error"])
+        XCTAssertEqual(SettingsViewModel.friendlyConnectionErrorMessage(for: err),
+                       "Some obscure URL error",
+                       "Unknown URL error codes should fall through to localizedDescription")
+    }
+
+    func testFriendlyConnectionErrorMessageFallsBackForNonURLDomain() {
+        let err = NSError(domain: "com.example.other", code: 42,
+                          userInfo: [NSLocalizedDescriptionKey: "Some other error"])
+        XCTAssertEqual(SettingsViewModel.friendlyConnectionErrorMessage(for: err),
+                       "Some other error",
+                       "Non-URL domains should use the system-provided localizedDescription")
+    }
+
     func testSelectModelDoesNotIncrementSuccessTickOnFailure() async {
         let startTick = sut.modelSelectSuccessTick
         let client = makeMockAPIClient { [self] request in
