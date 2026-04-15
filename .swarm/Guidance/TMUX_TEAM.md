@@ -26,10 +26,39 @@
     - One window is for the ARCHITECT (tagged in tmux with "-n Architect") and there is one window for each AI developer and specialist labeled with "-n <developer name>" or "-n <expert name>" These names are typically "Developer[1|2|3|...)", "SecurityExpert", "UXExpert" and "CloudExpert"
 
 ### Communicating between agents
-- To communicate between the DEVELOPERS/EXPERTS and the ARCHITECT they can use "tmux send-keys" commands to communicate with one another **When you send a command using tmux send-keys you MUST ALWAYS then send a tmux send-keys with a return to actually execute the command in the other window**
-- The ARCHITECT monitors DEVELOPER's and EXPERT's activities by reading periodical reports of progess and activities using "tmux capture-pane -t <agent name>" and using -S and -E parameters to limit the capture to no more than 100 lines of text.
-- The ARCHITECT is always looking for lines of text starting with "ARCHITECT REQUEST: " followed by a query or request from the agents. The DEVELOPER/EXPERT will output this whenever they need additional guidance.
-- When the ARCHITECT sees a request, they will analyze the request, create a response and send it back to the AI developer using "tmux send-keys <response>"
+
+**Push, don't wait to be polled.** Every DEVELOPER/EXPERT is responsible for proactively notifying the ARCHITECT at key moments. Do not rely on the ARCHITECT to discover your status by reading your pane.
+
+To communicate, agents use `tmux send-keys` targeting the window name (all agents share one tmux session). The ARCHITECT window is named `Architect`.
+
+**When you send with `tmux send-keys` you MUST send a second `tmux send-keys` with `Enter` (or `C-m`) to actually submit the message in the target window.**
+
+#### DEVELOPER/EXPERT → ARCHITECT: proactive notifications
+
+Send a direct message to the Architect window in these situations — do not merely print it in your own pane:
+
+| Trigger | Message prefix |
+|---|---|
+| You need guidance, clarification, or a decision | `ARCHITECT REQUEST:` |
+| You finished the assignment and opened a PR | `ARCHITECT TASK COMPLETED: Pull Request #<n>` |
+| You are blocked (dependency, credentials, conflict) | `ARCHITECT BLOCKED:` |
+| You hit a significant milestone mid-task worth surfacing | `ARCHITECT STATUS:` |
+
+Example (from any developer/expert window):
+
+```bash
+tmux send-keys -t Architect "ARCHITECT TASK COMPLETED: Pull Request #42 — feature/login-form, ready for review" 
+tmux send-keys -t Architect Enter
+```
+
+Always also print the same line in your own pane so the capture-pane history remains authoritative. Push first, then print.
+
+#### ARCHITECT: react first, sweep every 5 minutes
+
+- Respond to pushed messages (`ARCHITECT REQUEST:`, `ARCHITECT TASK COMPLETED:`, `ARCHITECT BLOCKED:`, `ARCHITECT STATUS:`) as they arrive. Pushes are the primary signal.
+- In addition, run a light sweep every 5 minutes to catch stuck or silent teammates: `tmux capture-pane -t <agent> -S -100` per active window, looking for lack of progress, errors, or unreported blockers.
+- The 5-minute sweep is a safety net, not the main channel. If pushes are flowing, the sweep should usually be a no-op.
+- When responding, reply with `tmux send-keys -t <agent-window> "<response>"` followed by a second `tmux send-keys -t <agent-window> Enter`.
 
 ## Development Cycle
 - Development proceeds in a series of cycles planned and guided by the ARCHITECT and Human Overseer
@@ -37,10 +66,10 @@
     - ARCHITECT: Creates prompts for the team in <repository name>/.claude/developers/<Developer or Expert>/<Prompt*nnn*.md>
     - ARCHITECT: Sends instructions for an assignment to agents to first rebase their repository to sync with the master branch, to create a new working branch, and then read the prompt from the prompt file, and then execute the assignment 
     - DEVELOPER: Creates a working branch specified in the prompt
-    - DEVELOPER: Plans than executes the assignment, sending queries and requests for guidance to the ARCHITECT by outputting a line beginning with "ARCHITECT REQUEST:" followed by the query or request
-    - ARCHITECT: Monitors progress using tmux capture-pane looking for "ARCHITECT REQUEST:" and responding to the request using tmux send-keys
+    - DEVELOPER: Plans than executes the assignment. When guidance is needed, pushes an "ARCHITECT REQUEST:" message directly into the Architect window via `tmux send-keys -t Architect ...` (followed by an Enter send-keys). Also prints the same line locally.
+    - ARCHITECT: Reacts to pushed messages as they arrive. Only falls back to `tmux capture-pane` when a teammate has been silent unusually long. No fixed polling cadence.
     - DEVELOPER: When completed the assigned work and met all the success criteria, commits the changes to the working branch, pushes to GitHub and creates a well documented Pull Request
-    - DEVELOPER: Tells the ARCHITECT they are finished by saying "ARCHITECT TASK COMPLETED: Pull Request #"
+    - DEVELOPER: Proactively tells the ARCHITECT they are finished by running `tmux send-keys -t Architect "ARCHITECT TASK COMPLETED: Pull Request #<n> ..."` then `tmux send-keys -t Architect Enter`. Do not rely on the Architect discovering completion by polling.
     - ARCHITECT: Responds to the "ARCHITECT TASK COMPLETED: Pull Request #" and reviews the PR for quality, completeness, adherence to architecture and design patterns and security.
     - ARCHITECT: If the PR passes scrutiny, merges the PR into the main branch. If the PR does NOT pass scrutiny, using tmux send-keys to tell the developer how to improve their work and continues monitoring for completion, repeating the PR, Review, Respond cycle until the PR is acceptable..
     - DEVELOPER: Awaits new assignments from the ARCHITECT
