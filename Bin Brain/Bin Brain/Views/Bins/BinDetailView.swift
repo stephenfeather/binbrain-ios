@@ -258,17 +258,13 @@ struct BinDetailView: View {
                 }
             },
             onRetry: {
-                Task {
-                    guard let data = capturedPhotoData else { return }
-                    analysisViewModel.reset()
-                    navigatedOnPreliminary = false
-                    await analysisViewModel.run(
-                        jpegData: data,
-                        binId: binId,
-                        apiClient: apiClient,
-                        context: modelContext
-                    )
-                }
+                // Finding #4-UX-2: "Retake Photo" must return to the camera so
+                // the user can capture a fresh frame. The previous implementation
+                // re-ran analysis on the SAME (still-blurry) photo.
+                analysisViewModel.reset()
+                navigatedOnPreliminary = false
+                capturedPhotoData = nil
+                catalogingPath.removeAll()
             },
             onOverride: {
                 Task {
