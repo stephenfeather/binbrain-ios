@@ -205,9 +205,12 @@ nonisolated struct QualityGates: Sendable {
         )
         let passed = variance >= scaledThreshold
 
-        // Finding #4 — per-photo telemetry so we can calibrate the threshold
-        // against real device samples. Values are non-sensitive image statistics.
-        blurGateLogger.info(
+        // Finding #4 — per-photo telemetry so Stephen can calibrate the threshold
+        // against real device samples. Same Logger pattern as APIClient
+        // (subsystem com.binbrain.app, .debug level) so it surfaces in Xcode's
+        // debug console on Debug builds — where APIClient's request/response
+        // logs are already visible.
+        blurGateLogger.debug(
             """
             blur_gate variance=\(variance, privacy: .public) \
             threshold=\(scaledThreshold, privacy: .public) \
