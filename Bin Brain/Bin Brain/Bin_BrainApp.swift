@@ -30,6 +30,11 @@ struct Bin_BrainApp: App {
         // Back-fill apiKeyBoundHost for installs that predate host binding (#13).
         // Must run after the apiKey migration because it reads that entry.
         KeychainHelper.migrateAPIKeyBoundHostIfNeeded()
+        #if DEBUG
+        // DEBUG-only DX: seed the API key from BuildConfig when the Keychain
+        // is empty (fresh install / simulator reset). Compiled out of Release.
+        KeychainHelper.seedDebugAPIKeyFromBuildConfigIfNeeded()
+        #endif
         // Apply complete file protection to the SwiftData store so queued
         // pending uploads are unreadable when the device is locked (#9, F-08).
         Self.applyFileProtection(to: sharedModelContainer)
