@@ -55,3 +55,7 @@ thoughts/
 opengrep*
 .codegraph/
 
+# Local DEBUG-only defaults (API keys, dev server URL) — copy
+# Development.xcconfig.example to Development.xcconfig and fill in.
+Bin Brain/Development.xcconfig
+

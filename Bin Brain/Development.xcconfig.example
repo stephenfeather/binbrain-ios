@@ -1,0 +1,15 @@
+//
+//  Development.xcconfig.example
+//  Bin Brain
+//
+//  Template for local DEBUG-only defaults. Copy to `Development.xcconfig`
+//  (ignored by git) and fill in real values. These substitute into
+//  Info.plist via `$(apiKey)` / `$(serverURL)` and are surfaced through
+//  `BuildConfig.defaultAPIKey` / `BuildConfig.defaultServerURL`.
+//
+//  Release/TestFlight builds do NOT apply this xcconfig, so the
+//  substitutions resolve to empty strings and `BuildConfig` returns `nil`.
+//  Never put production credentials here.
+//
+apiKey = your_local_debug_api_key_here
+serverURL = http://your-dev-host:8000

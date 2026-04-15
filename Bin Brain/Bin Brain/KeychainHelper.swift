@@ -230,6 +230,50 @@ extension KeychainHelper {
     }
 }
 
+// MARK: - Debug API-key seed
+
+#if DEBUG
+extension KeychainHelper {
+
+    /// DEBUG-only: seeds the API key and bound host from `BuildConfig` when
+    /// the Keychain is empty, so a fresh install or simulator reset doesn't
+    /// force the developer to re-type the key every launch.
+    ///
+    /// This is a developer-experience papercut fix. It is compiled out of
+    /// Release/TestFlight binaries because the entire extension is gated on
+    /// `#if DEBUG`. It writes through `writeAPIKeyBinding` so the key and
+    /// `apiKeyBoundHost` land atomically — an unbound key is never left
+    /// behind, preserving the F-04 host-binding guarantee.
+    ///
+    /// Conditions required for a write (any false → no-op):
+    /// - The Keychain has no existing `apiKey` entry (or the entry is empty).
+    /// - `BuildConfig.defaultAPIKey` is present and non-empty.
+    /// - `BuildConfig.defaultServerURL` is present and yields a parseable
+    ///   origin via `APIClient.normalizedOrigin(of:)`.
+    ///
+    /// - Parameter keychain: The Keychain facade to write through. Defaults to `.shared`.
+    static func seedDebugAPIKeyFromBuildConfigIfNeeded(
+        keychain: KeychainReading = KeychainHelper.shared
+    ) {
+        if let existing = keychain.readString(forKey: apiKeyAccount), !existing.isEmpty {
+            return
+        }
+        guard let debugKey = BuildConfig.defaultAPIKey, !debugKey.isEmpty else {
+            return
+        }
+        guard let serverURL = BuildConfig.defaultServerURL,
+              let origin = APIClient.normalizedOrigin(of: serverURL) else {
+            return
+        }
+        do {
+            try keychain.writeAPIKeyBinding(key: debugKey, boundHost: origin)
+        } catch {
+            logger.error("debug API key seed failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+#endif
+
 // MARK: - Atomic API-key binding
 
 extension KeychainReading {
