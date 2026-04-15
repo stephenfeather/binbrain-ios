@@ -719,6 +719,89 @@ final class APIClientTests: XCTestCase {
         )
         XCTAssertEqual(capturedRequest?.httpMethod, "GET")
     }
+
+    // MARK: - Finding #6 regression: /associate request shape
+
+    /// Asserts /associate is sent as multipart/form-data with exactly the
+    /// server-required field names `bin_id` and `item_id` (not `binId`/`itemId`).
+    /// Regression guard for the device-observed 400 "bin_id field required".
+    func testAssociateItemSendsMultipartWithSpecRequiredFieldNames() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"ok":true,"bin_id":"BIN-0003","item_id":42}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.associateItem(
+            binId: "BIN-0003",
+            itemId: 42,
+            confidence: 0.9,
+            quantity: 2.0
+        )
+
+        let req = try XCTUnwrap(captured)
+        XCTAssertEqual(req.httpMethod, "POST")
+        XCTAssertEqual(req.url?.path, "/associate",
+                       "Must hit exactly /associate — not /bins/.../associate or /associates")
+
+        let contentType = try XCTUnwrap(req.value(forHTTPHeaderField: "Content-Type"))
+        XCTAssertTrue(contentType.hasPrefix("multipart/form-data; boundary="),
+                      "Server's Form(...) parser requires multipart/form-data. Got: \(contentType)")
+
+        let body = try XCTUnwrap(req.bodyData)
+        let bodyString = try XCTUnwrap(String(data: body, encoding: .utf8))
+
+        XCTAssertTrue(bodyString.contains("name=\"bin_id\""),
+                      "Body must contain form field named exactly bin_id. Body:\n\(bodyString)")
+        XCTAssertTrue(bodyString.contains("name=\"item_id\""),
+                      "Body must contain form field named exactly item_id. Body:\n\(bodyString)")
+        XCTAssertFalse(bodyString.contains("name=\"binId\""),
+                       "Must NOT send camelCase binId — server expects snake_case bin_id")
+        XCTAssertFalse(bodyString.contains("name=\"itemId\""),
+                       "Must NOT send camelCase itemId — server expects snake_case item_id")
+
+        XCTAssertTrue(bodyString.contains("BIN-0003"),
+                      "Body must contain the bin_id value")
+        XCTAssertTrue(bodyString.contains("42"),
+                      "Body must contain the item_id value")
+
+        XCTAssertTrue(bodyString.contains("name=\"confidence\""),
+                      "confidence should be included when provided")
+        XCTAssertTrue(bodyString.contains("name=\"quantity\""),
+                      "quantity should be included when provided")
+    }
+
+    func testAssociateItemOmitsOptionalFieldsWhenNil() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {"ok":true,"bin_id":"BIN-0003","item_id":42}
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        _ = try await sut.associateItem(
+            binId: "BIN-0003",
+            itemId: 42,
+            confidence: Double?.none,
+            quantity: Double?.none
+        )
+
+        let body = try XCTUnwrap(captured?.bodyData)
+        let bodyString = try XCTUnwrap(String(data: body, encoding: .utf8))
+        XCTAssertFalse(bodyString.contains("name=\"confidence\""),
+                       "nil confidence must not appear in the multipart body")
+        XCTAssertFalse(bodyString.contains("name=\"quantity\""),
+                       "nil quantity must not appear in the multipart body")
+        XCTAssertTrue(bodyString.contains("name=\"bin_id\""),
+                      "bin_id is required — must still be present")
+        XCTAssertTrue(bodyString.contains("name=\"item_id\""),
+                      "item_id is required — must still be present")
+    }
 }
 
 // MARK: - Host binding gate tests (#13)
