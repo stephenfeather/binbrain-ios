@@ -114,6 +114,16 @@ struct SettingsView: View {
                     }
                 }
 
+            // Finding #12 — chip below the key field so the binding state is
+            // visible without running Test Connection.
+            apiKeyBindingChip
+                .onChange(of: viewModel.serverURL) { _, _ in
+                    // Auto-rebind when the user types back to a previously
+                    // bound host so the key becomes live again without a
+                    // manual Re-bind tap. Idempotent no-op when already bound.
+                    Task { await viewModel.attemptAutoRebindIfApplicable(apiClient: apiClient) }
+                }
+
             HStack {
                 Button("Test Connection") {
                     Task {
@@ -135,6 +145,29 @@ struct SettingsView: View {
                 connectionIndicator
             }
             connectionStatusRow
+        }
+    }
+
+    @ViewBuilder
+    private var apiKeyBindingChip: some View {
+        switch viewModel.apiKeyBindingStatus {
+        case .noKeyStored:
+            Label("No key stored", systemImage: "key.slash")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .keyBoundToCurrentHost:
+            Label("Key bound", systemImage: "checkmark.seal")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .keyUnboundForCurrentHost:
+            Button {
+                Task { await viewModel.rebindKey(apiClient: apiClient) }
+            } label: {
+                Label("Key unbound — tap to rebind", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            .buttonStyle(.plain)
         }
     }
 

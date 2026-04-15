@@ -209,26 +209,44 @@ final class SettingsViewModel {
     func testConnection(apiClient: APIClient) async {
         connectionStatus = .unknown
         connectionErrorMessage = nil
+
+        // Finding #13 — step 1: unauth'd /health for pure reachability.
+        // (F-04 design: routine probes never leak the key off-host.)
         do {
-            let response = try await apiClient.health()
-            switch response.authOk {
+            _ = try await apiClient.health()
+        } catch {
+            logger.error("testConnection failed: \(error.localizedDescription, privacy: .private)")
+            let friendly = Self.friendlyConnectionErrorMessage(for: error)
+            connectionStatus = .unreachable(errorMessage: friendly)
+            connectionErrorMessage = friendly
+            return
+        }
+
+        // Step 2: if reachable AND a key is stored for this host, retry once
+        // with the key attached so the server can report `auth_ok`. This
+        // distinguishes "bound to this host" from "bound elsewhere / no key"
+        // — the core of the Finding #13 UX gap.
+        let hasStoredKey = (keychain.readString(forKey: KeychainHelper.apiKeyAccount).map { !$0.isEmpty }) ?? false
+        guard hasStoredKey else {
+            connectionStatus = .connectedNoKey
+            return
+        }
+
+        do {
+            let authed = try await apiClient.health(probeWithCurrentKey: true)
+            switch authed.authOk {
             case .some(true):
-                // Server docs guarantee `role` is present when authOk is true.
-                // If the server omits it, fall back to `.user` to keep the UI coherent.
-                connectionStatus = .connected(role: response.role ?? .user)
+                connectionStatus = .connected(role: authed.role ?? .user)
             case .some(false):
                 connectionStatus = .connectedKeyInvalid
             case .none:
-                // `/health` reached the server but no key was sent. Two sub-cases:
-                // (a) user has no key → `.connectedNoKey`.
-                // (b) user has a key bound to a different host → the attach gate
-                //     stripped the header → `.connectedKeyNotBoundToHost`.
                 connectionStatus = keyExistsButUnboundForCurrentHost()
                     ? .connectedKeyNotBoundToHost(canRebind: true)
                     : .connectedNoKey
             }
         } catch {
-            logger.error("testConnection failed: \(error.localizedDescription, privacy: .private)")
+            // Authed probe failed after an unauth'd probe succeeded — rare,
+            // but surface as unreachable rather than claiming a key state.
             let friendly = Self.friendlyConnectionErrorMessage(for: error)
             connectionStatus = .unreachable(errorMessage: friendly)
             connectionErrorMessage = friendly
@@ -303,6 +321,41 @@ final class SettingsViewModel {
             connectionStatus = .unreachable(errorMessage: error.localizedDescription)
             connectionErrorMessage = error.localizedDescription
         }
+    }
+
+    /// Three-state status for the key binding chip rendered under the API
+    /// key field in Settings (Finding #12). Drives the
+    /// "Key bound / Key unbound / No key stored" UI.
+    enum APIKeyBindingStatus: Equatable {
+        case noKeyStored
+        case keyBoundToCurrentHost
+        case keyUnboundForCurrentHost
+    }
+
+    /// Read-only binding status for the current `serverURL` and stored key.
+    /// Pure Keychain/UserDefaults read — no network.
+    var apiKeyBindingStatus: APIKeyBindingStatus {
+        guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+              !key.isEmpty else {
+            return .noKeyStored
+        }
+        let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
+        let current = APIClient.normalizedOrigin(of: serverURL)
+        return (bound == current) ? .keyBoundToCurrentHost : .keyUnboundForCurrentHost
+    }
+
+    /// Auto-rebinds the stored key to `serverURL` when the user has typed
+    /// their way back to a previously-bound host. Idempotent no-op when
+    /// already bound, when no key is stored, or when the current host was
+    /// never the bound host on any previous commit (Finding #12).
+    ///
+    /// Safe to call on every host commit; only performs a `/health` probe
+    /// when the `keyUnboundForCurrentHost` precondition holds.
+    ///
+    /// - Parameter apiClient: Used by the underlying `rebindKey` probe.
+    func attemptAutoRebindIfApplicable(apiClient: APIClient) async {
+        guard apiKeyBindingStatus == .keyUnboundForCurrentHost else { return }
+        await rebindKey(apiClient: apiClient)
     }
 
     /// Returns true when the Keychain holds an API key whose bound host

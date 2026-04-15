@@ -183,7 +183,13 @@ final class SettingsViewModelTests: XCTestCase {
 
     // MARK: - Test 2: testConnection sets .connected(role:) when key is valid
 
-    func testTestConnectionSetsConnectedWhenKeyIsValid() async {
+    func testTestConnectionSetsConnectedWhenKeyIsValid() async throws {
+        // Finding #13 two-step flow requires a stored key to trigger the
+        // authed probe that surfaces auth_ok=true.
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
         let client = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
         }
@@ -196,7 +202,11 @@ final class SettingsViewModelTests: XCTestCase {
 
     // MARK: - Test 2b: testConnection sets .connectedKeyInvalid when server rejects key
 
-    func testTestConnectionSetsKeyInvalidWhenAuthFails() async {
+    func testTestConnectionSetsKeyInvalidWhenAuthFails() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
         let client = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 200, for: request), healthInvalidKeyJSON)
         }
@@ -269,7 +279,11 @@ final class SettingsViewModelTests: XCTestCase {
 
     // MARK: - Test 4: connectionStatus transitions from unreachable to connected
 
-    func testTestConnectionTransitionsFromUnreachableToConnected() async {
+    func testTestConnectionTransitionsFromUnreachableToConnected() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
         // First call: put sut into .unreachable state
         let failClient = makeMockAPIClient { [self] request in
             return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
@@ -553,6 +567,101 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(sut.modelSelectSuccessTick, startTick + 1,
                        "modelSelectSuccessTick should increment on a 200 response")
         XCTAssertNil(sut.modelError, "modelError should stay nil on success")
+    }
+
+    // MARK: - Finding #12: apiKeyBindingStatus chip
+
+    func testApiKeyBindingStatusIsNoKeyStoredWhenKeychainEmpty() {
+        sut.serverURL = "http://10.1.1.205:8000"
+        XCTAssertEqual(sut.apiKeyBindingStatus, .noKeyStored)
+    }
+
+    func testApiKeyBindingStatusIsKeyBoundWhenHostMatches() throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+        XCTAssertEqual(sut.apiKeyBindingStatus, .keyBoundToCurrentHost)
+    }
+
+    func testApiKeyBindingStatusIsKeyUnboundWhenHostDiffers() throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://other:9000"
+        XCTAssertEqual(sut.apiKeyBindingStatus, .keyUnboundForCurrentHost)
+    }
+
+    // MARK: - Finding #12: auto-rebind on host revert
+
+    func testAttemptAutoRebindIsNoOpWhenAlreadyBound() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        var networkCalls = 0
+        let client = makeMockAPIClient { [self] request in
+            networkCalls += 1
+            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+        }
+        await sut.attemptAutoRebindIfApplicable(apiClient: client)
+        XCTAssertEqual(networkCalls, 0, "Already-bound host should not trigger a /health probe")
+    }
+
+    func testAttemptAutoRebindProbesWhenKeyUnbound() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://other:9000"
+
+        var networkCalls = 0
+        let client = makeMockAPIClient { [self] request in
+            networkCalls += 1
+            return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+        }
+        await sut.attemptAutoRebindIfApplicable(apiClient: client)
+        XCTAssertGreaterThan(networkCalls, 0, "Unbound key should trigger the rebind probe")
+        XCTAssertEqual(testKeychain.readString(forKey: KeychainHelper.boundHostAccount),
+                       "http://other:9000",
+                       "Successful auth_ok=true rebind should update the stored boundHost")
+    }
+
+    // MARK: - Finding #13: two-step Test Connection (reachability + auth probe)
+
+    func testTestConnectionReportsConnectedNoKeyWhenKeychainEmpty() async {
+        sut.serverURL = "http://10.1.1.205:8000"
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+        }
+        await sut.testConnection(apiClient: client)
+        if case .connectedNoKey = sut.connectionStatus {
+            // expected
+        } else {
+            XCTFail("Expected .connectedNoKey with no stored key, got \(sut.connectionStatus)")
+        }
+    }
+
+    func testTestConnectionDoesAuthedProbeWhenKeyStored() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        var probeCallCount = 0
+        var sawAuthHeader = false
+        let client = makeMockAPIClient { [self] request in
+            probeCallCount += 1
+            if request.value(forHTTPHeaderField: "X-API-Key") != nil {
+                sawAuthHeader = true
+                return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+        }
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(probeCallCount, 2, "Two-step flow must issue two /health calls when a key is stored")
+        XCTAssertTrue(sawAuthHeader, "Second probe must attach X-API-Key")
+        if case .connected = sut.connectionStatus {
+            // expected
+        } else {
+            XCTFail("Expected .connected after auth_ok=true probe, got \(sut.connectionStatus)")
+        }
     }
 
     // MARK: - Finding #10: friendly URLError copy in Test Connection
