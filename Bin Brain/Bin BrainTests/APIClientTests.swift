@@ -206,7 +206,7 @@ final class APIClientTests: XCTestCase {
                     }
                 ],
                 "photos": [
-                    { "photo_id": 7, "path": "/data/photos/B-42/abc123.jpg" }
+                    { "photo_id": 7, "url": "/photos/7/file" }
                 ]
             }
             """.utf8)
@@ -233,7 +233,7 @@ final class APIClientTests: XCTestCase {
             {
                 "version": "1",
                 "bin_id": "B-42",
-                "photos": [{ "photo_id": 7, "path": "/data/photos/B-42/abc.jpg" }]
+                "photos": [{ "photo_id": 7, "url": "/photos/7/file" }]
             }
             """.utf8)
             return (makeResponse(statusCode: 200), json)
@@ -268,7 +268,7 @@ final class APIClientTests: XCTestCase {
             {
                 "version": "1",
                 "bin_id": "B-42",
-                "photos": [{ "photo_id": 7, "path": "/data/photos/B-42/abc.jpg" }]
+                "photos": [{ "photo_id": 7, "url": "/photos/7/file" }]
             }
             """.utf8)
             return (makeResponse(statusCode: 200), json)
@@ -302,7 +302,7 @@ final class APIClientTests: XCTestCase {
             {
                 "version": "1",
                 "bin_id": "B-42",
-                "photos": [{ "photo_id": 7, "path": "/data/photos/B-42/abc.jpg" }]
+                "photos": [{ "photo_id": 7, "url": "/photos/7/file" }]
             }
             """.utf8)
             return (makeResponse(statusCode: 200), json)
@@ -325,7 +325,7 @@ final class APIClientTests: XCTestCase {
             {
                 "version": "1",
                 "bin_id": "B-42",
-                "photos": [{ "photo_id": 99, "path": "/data/photos/B-42/xyz.jpg" }]
+                "photos": [{ "photo_id": 99, "url": "/photos/99/file" }]
             }
             """.utf8)
             return (makeResponse(statusCode: 200), json)

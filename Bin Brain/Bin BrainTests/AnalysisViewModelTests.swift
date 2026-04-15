@@ -89,7 +89,7 @@ final class AnalysisViewModelTests: XCTestCase {
         {
             "version": "1",
             "bin_id": "BIN-0001",
-            "photos": [{"photo_id": 42, "path": "/photos/42.jpg"}]
+            "photos": [{"photo_id": 42, "url": "/photos/42/file"}]
         }
         """.utf8)
     }

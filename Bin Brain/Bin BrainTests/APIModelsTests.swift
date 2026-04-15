@@ -271,8 +271,8 @@ final class APIModelsTests: XCTestCase {
                 }
             ],
             "photos": [
-                { "photo_id": 7, "path": "/data/photos/B-42/abc123.jpg" },
-                { "photo_id": 8, "path": "/data/photos/B-42/def456.jpg" }
+                { "photo_id": 7, "url": "/photos/7/file" },
+                { "photo_id": 8, "url": "/photos/8/file" }
             ]
         }
         """
@@ -287,7 +287,7 @@ final class APIModelsTests: XCTestCase {
         XCTAssertNil(response.items[1].confidence)
         XCTAssertNil(response.items[1].quantity)
         XCTAssertEqual(response.photos[0].photoId, 7)
-        XCTAssertEqual(response.photos[1].path, "/data/photos/B-42/def456.jpg")
+        XCTAssertEqual(response.photos[1].url, "/photos/8/file")
     }
 
     // MARK: - Test 8: PhotoSuggestResponse decoding
@@ -400,8 +400,8 @@ final class APIModelsTests: XCTestCase {
             "version": "1",
             "bin_id": "B-42",
             "photos": [
-                { "photo_id": 7, "path": "/data/photos/B-42/abc123.jpg" },
-                { "photo_id": 8, "path": "/data/photos/B-42/def456.jpg" }
+                { "photo_id": 7, "url": "/photos/7/file" },
+                { "photo_id": 8, "url": "/photos/8/file" }
             ]
         }
         """
@@ -485,7 +485,7 @@ final class APIModelsTests: XCTestCase {
         let json = """
         {
             "photo_id": 7,
-            "path": "/data/photos/B-42/abc.jpg",
+            "url": "/photos/7/file",
             "device_metadata": {
                 "device_processing": {
                     "version": "1",
@@ -509,7 +509,7 @@ final class APIModelsTests: XCTestCase {
         let record = try decode(PhotoRecord.self, from: json)
 
         XCTAssertEqual(record.photoId, 7)
-        XCTAssertEqual(record.path, "/data/photos/B-42/abc.jpg")
+        XCTAssertEqual(record.url, "/photos/7/file")
         let metadata = try XCTUnwrap(record.deviceMetadata)
         XCTAssertEqual(metadata.deviceProcessing.version, "1")
         XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
@@ -520,12 +520,25 @@ final class APIModelsTests: XCTestCase {
         let json = """
         {
             "photo_id": 7,
-            "path": "/data/photos/B-42/abc.jpg"
+            "url": "/photos/7/file"
         }
         """
         let record = try decode(PhotoRecord.self, from: json)
 
         XCTAssertEqual(record.photoId, 7)
+        XCTAssertEqual(record.url, "/photos/7/file")
+        XCTAssertNil(record.deviceMetadata)
+    }
+
+    /// Finding #8 regression guard — the exact walkthrough payload shape
+    /// from the server (photo_id + url) must decode round-trip.
+    func testPhotoRecordDecodesWalkthroughShape() throws {
+        let json = """
+        {"photo_id": 3, "url": "/photos/3/file"}
+        """
+        let record = try decode(PhotoRecord.self, from: json)
+        XCTAssertEqual(record.photoId, 3)
+        XCTAssertEqual(record.url, "/photos/3/file")
         XCTAssertNil(record.deviceMetadata)
     }
 
@@ -533,7 +546,7 @@ final class APIModelsTests: XCTestCase {
         let json = """
         {
             "photo_id": 7,
-            "path": "/data/photos/B-42/abc.jpg",
+            "url": "/photos/7/file",
             "device_metadata": null
         }
         """

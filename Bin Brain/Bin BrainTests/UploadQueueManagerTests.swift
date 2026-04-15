@@ -65,7 +65,7 @@ private let successIngestJSON = Data("""
 {
     "version": "1",
     "bin_id": "BIN-0001",
-    "photos": [{ "photo_id": 1, "path": "/data/photos/BIN-0001/abc.jpg" }]
+    "photos": [{ "photo_id": 1, "url": "/photos/1/file" }]
 }
 """.utf8)
 

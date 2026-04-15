@@ -89,7 +89,7 @@ final class BinDetailViewModelTests: XCTestCase {
                 {"item_id": 1, "name": "Widget", "category": "Hardware", "quantity": 5.0, "confidence": 0.92},
                 {"item_id": 2, "name": "Bolt", "category": "Fasteners", "quantity": null, "confidence": 0.78}
             ],
-            "photos": [{"photo_id": 42, "path": "/photos/42.jpg"}]
+            "photos": [{"photo_id": 42, "url": "/photos/42/file"}]
         }
         """.utf8)
     }
