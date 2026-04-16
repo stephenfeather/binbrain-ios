@@ -264,6 +264,7 @@ struct BinDetailView: View {
         AnalysisProgressView(
             viewModel: analysisViewModel,
             onComplete: { suggestions in
+                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
                 if navigatedOnPreliminary {
                     reviewViewModel.applyServerSuggestions(suggestions)
                 } else {
@@ -293,6 +294,7 @@ struct BinDetailView: View {
                 }
             },
             onPreliminaryReady: { classifications in
+                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
                 reviewViewModel.loadPreliminaryClassifications(
                     classifications,
                     topK: Self.preliminaryTopK
