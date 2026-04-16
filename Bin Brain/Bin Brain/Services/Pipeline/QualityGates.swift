@@ -125,7 +125,13 @@ nonisolated struct QualityGates: Sendable {
         guard shortest >= kMinimumShortestSide else {
             return QualityGateFailure(
                 gate: .resolution,
-                message: "Move closer — photo is too small for detail"
+                message: "Move closer — photo is too small for detail",
+                metrics: QualityGateMetrics(
+                    measured: Double(shortest),
+                    threshold: Double(kMinimumShortestSide),
+                    label: "Short side",
+                    thresholdLabel: "minimum"
+                )
             )
         }
         return nil
@@ -226,7 +232,13 @@ nonisolated struct QualityGates: Sendable {
         if !passed {
             return (variance, QualityGateFailure(
                 gate: .blur,
-                message: "Image is too blurry — hold still and retake"
+                message: "Image is too blurry — hold still and retake",
+                metrics: QualityGateMetrics(
+                    measured: variance,
+                    threshold: scaledThreshold,
+                    label: "Blur variance",
+                    thresholdLabel: "minimum"
+                )
             ))
         }
         return (variance, nil)
@@ -314,7 +326,13 @@ nonisolated struct QualityGates: Sendable {
         if bottomFraction > kExposureExtremeFraction {
             return (mean, QualityGateFailure(
                 gate: .exposure,
-                message: "Too dark — try better lighting"
+                message: "Too dark — try better lighting",
+                metrics: QualityGateMetrics(
+                    measured: bottomFraction,
+                    threshold: kExposureExtremeFraction,
+                    label: "Dark pixel fraction",
+                    thresholdLabel: "maximum"
+                )
             ))
         }
 
@@ -329,7 +347,13 @@ nonisolated struct QualityGates: Sendable {
         if topFraction > kExposureExtremeFraction {
             return (mean, QualityGateFailure(
                 gate: .exposure,
-                message: "Too bright — reduce glare"
+                message: "Too bright — reduce glare",
+                metrics: QualityGateMetrics(
+                    measured: topFraction,
+                    threshold: kExposureExtremeFraction,
+                    label: "Bright pixel fraction",
+                    thresholdLabel: "maximum"
+                )
             ))
         }
 
@@ -357,28 +381,25 @@ nonisolated struct QualityGates: Sendable {
                     return
                 }
 
+                let noObjectsFailure = QualityGateFailure(
+                    gate: .saliency,
+                    message: "No objects detected — make sure the bin contents are visible",
+                    metrics: QualityGateMetrics(
+                        measured: 0,
+                        threshold: 0,
+                        label: "Object coverage",
+                        thresholdLabel: "required"
+                    )
+                )
+
                 guard let observation = request.results?.first else {
-                    continuation.resume(returning: (
-                        0,
-                        nil,
-                        QualityGateFailure(
-                            gate: .saliency,
-                            message: "No objects detected — make sure the bin contents are visible"
-                        )
-                    ))
+                    continuation.resume(returning: (0, nil, noObjectsFailure))
                     return
                 }
 
                 let salientObjects = observation.salientObjects ?? []
                 if salientObjects.isEmpty {
-                    continuation.resume(returning: (
-                        0,
-                        nil,
-                        QualityGateFailure(
-                            gate: .saliency,
-                            message: "No objects detected — make sure the bin contents are visible"
-                        )
-                    ))
+                    continuation.resume(returning: (0, nil, noObjectsFailure))
                     return
                 }
 

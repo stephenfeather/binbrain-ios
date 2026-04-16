@@ -228,6 +228,47 @@ final class QualityGatesTests: XCTestCase {
 
     // MARK: - Sequential Ordering
 
+    // MARK: - Gate Metrics (Swift2_004 Step 2)
+
+    func testBlurGateFailureCarriesMetrics() {
+        let flatImage = makeSolidImage(width: 1024, height: 1024, gray: 0.5)
+        let result = gates.checkBlur(flatImage)
+        guard let failure = result.failure else {
+            return XCTFail("Expected blur gate failure for flat image")
+        }
+        XCTAssertEqual(failure.metrics.label, "Blur variance")
+        XCTAssertEqual(failure.metrics.thresholdLabel, "minimum")
+        // Flat image → variance ≈ 0; threshold at 1024px = 2.0
+        XCTAssertEqual(failure.metrics.measured, result.variance, accuracy: 1e-9)
+        let expectedThreshold = QualityGates.scaledBlurThreshold(shortestSide: 1024, baseThresholdAt1024: kBlurVarianceThresholdAt1024)
+        XCTAssertEqual(failure.metrics.threshold, expectedThreshold, accuracy: 1e-9)
+    }
+
+    func testResolutionGateFailureCarriesMetrics() {
+        let tinyImage = makeSolidImage(width: 512, height: 512)
+        let failure = gates.checkResolution(tinyImage)
+        guard let failure else {
+            return XCTFail("Expected resolution gate failure for 512px image")
+        }
+        XCTAssertEqual(failure.metrics.label, "Short side")
+        XCTAssertEqual(failure.metrics.thresholdLabel, "minimum")
+        XCTAssertEqual(failure.metrics.measured, 512.0, accuracy: 0.1)
+        XCTAssertEqual(failure.metrics.threshold, Double(kMinimumShortestSide), accuracy: 0.1)
+    }
+
+    func testExposureGateFailureCarriesMetricsForDarkImage() {
+        let darkImage = makeSolidImage(width: 1024, height: 1024, gray: 0.02)
+        let result = gates.checkExposure(darkImage)
+        guard let failure = result.failure else {
+            return XCTFail("Expected exposure gate failure for near-black image")
+        }
+        XCTAssertEqual(failure.gate, .exposure)
+        XCTAssertEqual(failure.metrics.thresholdLabel, "maximum")
+        XCTAssertEqual(failure.metrics.threshold, kExposureExtremeFraction, accuracy: 1e-9)
+        XCTAssertGreaterThan(failure.metrics.measured, kExposureExtremeFraction,
+                             "Measured fraction must exceed threshold to have triggered the failure")
+    }
+
     // MARK: - Pure Blur Threshold Math (Finding #4)
 
     func testScaledBlurThresholdAt1024IsBaseline() {

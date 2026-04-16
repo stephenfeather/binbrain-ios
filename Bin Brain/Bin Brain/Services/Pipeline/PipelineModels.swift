@@ -39,12 +39,27 @@ enum QualityGate: String, CaseIterable, Codable {
     case saliency
 }
 
-/// A quality gate failure with a user-facing message.
+/// Numeric detail attached to a quality gate failure so the UI can show
+/// the user exactly what was measured and what the threshold is.
+struct QualityGateMetrics: Equatable {
+    /// The value actually measured (variance, pixel fraction, side length, etc.).
+    let measured: Double
+    /// The threshold the measurement was compared against.
+    let threshold: Double
+    /// User-facing label for the measured value (e.g. "Blur variance", "Short side").
+    let label: String
+    /// Describes the direction of the threshold ("minimum" | "maximum" | "required").
+    let thresholdLabel: String
+}
+
+/// A quality gate failure with a user-facing message and diagnostic metrics.
 struct QualityGateFailure: Equatable {
     /// Which gate failed.
     let gate: QualityGate
     /// A user-facing message explaining the failure and suggesting a fix.
     let message: String
+    /// Numeric detail for the rejection-screen metric readout.
+    let metrics: QualityGateMetrics
 }
 
 /// Numeric scores from quality gate evaluation.
