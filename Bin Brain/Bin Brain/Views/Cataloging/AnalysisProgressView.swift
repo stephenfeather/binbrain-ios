@@ -69,10 +69,6 @@ struct AnalysisProgressView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: 400)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.orange.opacity(0.6), lineWidth: 2)
-                        )
                         .padding(.bottom, 4)
                         .accessibilityLabel("Rejected photo preview")
                 }
