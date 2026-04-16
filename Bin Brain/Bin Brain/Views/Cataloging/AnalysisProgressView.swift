@@ -59,15 +59,15 @@ struct AnalysisProgressView: View {
                 Text(viewModel.phase == .processingImage ? "Processing image..." : "Preparing...")
 
             case .qualityFailed(let message):
-                // Finding #4-UX: show the rejected photo so the user can judge
-                // whether to retry or force-accept. Bytes are the raw capture,
-                // not the optimized upload — what the camera actually saw.
+                // Swift2_004 S5: show the rejected photo full-width so the user
+                // can judge blur/exposure by eye, with the specific gate metrics
+                // below so the decision to "Upload Anyway" is informed.
                 if let data = viewModel.lastRejectedPhotoData,
                    let uiImage = UIImage(data: data) {
                     Image(uiImage: uiImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 240, maxHeight: 240)
+                        .frame(maxWidth: .infinity, maxHeight: 400)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
@@ -75,6 +75,21 @@ struct AnalysisProgressView: View {
                         )
                         .padding(.bottom, 4)
                         .accessibilityLabel("Rejected photo preview")
+                }
+                if let metrics = viewModel.lastQualityFailure?.metrics {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(metrics.label): \(formatMetricValue(metrics.measured))")
+                            .font(.system(.caption, design: .monospaced))
+                        Text("threshold: \(formatMetricValue(metrics.threshold)) (\(metrics.thresholdLabel))")
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                    .accessibilityLabel(
+                        "Quality check: \(metrics.label) measured \(formatMetricValue(metrics.measured)), threshold \(formatMetricValue(metrics.threshold))"
+                    )
                 }
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 48))
@@ -142,6 +157,26 @@ struct AnalysisProgressView: View {
             default: break
             }
         }
+    }
+}
+
+// MARK: - Metric Value Formatting
+
+/// Formats a raw gate metric value for the quality-failure readout.
+///
+/// - Integer-valued doubles ≥ 1 render without a decimal point ("1024", "64", "2").
+/// - Values in [0.0001, 1) or non-integer values ≥ 1 render to 4 decimal places.
+/// - Values < 0.0001 fall back to 2-significant-figure scientific notation.
+///
+/// Exposed `internal` (not `private`) so `QualityGatesTests` can cover the
+/// formatting logic without spinning up a full view hierarchy.
+func formatMetricValue(_ value: Double) -> String {
+    if value >= 1, value == value.rounded() {
+        return String(format: "%.0f", value)
+    } else if value >= 0.0001 {
+        return String(format: "%.4f", value)
+    } else {
+        return String(format: "%.2e", value)
     }
 }
 

@@ -296,6 +296,31 @@ final class QualityGatesTests: XCTestCase {
         XCTAssertTrue(QualityGates.blurGatePasses(variance: 2.0, scaledThreshold: 2.0))
     }
 
+    // MARK: - Metric Formatting (Swift2_004 Step 4)
+
+    func testFormatMetricValueForIntegerLargeValue() {
+        XCTAssertEqual(formatMetricValue(1024.0), "1024")
+    }
+
+    func testFormatMetricValueForSmallInteger() {
+        XCTAssertEqual(formatMetricValue(2.0), "2")
+    }
+
+    func testFormatMetricValueForUnitFraction() {
+        // Blur variance spec example: 0.001234 → "0.0012" (4 decimal places)
+        XCTAssertEqual(formatMetricValue(0.001234), "0.0012")
+    }
+
+    func testFormatMetricValueForExposureFraction() {
+        XCTAssertEqual(formatMetricValue(0.7), "0.7000")
+    }
+
+    func testFormatMetricValueForTinyValueUsesScientific() {
+        // Values below 0.0001 use scientific notation
+        let result = formatMetricValue(0.000001)
+        XCTAssertTrue(result.contains("e"), "Values < 0.0001 should use scientific notation, got \(result)")
+    }
+
     // MARK: - Sequential Ordering
 
     func testGatesRunInOrder() async throws {
