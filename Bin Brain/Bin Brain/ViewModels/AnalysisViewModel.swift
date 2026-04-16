@@ -78,6 +78,16 @@ final class AnalysisViewModel {
     /// The on-device image processing pipeline.
     private let pipeline = ImagePipeline()
 
+    /// Background task lifecycle abstraction — injectable so tests can verify
+    /// endBackgroundTask fires on every terminal path (Finding #15).
+    private let backgroundTask: BackgroundTaskRunning
+
+    // MARK: - Initializer
+
+    init(backgroundTask: BackgroundTaskRunning = UIApplicationBackgroundTaskRunner()) {
+        self.backgroundTask = backgroundTask
+    }
+
     // MARK: - Actions
 
     /// Compresses `jpegData`, uploads it via `ingest()`, then calls `suggest()`.
@@ -103,14 +113,15 @@ final class AnalysisViewModel {
             var task: Task<Void, Never>?
         }
         final class BGTaskBox: @unchecked Sendable {
-            var identifier: UIBackgroundTaskIdentifier = .invalid
+            var identifier: Int = -1 // sentinel for "released"
         }
 
         let workBox = WorkTaskBox()
         let bgBox = BGTaskBox()
+        let runner = self.backgroundTask
 
         // Begin background task covering the entire pipeline + upload + suggest flow.
-        bgBox.identifier = UIApplication.shared.beginBackgroundTask(withName: "BinBrainAnalysis") { [weak self] in
+        bgBox.identifier = runner.begin(name: "BinBrainAnalysis") { [weak self] in
             workBox.task?.cancel()
 
             let content = UNMutableNotificationContent()
@@ -123,18 +134,22 @@ final class AnalysisViewModel {
             )
             UNUserNotificationCenter.current().add(request)
 
-            self?.phase = .failed("Analysis interrupted — tap to retry")
+            Task { @MainActor [weak self] in
+                self?.phase = .failed("Analysis interrupted — tap to retry")
+            }
 
-            if bgBox.identifier != .invalid {
-                UIApplication.shared.endBackgroundTask(bgBox.identifier)
-                bgBox.identifier = .invalid
+            if bgBox.identifier != -1 {
+                runner.end(bgBox.identifier)
+                bgBox.identifier = -1
             }
         }
 
+        // Finding #15 — defer guarantees the grant is released on EVERY terminal
+        // path (success, early return, thrown error, quality-gate failure).
         defer {
-            if bgBox.identifier != .invalid {
-                UIApplication.shared.endBackgroundTask(bgBox.identifier)
-                bgBox.identifier = .invalid
+            if bgBox.identifier != -1 {
+                runner.end(bgBox.identifier)
+                bgBox.identifier = -1
             }
         }
 

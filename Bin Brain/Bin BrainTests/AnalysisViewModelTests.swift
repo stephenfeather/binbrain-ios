@@ -52,21 +52,44 @@ private func makeAnalysisMockResponse(statusCode: Int) -> HTTPURLResponse {
 
 // MARK: - AnalysisViewModelTests
 
+// MARK: - Test double for BackgroundTaskRunning
+
+final class RecordingBackgroundTaskRunner: BackgroundTaskRunning, @unchecked Sendable {
+    private(set) var beginCount = 0
+    private(set) var endCount = 0
+    private(set) var lastExpirationHandler: (@Sendable () -> Void)?
+    private var nextId = 100
+
+    func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> Int {
+        beginCount += 1
+        lastExpirationHandler = expirationHandler
+        defer { nextId += 1 }
+        return nextId
+    }
+
+    func end(_ id: Int) {
+        endCount += 1
+    }
+}
+
 @MainActor
 final class AnalysisViewModelTests: XCTestCase {
 
     var sut: AnalysisViewModel!
+    var runner: RecordingBackgroundTaskRunner!
 
     // MARK: - Lifecycle
 
     override func setUp() async throws {
         try await super.setUp()
-        sut = AnalysisViewModel()
+        runner = RecordingBackgroundTaskRunner()
+        sut = AnalysisViewModel(backgroundTask: runner)
     }
 
     override func tearDown() async throws {
         AnalysisMockURLProtocol.requestHandler = nil
         sut = nil
+        runner = nil
         try await super.tearDown()
     }
 
@@ -303,6 +326,81 @@ final class AnalysisViewModelTests: XCTestCase {
 
     func testLastRejectedPhotoDataIsInitiallyNil() {
         XCTAssertNil(sut.lastRejectedPhotoData, "should start nil before any run")
+    }
+
+    // MARK: - Finding #15: background task released in all terminal paths
+
+    func testRunReleasesBackgroundTaskOnSuccess() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(runner.beginCount, 1, "begin must fire exactly once")
+        XCTAssertEqual(runner.endCount, 1, "end must fire exactly once on success")
+    }
+
+    func testRunReleasesBackgroundTaskOnIngestError() async {
+        let client = makeMockAPIClient { [self] _ in
+            return (makeAnalysisMockResponse(statusCode: 500), serverErrorJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(runner.beginCount, 1)
+        XCTAssertEqual(runner.endCount, 1, "end must fire on early-return ingest error path")
+    }
+
+    func testRunReleasesBackgroundTaskOnSuggestError() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 500), serverErrorJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(runner.beginCount, 1)
+        XCTAssertEqual(runner.endCount, 1, "end must fire when suggest throws after ingest succeeded")
+    }
+
+    func testRunReleasesBackgroundTaskOnQualityFailure() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG(),
+                                     "failed to synthesize tiny JPEG that should fail the resolution gate")
+        let client = makeMockAPIClient { _ in
+            XCTFail("Quality gate should reject before any network call")
+            throw URLError(.cancelled)
+        }
+
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(runner.beginCount, 1)
+        XCTAssertEqual(runner.endCount, 1,
+                       "end must fire on the early-return quality-gate path too")
+    }
+
+    func testRunReleasesBackgroundTaskExactlyOnceWhenExpirationHandlerFiresAfterSuccess() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        // Simulate the OS firing the expiration handler late (after defer already
+        // released the grant). The handler's idempotency guard must prevent a
+        // second end().
+        runner.lastExpirationHandler?()
+
+        XCTAssertEqual(runner.endCount, 1,
+                       "end() must be idempotent — late expiration after defer cleanup must not double-release")
     }
 
     func testResetClearsLastRejectedPhotoData() async throws {
