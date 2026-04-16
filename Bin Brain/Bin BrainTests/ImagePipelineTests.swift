@@ -241,11 +241,10 @@ final class ImagePipelineTests: XCTestCase {
         return uiImage.jpegData(compressionQuality: 1.0)
     }
 
-    /// RED test — decodeCGImage must return a CGImage in visual orientation.
+    /// Verifies decodeCGImage returns a CGImage in visual orientation.
     ///
     /// A .right-oriented JPEG has raw bitmap dimensions 200×100 (landscape sensor).
-    /// The visual portrait result must be 100×200. The current implementation drops
-    /// the EXIF tag and returns 200×100 — this test is expected to FAIL until Step 2.
+    /// The visual portrait result must be 100×200.
     func testDecodeCGImageBakesExifOrientationIntoPixels() async throws {
         guard let jpegData = makeRightOrientedJPEG(width: 200, height: 100) else {
             XCTFail("failed to create orientation test JPEG"); return
@@ -258,5 +257,21 @@ final class ImagePipelineTests: XCTestCase {
             "decoded width should be the visual portrait width (100), not the raw landscape width (200)")
         XCTAssertEqual(decoded.height, 200,
             "decoded height should be the visual portrait height (200), not the raw landscape height (100)")
+    }
+
+    /// Verifies the .up fast-path: images already in correct orientation pass through
+    /// without re-rendering — dimensions must be preserved exactly.
+    func testDecodeCGImageUpOrientationPreservesDimensions() async throws {
+        // makeTestJPEG produces a UIImage(cgImage:) with no EXIF orientation tag → .up
+        guard let jpegData = makeTestJPEG(width: 100, height: 200) else {
+            XCTFail("failed to create test JPEG"); return
+        }
+
+        let decoded = try await pipeline.decodeCGImage(from: jpegData)
+
+        XCTAssertEqual(decoded.width, 100,
+            ".up orientation must not alter width")
+        XCTAssertEqual(decoded.height, 200,
+            ".up orientation must not alter height")
     }
 }
