@@ -195,11 +195,9 @@ struct SuggestionReviewView: View {
                         .foregroundStyle(isPreliminary ? .secondary : .primary)
                 }
 
-                if !isPreliminary {
-                    Text(String(format: "%.0f%%", suggestion.confidence * 100))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(String(format: "%.0f%%", suggestion.confidence * 100))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if suggestion.isMatched {
