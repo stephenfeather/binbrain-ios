@@ -84,26 +84,24 @@ final class QualityGatesTests: XCTestCase {
         XCTAssertNil(failure)
     }
 
-    // MARK: - Blur Gate
+    // MARK: - Blur Gate (re-enabled — Swift2_004 Step 1)
 
-    // Finding #4 resolution — the whole-frame blur gate is disabled pending a
-    // salience-cropped redesign (Finding #4-REDESIGN). Gate always passes;
-    // `checkBlur` still computes + logs variance for telemetry.
-    func testBlurGateAlwaysPassesWhileDisabled() {
-        let solidImage = makeSolidImage(width: 1024, height: 1024, gray: 0.5)
-        let result = gates.checkBlur(solidImage)
-        XCTAssertNil(result.failure,
-                     "Blur gate is disabled; a flat image that previously failed must now pass")
-        XCTAssertEqual(result.variance, 0, accuracy: 1.0,
-                       "Variance is still computed so we keep the calibration telemetry")
+    // The blur gate is now active. A flat (zero-variance) image must fail;
+    // a sharp (high-variance) image must pass.
+    func testBlurGateFailsForFlatImage() {
+        // Solid flat image → Laplacian variance ≈ 0, well below the 2.0 threshold
+        let flatImage = makeSolidImage(width: 1024, height: 1024, gray: 0.5)
+        let result = gates.checkBlur(flatImage)
+        XCTAssertNotNil(result.failure, "Blur gate should reject a flat (zero-variance) image")
+        XCTAssertEqual(result.failure?.gate, .blur)
     }
 
-    func testBlurGatePassesSharpImageWhileDisabled() {
+    func testBlurGatePassesForSharpImage() {
+        // Checkerboard with 2px blocks → Laplacian variance ≈ 16, well above 2.0 threshold
         let sharpImage = makeCheckerboardImage(width: 1024, height: 1024, blockSize: 2)
         let result = gates.checkBlur(sharpImage)
-        XCTAssertNil(result.failure, "Sharp images also pass — gate is disabled")
-        XCTAssertGreaterThan(result.variance, 0,
-                             "Variance still computed — telemetry for the redesign")
+        XCTAssertNil(result.failure, "Blur gate should pass a high-frequency (sharp) image")
+        XCTAssertGreaterThan(result.variance, 0, "Variance should be computed and positive")
     }
 
     func testBlurVarianceIsNonNegative() {
@@ -193,23 +191,13 @@ final class QualityGatesTests: XCTestCase {
         XCTAssertEqual(result.scores.saliencyCoverage, 0)
     }
 
-    func testValidateDoesNotFailOnBlurWhileDisabled() async throws {
-        // Finding #4 resolution — solid image no longer fails at the blur gate.
-        // Saliency may throw on the simulator (other saliency tests skip for the
-        // same reason), so wrap in do/catch to keep the assertion focused.
+    func testValidateFailsBlurGateOnFlatImage() async throws {
+        // Flat solid image (variance ≈ 0) fails the blur gate before saliency runs,
+        // so no Vision skip is needed — validate() returns early at Gate 2.
         let solidImage = makeSolidImage(width: 1024, height: 1024, gray: 0.5)
-        do {
-            let result = try await gates.validate(solidImage)
-            XCTAssertNotEqual(result.failure?.gate, .blur,
-                              "Blur gate is disabled; failure must not be attributed to blur")
-        } catch {
-            try XCTSkipIf(
-                error.localizedDescription.contains("espresso")
-                    || error.localizedDescription.contains("Vision"),
-                "Simulator's Vision stack unavailable — skip like sibling saliency tests"
-            )
-            throw error
-        }
+        let result = try await gates.validate(solidImage)
+        XCTAssertEqual(result.failure?.gate, .blur,
+                       "Blur gate should fail on a flat image now that it is re-enabled")
     }
 
     func testValidateReturnsScoresEvenOnFailure() async throws {

@@ -204,15 +204,13 @@ nonisolated struct QualityGates: Sendable {
             baseThresholdAt1024: kBlurVarianceThresholdAt1024
         )
 
-        // Finding #4 resolution — the whole-frame Laplacian variance metric
-        // does NOT separate blurry from sharp on real device photos (Stephen's
-        // n=7 calibration: fuzzy mean 0.00108 > clear mean 0.00066, overlapping
-        // distributions). Root cause: background texture dominates the metric
-        // when the subject is ~5% of the frame. No threshold works; the gate
-        // is disabled pending a salience-cropped redesign (Finding #4-REDESIGN,
-        // pairs with Finding #5). Instrumentation log is preserved so we keep
-        // collecting telemetry for the redesign.
-        let passed = true
+        // Swift2_004 Step 1 — re-enable the blur gate so the quality-gate
+        // visibility UI (Steps 2-4) has a real failure path to exercise.
+        // Stephen's n=7 calibration showed overlapping distributions;
+        // that's expected — the "Upload Anyway" path is the release valve
+        // and the signal for future tuning. Do NOT adjust kBlurVarianceThresholdAt1024
+        // in this task.
+        let passed = Self.blurGatePasses(variance: variance, scaledThreshold: scaledThreshold)
 
         blurGateLogger.debug(
             """
@@ -221,10 +219,16 @@ nonisolated struct QualityGates: Sendable {
             base_threshold=\(kBlurVarianceThresholdAt1024, privacy: .public) \
             shortest_side=\(Int(shortest), privacy: .public) \
             passed=\(passed, privacy: .public) \
-            gate_enabled=false
+            gate_enabled=true
             """
         )
 
+        if !passed {
+            return (variance, QualityGateFailure(
+                gate: .blur,
+                message: "Image is too blurry — hold still and retake"
+            ))
+        }
         return (variance, nil)
     }
 
