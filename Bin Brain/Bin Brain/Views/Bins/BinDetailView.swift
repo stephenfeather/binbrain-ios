@@ -66,7 +66,7 @@ struct BinDetailView: View {
     /// to `.review` happened early (Mode A). Drives how `onComplete` merges.
     @State private var navigatedOnPreliminary = false
     /// Top-K chips to surface as preliminary (Mode A, Phase 1).
-    private static let preliminaryTopK = 3
+    private static let preliminaryTopK = 10
 
     // Model escalation
     private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]

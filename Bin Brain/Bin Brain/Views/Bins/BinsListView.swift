@@ -59,7 +59,7 @@ struct BinsListView: View {
     @State private var capturedPhotoData: Data?
     @State private var capturedBinId: String?
     @State private var navigatedOnPreliminary = false
-    private static let preliminaryTopK = 3
+    private static let preliminaryTopK = 10
 
     // Model escalation
     private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]

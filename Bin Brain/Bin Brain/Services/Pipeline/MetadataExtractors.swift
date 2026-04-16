@@ -69,7 +69,7 @@ nonisolated struct MetadataExtractors: Sendable {
     static let classificationConfidenceThreshold: Float = 0.1
 
     /// Maximum number of top classification results to keep.
-    static let classificationMaxResults = 5
+    static let classificationMaxResults = 10
 
     /// Maps Vision OCR observations to `OCRResult` values, filtering low-confidence
     /// results and deduplicating near-identical strings.
