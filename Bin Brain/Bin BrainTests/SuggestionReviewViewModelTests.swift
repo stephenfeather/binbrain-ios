@@ -337,6 +337,38 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertFalse(sut.canConfirm, "empty list must not allow confirm")
     }
 
+    /// Finding #21 — when the user excludes every suggestion (common when the
+    /// on-device classifier returns garbage, e.g. pencil-on-carpet top-K), the
+    /// primary action in `SuggestionReviewView` must be Dismiss, not Confirm.
+    /// At the VM level the invariant is: `canConfirm == false` AND calling
+    /// `confirm()` must NOT hit the server. The View binds the Dismiss button
+    /// directly to `onDone()`, which is a closure-level assertion outside the
+    /// VM's surface; this test covers the two VM-side guarantees.
+    func testAllExcludedPrimaryPathDoesNotCallAPI() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        for idx in sut.editableSuggestions.indices {
+            sut.editableSuggestions[idx].included = false
+        }
+
+        XCTAssertFalse(sut.canConfirm,
+                       "precondition: with everything excluded canConfirm must be false so the View renders Dismiss")
+
+        var apiCalls = 0
+        let client = makeMockAPIClient { [self] request in
+            apiCalls += 1
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        // Even if a caller invoked confirm() directly in this state, no
+        // network I/O must fire — Dismiss is the only correct forward action.
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(apiCalls, 0,
+                       "all-excluded confirm must be a no-op; Dismiss -> onDone is the Views primary action")
+        XCTAssertFalse(sut.isConfirming, "no hanging in-flight state")
+    }
+
     // MARK: - Test 8: edited fields are sent to API
 
     func testEditableFieldsUpdatable() async throws {

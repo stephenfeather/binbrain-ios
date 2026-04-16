@@ -117,7 +117,7 @@ struct SuggestionReviewView: View {
                         }
                     }
                     .disabled(viewModel.isConfirming)
-                } else {
+                } else if viewModel.canConfirm {
                     Button("Confirm") {
                         Task {
                             await viewModel.confirm(binId: binId, apiClient: apiClient)
@@ -126,7 +126,18 @@ struct SuggestionReviewView: View {
                     // Finding #16 — block confirm when nothing is included so the
                     // view never reaches the single-tick true→false isConfirming
                     // flip that strands the sheet.
-                    .disabled(viewModel.isConfirming || !viewModel.canConfirm)
+                    .disabled(viewModel.isConfirming)
+                } else {
+                    // Finding #21 — when everything is excluded (or the classifier
+                    // returned only garbage, e.g. pencil-on-carpet top-K), the
+                    // user needs a forward action that doesn't try to call /items.
+                    // Dismiss fires onDone() with the current (empty) suggestion
+                    // set so the parent returns to bin detail.
+                    Button("Dismiss") {
+                        onDone()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Dismiss without saving any items")
                 }
             }
             .padding()
