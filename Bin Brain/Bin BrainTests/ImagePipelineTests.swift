@@ -211,4 +211,52 @@ final class ImagePipelineTests: XCTestCase {
             throw error
         }
     }
+
+    // MARK: - Finding #29: EXIF orientation baking
+
+    /// Creates a 200×100 JPEG tagged with .right orientation (simulates iPhone portrait capture).
+    ///
+    /// The sensor shoots in landscape (200 wide × 100 tall raw pixels). The EXIF `.right` tag
+    /// tells decoders to rotate 90° CW to display correctly, producing a 100×200 portrait image.
+    /// After orientation baking the decoded CGImage dimensions must be 100×200, not 200×100.
+    private func makeRightOrientedJPEG(width: Int = 200, height: Int = 100) -> Data? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        // Asymmetric fill: blue body with a red 2×2 block at raw top-right corner.
+        // With .right orientation that corner becomes the visual top-left.
+        ctx.setFillColor(UIColor.blue.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.setFillColor(UIColor.red.cgColor)
+        ctx.fill(CGRect(x: width - 2, y: 0, width: 2, height: 2))
+        guard let cgImage = ctx.makeImage() else { return nil }
+        let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+        return uiImage.jpegData(compressionQuality: 1.0)
+    }
+
+    /// RED test — decodeCGImage must return a CGImage in visual orientation.
+    ///
+    /// A .right-oriented JPEG has raw bitmap dimensions 200×100 (landscape sensor).
+    /// The visual portrait result must be 100×200. The current implementation drops
+    /// the EXIF tag and returns 200×100 — this test is expected to FAIL until Step 2.
+    func testDecodeCGImageBakesExifOrientationIntoPixels() async throws {
+        guard let jpegData = makeRightOrientedJPEG(width: 200, height: 100) else {
+            XCTFail("failed to create orientation test JPEG"); return
+        }
+
+        let decoded = try await pipeline.decodeCGImage(from: jpegData)
+
+        // Visual portrait: width and height are swapped relative to the raw sensor dims.
+        XCTAssertEqual(decoded.width, 100,
+            "decoded width should be the visual portrait width (100), not the raw landscape width (200)")
+        XCTAssertEqual(decoded.height, 200,
+            "decoded height should be the visual portrait height (200), not the raw landscape height (100)")
+    }
 }

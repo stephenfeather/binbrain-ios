@@ -151,7 +151,8 @@ actor ImagePipeline {
     // MARK: - Private Helpers
 
     /// Decodes raw image data into a CGImage.
-    private func decodeCGImage(from data: Data) throws -> CGImage {
+    /// `internal` (not `private`) so `ImagePipelineTests` can assert orientation-baking directly.
+    func decodeCGImage(from data: Data) throws -> CGImage {
         guard let uiImage = UIImage(data: data), let cgImage = uiImage.cgImage else {
             throw PipelineError.invalidImageData
         }
