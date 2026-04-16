@@ -269,6 +269,22 @@ final class AnalysisViewModel {
     ///   - apiClient: The `APIClient` instance to use for network calls.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
     func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
+        // Finding #19 — same BG task protection as run() so the #18 180 s
+        // /suggest window doesn't get OS-killed if the user backgrounds
+        // after tapping "Upload Anyway".
+        final class BGTaskBox: @unchecked Sendable { var id: Int = -1 }
+        let bgBox = BGTaskBox()
+        let runner = self.backgroundTask
+        bgBox.id = runner.begin(name: "BinBrainAnalysisOverride") { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.phase = .failed("Analysis interrupted — tap to retry")
+            }
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
+        }
+        defer {
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
+        }
+
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
@@ -332,6 +348,22 @@ final class AnalysisViewModel {
         guard let photoId = lastPhotoId else {
             phase = .failed("No photo to re-analyse")
             return
+        }
+
+        // Finding #19 — reSuggest hits /suggest which can run 149 s+ on cold
+        // model loads. Without BG task protection the OS kills us if the user
+        // backgrounds mid-wait.
+        final class BGTaskBox: @unchecked Sendable { var id: Int = -1 }
+        let bgBox = BGTaskBox()
+        let runner = self.backgroundTask
+        bgBox.id = runner.begin(name: "BinBrainAnalysisReSuggest") { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.phase = .failed("Analysis interrupted — tap to retry")
+            }
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
+        }
+        defer {
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
         }
 
         phase = .analysing

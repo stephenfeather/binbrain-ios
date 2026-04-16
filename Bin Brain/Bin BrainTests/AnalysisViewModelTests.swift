@@ -384,6 +384,78 @@ final class AnalysisViewModelTests: XCTestCase {
                        "end must fire on the early-return quality-gate path too")
     }
 
+    func testOverrideQualityGateReleasesBackgroundTaskOnSuccess() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.overrideQualityGate(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(runner.beginCount, 1, "overrideQualityGate must begin a BG task (Finding #19)")
+        XCTAssertEqual(runner.endCount, 1, "overrideQualityGate must end the BG task on success")
+    }
+
+    func testOverrideQualityGateReleasesBackgroundTaskOnExpirationHandler() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.overrideQualityGate(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+        // Simulate a late OS expiration firing after defer already released.
+        runner.lastExpirationHandler?()
+
+        XCTAssertEqual(runner.endCount, 1,
+                       "Late expiration after defer cleanup must not double-release the grant")
+    }
+
+    func testReSuggestReleasesBackgroundTaskOnSuccess() async {
+        // Seed lastPhotoId via a successful run first.
+        let seedClient = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: seedClient)
+        let beginBaseline = runner.beginCount
+        let endBaseline = runner.endCount
+
+        let resuggestClient = makeMockAPIClient { [self] _ in
+            return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+        }
+        await sut.reSuggest(apiClient: resuggestClient)
+
+        XCTAssertEqual(runner.beginCount, beginBaseline + 1, "reSuggest must begin a BG task (Finding #19)")
+        XCTAssertEqual(runner.endCount, endBaseline + 1, "reSuggest must end the BG task on success")
+    }
+
+    func testReSuggestReleasesBackgroundTaskOnLateExpiration() async {
+        let seedClient = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: seedClient)
+
+        let resuggestClient = makeMockAPIClient { [self] _ in
+            return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+        }
+        await sut.reSuggest(apiClient: resuggestClient)
+        let endAfterNaturalCleanup = runner.endCount
+
+        runner.lastExpirationHandler?()
+
+        XCTAssertEqual(runner.endCount, endAfterNaturalCleanup,
+                       "reSuggests -1 sentinel must make end() idempotent")
+    }
+
     func testRunReleasesBackgroundTaskExactlyOnceWhenExpirationHandlerFiresAfterSuccess() async {
         let client = makeMockAPIClient { [self] request in
             if request.url?.path.contains("/suggest") == true {
