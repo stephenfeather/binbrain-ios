@@ -475,6 +475,70 @@ final class AnalysisViewModelTests: XCTestCase {
                        "end() must be idempotent — late expiration after defer cleanup must not double-release")
     }
 
+    // MARK: - Swift2_004 Step 3: gate metrics plumbed through to ViewModel
+
+    /// Makes a 1024×1024 solid-gray JPEG. The flat image has near-zero Laplacian
+    /// variance, so it passes the resolution gate but fails the blur gate.
+    private func makeFlatJPEG(width: Int = 1024, height: Int = 1024) -> Data? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.setFillColor(UIColor.gray.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let cg = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.9)
+    }
+
+    func testQualityFailureMetricsAvailableForResolutionGate() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG(), "failed to synthesize tiny JPEG")
+        let client = makeMockAPIClient { _ in
+            XCTFail("No network call expected when resolution gate fails")
+            throw URLError(.cancelled)
+        }
+
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+
+        guard case .qualityFailed = sut.phase else {
+            return XCTFail("Expected .qualityFailed phase, got \(sut.phase)")
+        }
+        let failure = try XCTUnwrap(sut.lastQualityFailure, "lastQualityFailure should be set")
+        XCTAssertEqual(failure.gate, .resolution)
+        XCTAssertEqual(failure.metrics.label, "Short side")
+        XCTAssertEqual(failure.metrics.thresholdLabel, "minimum")
+        XCTAssertEqual(failure.metrics.threshold, 1024.0, accuracy: 0.1)
+        XCTAssertEqual(failure.metrics.measured, 64.0, accuracy: 1.0)
+    }
+
+    func testQualityFailureMetricsAvailableForBlurGate() async throws {
+        let flatJPEG = try XCTUnwrap(makeFlatJPEG(), "failed to synthesize flat JPEG for blur gate test")
+        let client = makeMockAPIClient { _ in
+            XCTFail("No network call expected when blur gate fails")
+            throw URLError(.cancelled)
+        }
+
+        await sut.run(jpegData: flatJPEG, binId: "BIN-0001", apiClient: client)
+
+        guard case .qualityFailed = sut.phase else {
+            return XCTFail("Expected .qualityFailed phase, got \(sut.phase)")
+        }
+        let failure = try XCTUnwrap(sut.lastQualityFailure, "lastQualityFailure should be set")
+        XCTAssertEqual(failure.gate, .blur)
+        XCTAssertEqual(failure.metrics.label, "Blur variance")
+        XCTAssertEqual(failure.metrics.thresholdLabel, "minimum")
+        // At 1024px shortest side, scaledThreshold = kBlurVarianceThresholdAt1024 = 2.0
+        XCTAssertEqual(failure.metrics.threshold, 2.0, accuracy: 1e-9)
+        // Flat image variance must be below threshold (that's why the gate fired)
+        XCTAssertLessThan(failure.metrics.measured, failure.metrics.threshold)
+        XCTAssertGreaterThanOrEqual(failure.metrics.measured, 0)
+    }
+
     func testResetClearsLastRejectedPhotoData() async throws {
         let tinyJPEG = try XCTUnwrap(makeTinyJPEG())
         let client = makeMockAPIClient { _ in
