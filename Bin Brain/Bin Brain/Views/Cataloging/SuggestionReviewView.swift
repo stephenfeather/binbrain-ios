@@ -123,7 +123,10 @@ struct SuggestionReviewView: View {
                             await viewModel.confirm(binId: binId, apiClient: apiClient)
                         }
                     }
-                    .disabled(viewModel.isConfirming)
+                    // Finding #16 — block confirm when nothing is included so the
+                    // view never reaches the single-tick true→false isConfirming
+                    // flip that strands the sheet.
+                    .disabled(viewModel.isConfirming || !viewModel.canConfirm)
                 }
             }
             .padding()

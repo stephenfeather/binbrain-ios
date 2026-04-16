@@ -301,6 +301,11 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         sut.editableSuggestions[0].included = false
         sut.editableSuggestions[1].included = false
 
+        // Finding #16 — before confirm is even invoked, the view must gate
+        // the button so the problematic all-excluded path can't be reached.
+        XCTAssertFalse(sut.canConfirm,
+                       "canConfirm must be false when every suggestion is excluded — View binds .disabled to this")
+
         var callCount = 0
         let client = makeMockAPIClient { [self] request in
             callCount += 1
@@ -312,6 +317,24 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertEqual(callCount, 0, "No upsert calls should be made when all suggestions are excluded")
         XCTAssertFalse(sut.isConfirming, "isConfirming should be false after confirm with all excluded")
         XCTAssertTrue(sut.failedIndices.isEmpty, "failedIndices should be empty (nothing to fail)")
+    }
+
+    func testCanConfirmTrueWhenAtLeastOneIncluded() throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        // Default state loads with everything included.
+        XCTAssertTrue(sut.canConfirm, "canConfirm must be true with at least one included")
+
+        sut.editableSuggestions[0].included = false
+        XCTAssertTrue(sut.canConfirm, "still true while any row is included")
+
+        sut.editableSuggestions[1].included = false
+        XCTAssertFalse(sut.canConfirm, "flips false the moment the last included row toggles off")
+    }
+
+    func testCanConfirmFalseOnEmptyState() {
+        sut.loadSuggestions([])
+        XCTAssertFalse(sut.canConfirm, "empty list must not allow confirm")
     }
 
     // MARK: - Test 8: edited fields are sent to API

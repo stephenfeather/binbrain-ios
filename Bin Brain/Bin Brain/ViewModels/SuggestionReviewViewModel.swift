@@ -85,6 +85,17 @@ final class SuggestionReviewViewModel {
     /// Whether a confirm or retry operation is currently in progress.
     private(set) var isConfirming: Bool = false
 
+    /// Whether the Confirm button should be enabled (Finding #16).
+    ///
+    /// `confirm(...)` with zero included suggestions flips `isConfirming`
+    /// true → false within a single synchronous tick, which SwiftUI coalesces
+    /// — the parent view's `onChange(of:isConfirming)` never fires and the
+    /// sheet strands the user. Gating the button on this prevents the
+    /// dead-end at its source.
+    var canConfirm: Bool {
+        editableSuggestions.contains { $0.included }
+    }
+
     /// Indices (into `editableSuggestions`) of included items that failed or were not yet attempted.
     private(set) var failedIndices: [Int] = []
 
