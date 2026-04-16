@@ -774,6 +774,88 @@ final class APIClientTests: XCTestCase {
                       "quantity should be included when provided")
     }
 
+    // MARK: - Finding #8-B: fetchPhotoData attaches X-API-Key
+
+    func testFetchPhotoDataAttachesAPIKeyAndHitsCorrectPath() async throws {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        defer { UserDefaults.standard.removeObject(forKey: "serverURL") }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let boundSut = APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: [
+                KeychainHelper.apiKeyAccount: "test-key",
+                KeychainHelper.boundHostAccount: "http://10.1.1.205:8000"
+            ])
+        )
+
+        var captured: URLRequest?
+        let jpegBytes = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46])
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            return (makeResponse(statusCode: 200), jpegBytes)
+        }
+
+        let data = try await boundSut.fetchPhotoData(photoId: 42, width: 200)
+
+        XCTAssertEqual(data, jpegBytes, "Returned bytes must match server payload")
+        let req = try XCTUnwrap(captured)
+        XCTAssertEqual(req.value(forHTTPHeaderField: "X-API-Key"), "test-key",
+                       "fetchPhotoData must attach X-API-Key — this is the whole point of Finding #8-B")
+        XCTAssertEqual(req.url?.path, "/photos/42/file", "Path must be /photos/{id}/file")
+        XCTAssertEqual(req.url?.query, "w=200", "Width must round-trip as ?w=<n>")
+    }
+
+    func testFetchPhotoDataThrowsOnMissingKey() async {
+        // Isolate from any BuildConfig.defaultAPIKey leaking in via Info.plist.
+        BuildConfig.lookup = { _ in nil }
+        defer { BuildConfig.lookup = { key in Bundle.main.object(forInfoDictionaryKey: key) } }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let unkeyedSut = APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper()
+        )
+
+        do {
+            _ = try await unkeyedSut.fetchPhotoData(photoId: 42, width: nil)
+            XCTFail("Expected missingAPIKey to throw")
+        } catch APIClientError.missingAPIKey {
+            // expected
+        } catch {
+            XCTFail("Expected APIClientError.missingAPIKey, got \(error)")
+        }
+    }
+
+    func testFetchPhotoDataThrowsUnexpectedStatusOnNon2xx() async {
+        UserDefaults.standard.set("http://10.1.1.205:8000", forKey: "serverURL")
+        defer { UserDefaults.standard.removeObject(forKey: "serverURL") }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let boundSut = APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: [
+                KeychainHelper.apiKeyAccount: "test-key",
+                KeychainHelper.boundHostAccount: "http://10.1.1.205:8000"
+            ])
+        )
+        MockURLProtocol.requestHandler = { _ in
+            (makeResponse(statusCode: 401), Data())
+        }
+
+        do {
+            _ = try await boundSut.fetchPhotoData(photoId: 42, width: nil)
+            XCTFail("Expected non-2xx to throw")
+        } catch APIClientError.unexpectedStatusCode(let code) {
+            XCTAssertEqual(code, 401)
+        } catch {
+            XCTFail("Expected unexpectedStatusCode, got \(error)")
+        }
+    }
+
     func testAssociateItemOmitsOptionalFieldsWhenNil() async throws {
         var captured: URLRequest?
         MockURLProtocol.requestHandler = { request in

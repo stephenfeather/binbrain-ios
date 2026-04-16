@@ -5,12 +5,15 @@
 
 import SwiftUI
 
-/// A full-screen photo viewer that loads an image from a URL.
+/// A full-screen photo viewer that loads an image by photo ID via `APIClient`.
 ///
 /// Supports pinch-to-zoom and double-tap to toggle between fit and 2x zoom.
+/// Uses `AuthenticatedAsyncImage` so the `X-API-Key` header is attached on
+/// the `/photos/{id}/file` fetch (Finding #8-B).
 struct PhotoViewer: View {
 
-    let url: URL
+    let photoId: Int
+    let apiClient: APIClient
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
@@ -20,10 +23,10 @@ struct PhotoViewer: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                AsyncImage(url: url) { phase in
+                AuthenticatedAsyncImage(photoId: photoId, apiClient: apiClient) { phase in
                     switch phase {
-                    case .success(let image):
-                        image
+                    case .success(let uiImage):
+                        Image(uiImage: uiImage)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .scaleEffect(scale)
@@ -41,7 +44,7 @@ struct PhotoViewer: View {
                                 .foregroundStyle(.secondary)
                         }
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                    default:
+                    case .loading:
                         ProgressView()
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }

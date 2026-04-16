@@ -48,7 +48,7 @@ struct BinDetailView: View {
     @State private var displayedLocationName: String?
 
     // Photo viewer state
-    @State private var selectedPhotoURL: URL?
+    @State private var selectedPhotoId: Int?
 
     // Edit item state
     @State private var editingItem: BinItemRecord?
@@ -129,11 +129,11 @@ struct BinDetailView: View {
                 cameraSheet
             }
             .fullScreenCover(isPresented: Binding(
-                get: { selectedPhotoURL != nil },
-                set: { if !$0 { selectedPhotoURL = nil } }
+                get: { selectedPhotoId != nil },
+                set: { if !$0 { selectedPhotoId = nil } }
             )) {
-                if let url = selectedPhotoURL {
-                    PhotoViewer(url: url)
+                if let id = selectedPhotoId {
+                    PhotoViewer(photoId: id, apiClient: apiClient)
                 }
             }
             .sheet(isPresented: Binding(
@@ -420,30 +420,32 @@ struct BinDetailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 8) {
                 ForEach(photos, id: \.photoId) { photo in
-                    if let url = apiClient.photoFileURL(photoId: photo.photoId, width: 200) {
-                        Button {
-                            selectedPhotoURL = apiClient.photoFileURL(photoId: photo.photoId)
-                        } label: {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 100, height: 100)
-                                        .clipped()
-                                case .failure:
-                                    placeholderThumbnail(systemName: "photo.badge.exclamationmark")
-                                default:
-                                    placeholderThumbnail(systemName: "photo")
-                                        .overlay(ProgressView())
-                                }
+                    Button {
+                        selectedPhotoId = photo.photoId
+                    } label: {
+                        AuthenticatedAsyncImage(
+                            photoId: photo.photoId,
+                            width: 200,
+                            apiClient: apiClient
+                        ) { phase in
+                            switch phase {
+                            case .success(let uiImage):
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 100, height: 100)
+                                    .clipped()
+                            case .failure:
+                                placeholderThumbnail(systemName: "photo.badge.exclamationmark")
+                            case .loading:
+                                placeholderThumbnail(systemName: "photo")
+                                    .overlay(ProgressView())
                             }
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .accessibilityLabel("Scan photo")
-                        .accessibilityHint("Double-tap to view full size")
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityLabel("Scan photo")
+                    .accessibilityHint("Double-tap to view full size")
                 }
             }
             .padding(.horizontal)

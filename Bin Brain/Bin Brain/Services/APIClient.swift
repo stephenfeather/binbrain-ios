@@ -121,6 +121,49 @@ final class APIClient {
         return URL(string: path)
     }
 
+    /// Fetches a photo's bytes from `/photos/{id}/file` with the `X-API-Key`
+    /// header attached (routed through the same `shouldAttachKey` gate as
+    /// every other authed request — Finding #8-B).
+    ///
+    /// `AsyncImage(url:)` cannot add headers, so photos previously rendered
+    /// as placeholders on device. Callers should feed the returned `Data`
+    /// into `UIImage(data:)`.
+    ///
+    /// - Parameters:
+    ///   - photoId: The photo ID.
+    ///   - width: Optional width in pixels (16–4096) for a server-side thumbnail.
+    /// - Throws: `APIClientError.missingAPIKey` if no key is configured,
+    ///   `APIClientError.invalidURL` if URL construction fails,
+    ///   `APIClientError.unexpectedStatusCode` on non-2xx, or any underlying
+    ///   `URLError`.
+    func fetchPhotoData(photoId: Int, width: Int? = nil) async throws -> Data {
+        guard hasAPIKey else { throw APIClientError.missingAPIKey }
+
+        var path = "/photos/\(String(photoId).urlPathComponentEncoded)/file"
+        if let width {
+            path += "?w=\(width)"
+        }
+        let urlString = baseURL + path
+        guard let url = URL(string: urlString) else {
+            throw APIClientError.invalidURL(urlString)
+        }
+
+        var urlRequest = URLRequest(url: url, timeoutInterval: 30)
+        urlRequest.httpMethod = "GET"
+        if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.unexpectedStatusCode(-1)
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw APIClientError.unexpectedStatusCode(http.statusCode)
+        }
+        return data
+    }
+
     /// Returns the server health status.
     ///
     /// - Parameter probeWithCurrentKey: When `true`, attaches the configured
