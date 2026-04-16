@@ -21,6 +21,16 @@ import VisionKit
 /// Configure it with the two callback closures; the shutter button is rendered
 /// by the parent view using the `showShutterButton` binding as a visibility gate.
 /// The parent triggers capture by calling the closure delivered via `onCaptureReady`.
+///
+/// ## Rotation contract (Finding #23)
+/// This view must be hosted inside a `.fullScreenCover`, **not** a `.sheet`.
+/// On large iPhones (Pro Max), rotating to landscape flips the horizontal size class
+/// compact→regular; SwiftUI dismisses `.sheet` presentations on that transition,
+/// tearing down the `NavigationStack` and losing all capture/quality-gate state.
+/// `.fullScreenCover` fills the entire screen in all orientations and is immune to
+/// size-class–driven dismissal. `updateUIViewController` is called on rotation and
+/// correctly propagates updated closures through the `Coordinator` without recreating
+/// the `DataScannerViewController`.
 struct ScannerView: UIViewControllerRepresentable {
 
     // MARK: - Properties
