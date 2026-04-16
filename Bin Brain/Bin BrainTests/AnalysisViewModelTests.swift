@@ -552,4 +552,43 @@ final class AnalysisViewModelTests: XCTestCase {
         XCTAssertNil(sut.lastRejectedPhotoData, "reset() must clear the preview bytes")
         XCTAssertNil(sut.lastQualityFailure, "reset() must clear the failure")
     }
+
+    // MARK: - Swift2_005 Step 1: lastUploadedPhotoData
+
+    func testLastUploadedPhotoDataIsSetAfterSuccessfulRun() async {
+        let inputData = Data("fake-jpeg".utf8)
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: inputData, binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.phase, .complete, "precondition: run completed successfully")
+        XCTAssertNotNil(sut.lastUploadedPhotoData,
+                        "lastUploadedPhotoData must be set after a successful run")
+        XCTAssertEqual(sut.lastUploadedPhotoData, inputData,
+                       "lastUploadedPhotoData must equal the bytes that were uploaded")
+    }
+
+    func testLastUploadedPhotoDataIsInitiallyNil() {
+        XCTAssertNil(sut.lastUploadedPhotoData, "lastUploadedPhotoData should start nil before any run")
+    }
+
+    func testResetClearsLastUploadedPhotoData() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+        XCTAssertNotNil(sut.lastUploadedPhotoData, "precondition: lastUploadedPhotoData populated after run")
+
+        sut.reset()
+
+        XCTAssertNil(sut.lastUploadedPhotoData, "reset() must clear lastUploadedPhotoData")
+    }
 }

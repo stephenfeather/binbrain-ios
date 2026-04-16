@@ -73,6 +73,12 @@ final class AnalysisViewModel {
     /// of each new `run(...)` and on retry.
     private(set) var lastRejectedPhotoData: Data?
 
+    /// The post-optimize JPEG bytes that were uploaded for the current analysis.
+    /// Mirrors `lastRejectedPhotoData` but for the success path. Consumed by
+    /// `SuggestionReviewView` so the user sees the exact bytes the classifier saw.
+    /// Cleared by `reset()`.
+    private(set) var lastUploadedPhotoData: Data?
+
     // MARK: - Dependencies
 
     /// The on-device image processing pipeline.
@@ -189,6 +195,7 @@ final class AnalysisViewModel {
 
         // MARK: Ingest
 
+        lastUploadedPhotoData = uploadData
         phase = .uploading
 
         let ingestResponse: IngestResponse
@@ -306,6 +313,7 @@ final class AnalysisViewModel {
         }
 
         // Reuse the main run() flow for upload + suggest by setting state and calling ingest directly.
+        lastUploadedPhotoData = uploadData
         phase = .uploading
 
         let ingestResponse: IngestResponse
@@ -386,5 +394,6 @@ final class AnalysisViewModel {
         lastPhotoId = nil
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
+        lastUploadedPhotoData = nil
     }
 }
