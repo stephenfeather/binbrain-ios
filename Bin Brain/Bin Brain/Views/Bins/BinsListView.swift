@@ -93,7 +93,11 @@ struct BinsListView: View {
             }
             .task { await viewModel.load(apiClient: apiClient) }
             .refreshable { await viewModel.load(apiClient: apiClient) }
-            .sheet(isPresented: $showCataloging, onDismiss: resetCataloging) {
+            // fullScreenCover instead of sheet: .sheet is dismissed when the
+            // horizontal size class changes on rotation (compact→regular on
+            // large iPhones). fullScreenCover fills the whole screen regardless
+            // of orientation, so the ScannerView + NavigationStack survive rotation.
+            .fullScreenCover(isPresented: $showCataloging, onDismiss: resetCataloging) {
                 catalogingSheet
             }
     }

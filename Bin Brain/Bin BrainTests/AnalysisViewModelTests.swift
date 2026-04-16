@@ -591,4 +591,41 @@ final class AnalysisViewModelTests: XCTestCase {
 
         XCTAssertNil(sut.lastUploadedPhotoData, "reset() must clear lastUploadedPhotoData")
     }
+
+    // MARK: - Swift2_006: rotation state persistence
+
+    /// Verifies that qualityFailed phase + lastRejectedPhotoData survive a simulated
+    /// re-render without an explicit reset().
+    ///
+    /// On rotation, SwiftUI rebuilds view structs but preserves @State values —
+    /// meaning the same AnalysisViewModel instance is reused. This test documents
+    /// the contract: state must not self-clear outside of reset(). The fullScreenCover
+    /// fix (Finding #23) prevents the sheet from being dismissed, so this ViewModel
+    /// state is guaranteed to be visible to the rebuilt view.
+    func testQualityFailedStateAndPhotoDataPersistAcrossSimulatedRerender() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG(), "failed to synthesize tiny JPEG")
+        let client = makeMockAPIClient { _ in
+            XCTFail("No network call expected when resolution gate fails")
+            throw URLError(.cancelled)
+        }
+
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+
+        // Capture state after quality failure.
+        guard case .qualityFailed = sut.phase else {
+            return XCTFail("Precondition: phase should be .qualityFailed, got \(sut.phase)")
+        }
+        XCTAssertNotNil(sut.lastRejectedPhotoData, "precondition: rejected photo data must be set")
+
+        // Simulate a rotation/re-render: SwiftUI rebuilds the view struct but
+        // reuses the same @State ViewModel instance. No reset() is called.
+        // State must still be intact so the quality-gate screen can re-render correctly.
+        guard case .qualityFailed = sut.phase else {
+            return XCTFail("phase must remain .qualityFailed after re-render — rotation must not dismiss or reset the view")
+        }
+        XCTAssertEqual(sut.lastRejectedPhotoData, tinyJPEG,
+                       "lastRejectedPhotoData must survive re-render so the rejection screen thumbnail stays visible")
+        XCTAssertNotNil(sut.lastQualityFailure,
+                        "lastQualityFailure must survive re-render so the metric readout stays visible")
+    }
 }
