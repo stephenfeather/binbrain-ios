@@ -243,12 +243,15 @@ final class APIClient {
     ///
     /// - Parameter photoId: The photo ID returned by a prior `ingest` call.
     func suggest(photoId: Int) async throws -> PhotoSuggestResponse {
+        // Finding #18 — cold qwen3-vl model load has been observed at 149 s on
+        // device. 180 s covers the cold path plus warmup jitter without letting
+        // a truly hung server hang the UI indefinitely.
         try await request(
             path: "/photos/\(String(photoId).urlPathComponentEncoded)/suggest",
             method: "GET",
             body: nil,
             contentType: nil,
-            timeout: 120
+            timeout: 180
         )
     }
 

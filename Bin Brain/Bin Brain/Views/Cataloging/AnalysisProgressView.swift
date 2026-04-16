@@ -43,6 +43,10 @@ struct AnalysisProgressView: View {
 
     @State private var didFirePreliminary = false
 
+    /// Timestamp when phase became `.analysing`. Drives the elapsed-time
+    /// label during the long `/suggest` wait (Finding #18).
+    @State private var analysingStartedAt: Date?
+
     // MARK: - Body
 
     var body: some View {
@@ -91,10 +95,17 @@ struct AnalysisProgressView: View {
                 Text("Uploading photo...")
 
             case .analysing:
+                // Finding #18 — /suggest can take 149 s+ on a cold model load.
+                // Show a sustained indicator with an elapsed timer so the user
+                // can tell the app is working, not frozen.
                 ProgressView()
                     .scaleEffect(3)
                     .padding(.bottom, 16)
-                Text("Analysing with AI...")
+                Text("Classifying item…")
+                    .foregroundStyle(.secondary)
+                AnalysisElapsedLabel(startedAt: analysingStartedAt ?? Date())
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
 
             case .complete:
                 EmptyView()
@@ -120,6 +131,32 @@ struct AnalysisProgressView: View {
         }
         .onChange(of: viewModel.phase) { _, newPhase in
             if case .idle = newPhase { didFirePreliminary = false }
+        }
+        .onChange(of: viewModel.phase) { _, newPhase in
+            // Finding #18 — start/stop the elapsed-time label around the
+            // /suggest wait.
+            switch newPhase {
+            case .analysing: analysingStartedAt = Date()
+            case .complete, .failed, .qualityFailed, .idle:
+                analysingStartedAt = nil
+            default: break
+            }
+        }
+    }
+}
+
+// MARK: - AnalysisElapsedLabel
+
+/// Renders a live-updating elapsed-time string driven by `TimelineView`.
+/// Separated so the rest of `AnalysisProgressView` doesn't rebuild every
+/// second (Finding #18).
+private struct AnalysisElapsedLabel: View {
+    let startedAt: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: startedAt, by: 1)) { context in
+            let elapsed = Int(max(0, context.date.timeIntervalSince(startedAt)))
+            Text("\(elapsed)s elapsed — cold model loads can take up to 3 minutes")
         }
     }
 }
