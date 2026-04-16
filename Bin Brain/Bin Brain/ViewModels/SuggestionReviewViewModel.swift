@@ -111,6 +111,10 @@ final class SuggestionReviewViewModel {
     /// Never uploaded — Phase 0 T2 decision is on-device-only.
     private var originalPreliminaryTopK: [ClassificationResult] = []
 
+    /// JPEG bytes of the photo that produced the suggestions currently under
+    /// review. Set by the parent view at navigation time. Nil between sessions.
+    var photoData: Data?
+
     // MARK: - Setup
 
     /// Populates `editableSuggestions` from a raw `SuggestionItem` array.

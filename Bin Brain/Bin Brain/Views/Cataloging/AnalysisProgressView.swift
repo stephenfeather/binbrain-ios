@@ -96,7 +96,7 @@ struct AnalysisProgressView: View {
                     .padding(.horizontal)
                 Button("Retake Photo") { onRetry() }
                     .buttonStyle(.borderedProminent)
-                Button("Upload Anyway") { onOverride() }
+                Button("Continue Anyway") { onOverride() }
                     .foregroundStyle(.secondary)
 
             case .uploading:

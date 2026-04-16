@@ -757,4 +757,17 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertEqual(retryAssociate, 2, "retry should re-issue /associate for both queued indices")
         XCTAssertTrue(sut.failedIndices.isEmpty, "all retried pairs succeeded")
     }
+
+    // MARK: - Swift2_005 Step 2: photoData
+
+    func testPhotoDataIsNilByDefault() {
+        XCTAssertNil(sut.photoData, "photoData must start nil on a fresh SuggestionReviewViewModel")
+    }
+
+    func testPhotoDataCanBeSetAndRead() {
+        let data = Data("fake-jpeg-bytes".utf8)
+        sut.photoData = data
+        XCTAssertEqual(sut.photoData, data,
+                       "photoData must retain the value that was assigned")
+    }
 }
