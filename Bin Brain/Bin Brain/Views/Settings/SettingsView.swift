@@ -50,9 +50,13 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .task {
+            // Finding #20 — prime the key-binding chip once on appear via an
+            // off-main Keychain read, instead of reading Keychain from a
+            // computed getter every SwiftUI body re-render.
             async let models: () = viewModel.loadModels(apiClient: apiClient)
             async let imageSize: () = viewModel.loadImageSize(apiClient: apiClient)
-            _ = await (models, imageSize)
+            async let binding: () = viewModel.refreshAPIKeyBindingStatus()
+            _ = await (models, imageSize, binding)
         }
         .onChange(of: viewModel.modelSelectSuccessTick) { _, _ in
             // Finding #9 — fire haptic + brief toast on each successful switch.
@@ -116,12 +120,13 @@ struct SettingsView: View {
 
             // Finding #12 — chip below the key field so the binding state is
             // visible without running Test Connection.
+            // Finding #20 — the onChange used to spawn a Task per keystroke
+            // that read Keychain on main and could fire a /health probe.
+            // scheduleAutoRebindIfApplicable debounces to one call after the
+            // user stops typing.
             apiKeyBindingChip
                 .onChange(of: viewModel.serverURL) { _, _ in
-                    // Auto-rebind when the user types back to a previously
-                    // bound host so the key becomes live again without a
-                    // manual Re-bind tap. Idempotent no-op when already bound.
-                    Task { await viewModel.attemptAutoRebindIfApplicable(apiClient: apiClient) }
+                    viewModel.scheduleAutoRebindIfApplicable(apiClient: apiClient)
                 }
 
             HStack {

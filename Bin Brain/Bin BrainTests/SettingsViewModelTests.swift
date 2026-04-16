@@ -37,6 +37,17 @@ final class SettingsMockURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+// MARK: - Thread-safe call counter
+
+/// Tiny thread-safe counter for test helpers. `@unchecked Sendable` because
+/// internal locking makes the instance safe to mutate across actors.
+final class UnsafeCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = 0
+    func increment() { lock.lock(); _value += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return _value }
+}
+
 // MARK: - SettingsViewModelTests
 
 @MainActor
@@ -571,23 +582,60 @@ final class SettingsViewModelTests: XCTestCase {
 
     // MARK: - Finding #12: apiKeyBindingStatus chip
 
-    func testApiKeyBindingStatusIsNoKeyStoredWhenKeychainEmpty() {
+    func testApiKeyBindingStatusIsNoKeyStoredWhenKeychainEmpty() async {
         sut.serverURL = "http://10.1.1.205:8000"
+        await sut.refreshAPIKeyBindingStatus()
         XCTAssertEqual(sut.apiKeyBindingStatus, .noKeyStored)
     }
 
-    func testApiKeyBindingStatusIsKeyBoundWhenHostMatches() throws {
+    func testApiKeyBindingStatusIsKeyBoundWhenHostMatches() async throws {
         try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
         try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
         sut.serverURL = "http://10.1.1.205:8000"
+        await sut.refreshAPIKeyBindingStatus()
         XCTAssertEqual(sut.apiKeyBindingStatus, .keyBoundToCurrentHost)
     }
 
-    func testApiKeyBindingStatusIsKeyUnboundWhenHostDiffers() throws {
+    func testApiKeyBindingStatusIsKeyUnboundWhenHostDiffers() async throws {
         try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
         try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
         sut.serverURL = "http://other:9000"
+        await sut.refreshAPIKeyBindingStatus()
         XCTAssertEqual(sut.apiKeyBindingStatus, .keyUnboundForCurrentHost)
+    }
+
+    // MARK: - Finding #20: scheduleAutoRebindIfApplicable collapses rapid input
+
+    func testScheduleAutoRebindDebouncesRapidHostChanges() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+
+        let callCount = UnsafeCallCounter()
+        let client = makeMockAPIClient { [self] request in
+            callCount.increment()
+            return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+        }
+
+        // Simulate 100 rapid keystrokes by reassigning serverURL and scheduling
+        // the auto-rebind each time. Under the old (non-debounced) path, this
+        // would fire 100 /health probes on main. With debounce it should fire
+        // zero until typing settles, then at most once.
+        for i in 0..<100 {
+            sut.serverURL = "http://other:\(9000 + i)"
+            sut.scheduleAutoRebindIfApplicable(apiClient: client)
+        }
+
+        XCTAssertEqual(callCount.value, 0,
+                       "Mid-burst: no network calls should have fired yet — they must be debounced")
+
+        // Settle on the original bound host so the rebind actually triggers,
+        // then wait past the 500 ms debounce window.
+        sut.serverURL = "http://10.1.1.205:8000"
+        sut.scheduleAutoRebindIfApplicable(apiClient: client)
+        try await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertLessThanOrEqual(callCount.value, 2,
+                                 "After settle + debounce only the final host should probe (probe + one follow-up refresh at most)")
     }
 
     // MARK: - Finding #12: auto-rebind on host revert

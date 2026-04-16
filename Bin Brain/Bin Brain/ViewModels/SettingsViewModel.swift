@@ -66,6 +66,11 @@ final class SettingsViewModel {
     /// In-flight debounce task for `debouncedSave()`. Cancelled on each new call.
     private var saveTask: Task<Void, Never>?
 
+    /// In-flight debounce task for host-change auto-rebind. Cancelled on each
+    /// new keystroke so the /health probe only fires once after typing settles
+    /// (Finding #20 — previously fired per character).
+    private var autoRebindTask: Task<Void, Never>?
+
     /// Keychain facade used to persist `apiKey`. Injected for testability.
     private let keychain: KeychainReading
 
@@ -167,6 +172,7 @@ final class SettingsViewModel {
     func commitAPIKey() {
         if apiKey.isEmpty {
             try? keychain.clearAPIKeyBinding()
+            Task { await refreshAPIKeyBindingStatus() }
             return
         }
         guard let origin = APIClient.normalizedOrigin(of: serverURL) else {
@@ -178,6 +184,7 @@ final class SettingsViewModel {
         } catch {
             logger.error("apiKey binding write failed: \(error.localizedDescription, privacy: .public)")
         }
+        Task { await refreshAPIKeyBindingStatus() }
     }
 
     /// Schedules a debounced save after a 0.5-second pause.
@@ -333,15 +340,32 @@ final class SettingsViewModel {
     }
 
     /// Read-only binding status for the current `serverURL` and stored key.
-    /// Pure Keychain/UserDefaults read — no network.
-    var apiKeyBindingStatus: APIKeyBindingStatus {
-        guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
-              !key.isEmpty else {
-            return .noKeyStored
-        }
-        let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
-        let current = APIClient.normalizedOrigin(of: serverURL)
-        return (bound == current) ? .keyBoundToCurrentHost : .keyUnboundForCurrentHost
+    ///
+    /// Finding #20 — this was a computed property that read Keychain on every
+    /// SwiftUI body re-render (dozens per second during typing). Now it's a
+    /// stored property refreshed asynchronously via
+    /// `refreshAPIKeyBindingStatus()` so the hot body-render path never
+    /// touches Keychain I/O.
+    private(set) var apiKeyBindingStatus: APIKeyBindingStatus = .noKeyStored
+
+    /// Recomputes `apiKeyBindingStatus` from Keychain off the main actor.
+    /// Call after any event that could change the binding (commit, rebind,
+    /// auto-rebind, server-URL commit, view appear).
+    func refreshAPIKeyBindingStatus() async {
+        let currentURL = serverURL
+        let keychain = self.keychain
+        // Dispatch the Keychain read to a detached task so the read happens
+        // off the main actor. Keychain APIs are thread-safe.
+        let status: APIKeyBindingStatus = await Task.detached(priority: .userInitiated) {
+            guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+                  !key.isEmpty else {
+                return .noKeyStored
+            }
+            let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
+            let current = APIClient.normalizedOrigin(of: currentURL)
+            return (bound == current) ? .keyBoundToCurrentHost : .keyUnboundForCurrentHost
+        }.value
+        apiKeyBindingStatus = status
     }
 
     /// Auto-rebinds the stored key to `serverURL` when the user has typed
@@ -354,8 +378,27 @@ final class SettingsViewModel {
     ///
     /// - Parameter apiClient: Used by the underlying `rebindKey` probe.
     func attemptAutoRebindIfApplicable(apiClient: APIClient) async {
+        await refreshAPIKeyBindingStatus()
         guard apiKeyBindingStatus == .keyUnboundForCurrentHost else { return }
         await rebindKey(apiClient: apiClient)
+        await refreshAPIKeyBindingStatus()
+    }
+
+    /// Debounced wrapper for `attemptAutoRebindIfApplicable` (Finding #20).
+    ///
+    /// The previous implementation fired on every `onChange(of: serverURL)`
+    /// keystroke and spawned a Task per character, each running a Keychain
+    /// read on main and potentially a `/health` probe. This coalesces those
+    /// into a single invocation after the user pauses typing (500 ms).
+    ///
+    /// - Parameter apiClient: Used by the underlying `rebindKey` probe.
+    func scheduleAutoRebindIfApplicable(apiClient: APIClient) {
+        autoRebindTask?.cancel()
+        autoRebindTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled else { return }
+            await self.attemptAutoRebindIfApplicable(apiClient: apiClient)
+        }
     }
 
     /// Returns true when the Keychain holds an API key whose bound host
