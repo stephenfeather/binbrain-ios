@@ -5,6 +5,18 @@
 // Navigation on completion is handled by the parent via onDone.
 
 import SwiftUI
+import UIKit
+
+// MARK: - Helpers
+
+/// Returns `true` when `data` is non-nil and decodable as a `UIImage`.
+///
+/// Pure function — no side effects. Exposed at file scope so tests can drive
+/// it without constructing a view (matching the `formatMetricValue` pattern).
+func shouldShowPhoto(_ data: Data?) -> Bool {
+    guard let data else { return false }
+    return UIImage(data: data) != nil
+}
 
 // MARK: - SuggestionReviewView
 
@@ -66,10 +78,27 @@ struct SuggestionReviewView: View {
         }
     }
 
+    // MARK: - Pinned Photo
+
+    @ViewBuilder
+    private var pinnedPhoto: some View {
+        if let data = viewModel.photoData, let uiImage = UIImage(data: data) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: 240)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal)
+                .padding(.top, 8)
+                .accessibilityLabel("Photo being classified")
+        }
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 16) {
+            pinnedPhoto
             Image(systemName: "eye.slash")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
@@ -98,6 +127,7 @@ struct SuggestionReviewView: View {
 
     private var suggestionList: some View {
         VStack {
+            pinnedPhoto
             List {
                 ForEach(viewModel.editableSuggestions.indices, id: \.self) { idx in
                     suggestionRow(at: idx)

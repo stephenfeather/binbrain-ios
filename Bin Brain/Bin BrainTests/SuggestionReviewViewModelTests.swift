@@ -6,6 +6,7 @@
 // all testable logic lives in SuggestionReviewViewModel.
 
 import XCTest
+import UIKit
 @testable import Bin_Brain
 
 // MARK: - SuggestionReviewMockURLProtocol
@@ -769,5 +770,35 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         sut.photoData = data
         XCTAssertEqual(sut.photoData, data,
                        "photoData must retain the value that was assigned")
+    }
+
+    // MARK: - Swift2_005 Step 4: shouldShowPhoto
+
+    func testShouldShowPhotoReturnsFalseForNil() {
+        XCTAssertFalse(shouldShowPhoto(nil),
+                       "shouldShowPhoto must return false when data is nil")
+    }
+
+    func testShouldShowPhotoReturnsFalseForNonImageData() {
+        XCTAssertFalse(shouldShowPhoto(Data("not-a-jpeg".utf8)),
+                       "shouldShowPhoto must return false for non-decodable data")
+    }
+
+    func testShouldShowPhotoReturnsTrueForValidJPEG() throws {
+        let jpeg = try XCTUnwrap(makeMinimalJPEG(), "failed to synthesize test JPEG")
+        XCTAssertTrue(shouldShowPhoto(jpeg),
+                      "shouldShowPhoto must return true for valid JPEG bytes")
+    }
+
+    /// Builds a minimal valid 1×1 JPEG.
+    private func makeMinimalJPEG() -> Data? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil, width: 1, height: 1,
+            bitsPerComponent: 8, bytesPerRow: 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let cg = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.9)
     }
 }
