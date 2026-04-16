@@ -150,10 +150,37 @@ actor ImagePipeline {
 
     // MARK: - Private Helpers
 
-    /// Decodes raw image data into a CGImage.
+    /// Decodes raw image data into a `CGImage` with EXIF orientation baked into the pixels.
+    ///
+    /// `UIImage(data:)` parses the EXIF orientation tag into `imageOrientation`, but
+    /// `.cgImage` returns the raw sensor bitmap — dropping the tag and producing sideways
+    /// pixels for portrait iPhone captures (Finding #29). `UIGraphicsImageRenderer` re-draws
+    /// the `UIImage` applying the orientation transform, so the returned `CGImage` has visual
+    /// dimensions and pixel layout regardless of the original sensor orientation.
+    ///
+    /// The `.up` fast-path avoids the re-render overhead for images already in correct
+    /// orientation (e.g., the "Upload Anyway" path on a device that captured in landscape).
+    ///
     /// `internal` (not `private`) so `ImagePipelineTests` can assert orientation-baking directly.
     func decodeCGImage(from data: Data) throws -> CGImage {
-        guard let uiImage = UIImage(data: data), let cgImage = uiImage.cgImage else {
+        guard let uiImage = UIImage(data: data) else {
+            throw PipelineError.invalidImageData
+        }
+        let normalized: UIImage
+        if uiImage.imageOrientation == .up {
+            normalized = uiImage
+        } else {
+            // Pin the renderer scale to the image's own scale factor so the
+            // output CGImage has the same pixel dimensions as the visual image.
+            // UIGraphicsImageRenderer defaults to the device screen scale (2x/3x),
+            // which would inflate a scale=1.0 JPEG-decoded image 2–3× in each dimension.
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = uiImage.scale
+            normalized = UIGraphicsImageRenderer(size: uiImage.size, format: format).image { _ in
+                uiImage.draw(in: CGRect(origin: .zero, size: uiImage.size))
+            }
+        }
+        guard let cgImage = normalized.cgImage else {
             throw PipelineError.invalidImageData
         }
         return cgImage
