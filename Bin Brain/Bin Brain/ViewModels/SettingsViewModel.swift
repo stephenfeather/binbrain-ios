@@ -247,6 +247,21 @@ final class SettingsViewModel {
             switch authed.authOk {
             case .some(true):
                 connectionStatus = .connected(role: authed.role ?? .user)
+                // Swift2_011 — "this key now works" is the logical point to
+                // re-fetch server-backed settings. Running this inside
+                // testConnection (Option A) beats a view-layer
+                // `.onChange(of: connectionStatus)` observer because:
+                //   1. single call site, easier to reason about,
+                //   2. transitions between two success states
+                //      (e.g. .connected(.user) → .connected(.admin)) still
+                //      trigger a refresh — observers only fire on Equatable
+                //      changes,
+                //   3. VM-internal behavior is directly unit-testable.
+                // Only the .some(true) branch fires this — other cases
+                // indicate a bad/unbound key or an unreachable server, so a
+                // fetch would just 401/fail and stomp modelError /
+                // imageSizeError with noise.
+                await refreshServerBackedSettings(apiClient: apiClient)
             case .some(false):
                 connectionStatus = .connectedKeyInvalid
             case .none:
@@ -261,6 +276,21 @@ final class SettingsViewModel {
             connectionStatus = .unreachable(errorMessage: friendly)
             connectionErrorMessage = friendly
         }
+    }
+
+    /// Re-fetches all server-backed Settings data in parallel.
+    ///
+    /// Mirrors the `.task` block in `SettingsView` (models + image size) so
+    /// the in-sheet state stays in lockstep with what the view would have
+    /// loaded on appear. Does not refresh `apiKeyBindingStatus` (that's a
+    /// Keychain read, not a server call).
+    ///
+    /// Errors are absorbed by the called methods into their own `*Error`
+    /// properties; `testConnection` does not surface them.
+    private func refreshServerBackedSettings(apiClient: APIClient) async {
+        async let models: () = loadModels(apiClient: apiClient)
+        async let imageSize: () = loadImageSize(apiClient: apiClient)
+        _ = await (models, imageSize)
     }
 
     /// Maps a thrown connection error to user-facing copy.

@@ -694,12 +694,28 @@ final class SettingsViewModelTests: XCTestCase {
         var probeCallCount = 0
         var sawAuthHeader = false
         let client = makeMockAPIClient { [self] request in
-            probeCallCount += 1
-            if request.value(forHTTPHeaderField: "X-API-Key") != nil {
-                sawAuthHeader = true
-                return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+            let path = request.url?.path ?? ""
+            // Swift2_011 — testConnection now also fires /models and
+            // /settings/image-size after success; count only /health so
+            // this test continues to assert the two-step health-probe flow.
+            if path == "/health" {
+                probeCallCount += 1
+                if request.value(forHTTPHeaderField: "X-API-Key") != nil {
+                    sawAuthHeader = true
+                    return (mockResponse(statusCode: 200, for: request), healthValidKeyUserJSON)
+                }
+                return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
             }
-            return (mockResponse(statusCode: 200, for: request), healthSuccessJSON)
+            // Post-success refresh endpoints — return canned bodies so
+            // loadModels / loadImageSize don't populate modelError /
+            // imageSizeError with noise.
+            if path == "/models" {
+                return (mockResponse(statusCode: 200, for: request), Data(#"{"version":"1","active_model":"m","vision_provider":"ollama","models":[]}"#.utf8))
+            }
+            if path == "/settings/image-size" {
+                return (mockResponse(statusCode: 200, for: request), Data(#"{"version":"1","max_image_px":1280}"#.utf8))
+            }
+            return (mockResponse(statusCode: 404, for: request), Data())
         }
         await sut.testConnection(apiClient: client)
 
