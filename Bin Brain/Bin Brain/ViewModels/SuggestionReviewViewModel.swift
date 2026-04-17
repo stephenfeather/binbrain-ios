@@ -8,6 +8,7 @@
 import Foundation
 import Observation
 import OSLog
+import UIKit
 
 // MARK: - ChipOrigin
 
@@ -74,6 +75,13 @@ private let preliminaryDebugLogger = Logger(subsystem: "com.binbrain.app", categ
 ///
 /// Call `loadSuggestions(_:)` to populate from `AnalysisViewModel.suggestions`.
 /// Then call `confirm(binId:apiClient:)` to upsert all included items.
+///
+/// `@MainActor`-isolated so that stored state (`pinnedImage`, `decodeGeneration`,
+/// `decodeTask`) is race-free without per-property locking. Heavy UIImage decode
+/// work still runs off-main by hopping to `Task.detached(priority: .userInitiated)`
+/// from the `photoData` `didSet`; results are published back through the main
+/// actor via `publish(image:generation:)`.
+@MainActor
 @Observable
 final class SuggestionReviewViewModel {
 
@@ -117,7 +125,45 @@ final class SuggestionReviewViewModel {
 
     /// JPEG bytes of the photo that produced the suggestions currently under
     /// review. Set by the parent view at navigation time. Nil between sessions.
-    var photoData: Data?
+    ///
+    /// Setting this property triggers an off-main-thread UIImage decode and
+    /// publishes the result to `pinnedImage`. Rapid updates cancel any
+    /// in-flight decode — see `handlePhotoDataChange()`.
+    var photoData: Data? {
+        didSet { handlePhotoDataChange() }
+    }
+
+    /// Decoded image derived from `photoData`. Populated off the main actor
+    /// via `Task.detached` and published back through `publish(image:generation:)`.
+    /// Views bind directly to this instead of decoding in the view body.
+    private(set) var pinnedImage: UIImage?
+
+    /// Monotonic counter bumped on each `photoData` change. The detached decode
+    /// task captures the value at spawn; `publish` no-ops if the counter has
+    /// advanced, dropping stale results from superseded decodes.
+    private var decodeGeneration: UInt64 = 0
+
+    /// Handle to the in-flight decode task. Cancelled when `photoData` changes,
+    /// preventing concurrent large-JPEG decodes from piling up in memory.
+    /// Read-accessible to `@testable` imports so tests can `await decodeTask?.value`
+    /// as a hard synchronization barrier.
+    private(set) var decodeTask: Task<Void, Never>?
+
+    /// Decode strategy injected at init time. Default uses `UIImage(data:)`.
+    /// Test-only closures (e.g. thread-capture) replace via the initializer —
+    /// no public mutable seam.
+    private let decoder: @Sendable (Data) -> UIImage?
+
+    // MARK: - Init
+
+    /// Creates a SuggestionReviewViewModel with an optional custom decoder.
+    ///
+    /// - Parameter decoder: The function used to decode `photoData` JPEG bytes
+    ///   into a `UIImage`. Defaults to `UIImage(data:)`. Tests supply a
+    ///   capturing closure to observe the decode thread or intercept results.
+    init(decoder: @escaping @Sendable (Data) -> UIImage? = { UIImage(data: $0) }) {
+        self.decoder = decoder
+    }
 
     // MARK: - Setup
 
@@ -392,5 +438,41 @@ final class SuggestionReviewViewModel {
             }
         }
         isConfirming = false
+    }
+
+    // MARK: - Async UIImage Decode
+
+    /// Cancels any in-flight decode, bumps `decodeGeneration`, and spawns a
+    /// fresh `Task.detached(priority: .userInitiated)` that calls the decoder
+    /// off-main. Runs on the main actor as a stored-property observer on
+    /// `photoData`.
+    ///
+    /// When `photoData` is set to `nil`, clears `pinnedImage` synchronously —
+    /// no detached hop needed, no stale-publish window.
+    private func handlePhotoDataChange() {
+        decodeTask?.cancel()
+        decodeGeneration &+= 1
+        let generation = decodeGeneration
+
+        guard let data = photoData else {
+            pinnedImage = nil
+            decodeTask = nil
+            return
+        }
+
+        let decoder = self.decoder
+        decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
+            let image = decoder(data)
+            guard !Task.isCancelled else { return }
+            await self?.publish(image: image, generation: generation)
+        }
+    }
+
+    /// Main-actor publication point for a completed decode. No-ops if a newer
+    /// decode has superseded this one (i.e. `decodeGeneration` has advanced).
+    private func publish(image: UIImage?, generation: UInt64) {
+        guard decodeGeneration == generation else { return }
+        pinnedImage = image
     }
 }

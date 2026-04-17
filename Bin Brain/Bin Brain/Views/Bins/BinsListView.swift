@@ -351,7 +351,12 @@ private struct BinRowView: View {
             if let locationName = bin.locationName {
                 Text(locationName).font(.caption).foregroundStyle(.secondary)
             }
-            Text(bin.lastUpdated, style: .relative).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text("Last updated:")
+                Text(bin.lastUpdated, style: .date)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }
