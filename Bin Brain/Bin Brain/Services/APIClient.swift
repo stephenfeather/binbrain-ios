@@ -273,23 +273,17 @@ final class APIClient {
         confidence: Double?,
         binId: String?
     ) async throws -> UpsertItemResponse {
-        var fields: [String: String] = ["name": name]
-        if let category { fields["category"] = category }
-        if let binId { fields["bin_id"] = binId }
-        if let confidence { fields["confidence"] = String(confidence) }
-        if let quantity { fields["quantity"] = String(quantity) }
-
-        let (body, boundary) = multipartBody(
-            fields: fields,
-            fileData: nil,
-            fileName: nil,
-            mimeType: nil
-        )
+        var json: [String: Any] = ["name": name]
+        if let category { json["category"] = category }
+        if let binId { json["bin_id"] = binId }
+        if let confidence { json["confidence"] = confidence }
+        if let quantity { json["quantity"] = quantity }
+        let body = try JSONSerialization.data(withJSONObject: json)
         return try await request(
             path: "/items",
             method: "POST",
             body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)",
+            contentType: "application/json",
             timeout: 15
         )
     }
@@ -314,24 +308,15 @@ final class APIClient {
         confidence: Double?,
         quantity: Double?
     ) async throws -> AssociateItemResponse {
-        var fields: [String: String] = [
-            "bin_id": binId,
-            "item_id": String(itemId)
-        ]
-        if let confidence { fields["confidence"] = String(confidence) }
-        if let quantity { fields["quantity"] = String(quantity) }
-
-        let (body, boundary) = multipartBody(
-            fields: fields,
-            fileData: nil,
-            fileName: nil,
-            mimeType: nil
-        )
+        var json: [String: Any] = ["bin_id": binId, "item_id": itemId]
+        if let confidence { json["confidence"] = confidence }
+        if let quantity { json["quantity"] = quantity }
+        let body = try JSONSerialization.data(withJSONObject: json)
         return try await request(
             path: "/associate",
             method: "POST",
             body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)",
+            contentType: "application/json",
             timeout: 10
         )
     }

@@ -244,8 +244,20 @@ struct SettingsView: View {
                     Text("Loading models…").foregroundStyle(.secondary)
                 }
             } else if viewModel.availableModels.isEmpty {
-                Text("No models available")
-                    .foregroundStyle(.secondary)
+                if let provider = viewModel.visionProvider, provider != "localhost" {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(provider, systemImage: "cloud")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text(viewModel.activeModel)
+                            .font(.footnote)
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.vertical, 2)
+                } else {
+                    Text("No models available")
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 ForEach(viewModel.availableModels, id: \.name) { model in
                     Button {

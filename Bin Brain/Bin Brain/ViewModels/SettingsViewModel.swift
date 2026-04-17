@@ -89,11 +89,14 @@ final class SettingsViewModel {
 
     // MARK: - Model State
 
-    /// Available Ollama models on the server.
+    /// Available Ollama models on the server. Empty when using a hosted provider.
     private(set) var availableModels: [OllamaModel] = []
 
     /// The currently active vision model name.
     private(set) var activeModel: String = ""
+
+    /// Vision provider hostname (e.g. "api.fireworks.ai" or "localhost"). Nil until first load.
+    private(set) var visionProvider: String?
 
     /// Whether models are being loaded or switched.
     private(set) var isLoadingModels: Bool = false
@@ -454,6 +457,7 @@ final class SettingsViewModel {
             let response = try await apiClient.listModels()
             availableModels = response.models
             activeModel = response.activeModel
+            visionProvider = response.visionProvider
         } catch {
             modelError = error.localizedDescription
         }

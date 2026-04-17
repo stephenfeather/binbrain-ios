@@ -158,6 +158,10 @@ final class SuggestionReviewViewModel {
     ///   - binId: The bin identifier to associate items with.
     ///   - apiClient: The `APIClient` instance for network calls.
     func confirm(binId: String, apiClient: APIClient) async {
+        guard !binId.isEmpty else {
+            logger.error("confirm called with empty binId — aborting to prevent server 400")
+            return
+        }
         isConfirming = true
         failedIndices = []
         teachFailureCount = 0

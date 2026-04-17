@@ -114,9 +114,22 @@ struct BinsListView: View {
                         scannerViewModel.qrDetected(code)
                     },
                     onPhotoCapture: { image in
-                        logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public)")
+                        logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public) orientation: \(image.imageOrientation.rawValue, privacy: .public)")
+                        // Normalize EXIF orientation before JPEG encoding. jpegData(compressionQuality:)
+                        // does not reliably embed the EXIF orientation tag, so a landscape capture
+                        // re-decoded in decodeCGImage would appear as .up (rotated pixels, no tag).
+                        let oriented: UIImage
+                        if image.imageOrientation != .up {
+                            let fmt = UIGraphicsImageRendererFormat()
+                            fmt.scale = image.scale
+                            oriented = UIGraphicsImageRenderer(size: image.size, format: fmt).image { _ in
+                                image.draw(in: CGRect(origin: .zero, size: image.size))
+                            }
+                        } else {
+                            oriented = image
+                        }
                         guard let binId = scannerViewModel.scannedBinId,
-                              let rawData = image.jpegData(compressionQuality: 1.0) else { return }
+                              let rawData = oriented.jpegData(compressionQuality: 1.0) else { return }
                         logger.debug("JPEG data: \(rawData.count, privacy: .public) bytes, binId: \(binId, privacy: .private)")
                         capturedPhotoData = rawData
                         capturedBinId = binId
@@ -256,6 +269,14 @@ struct BinsListView: View {
                 escalateModelAndReSuggest()
             } : nil
         )
+        // AnalysisProgressView.onChange(of: phase) is unreliable when that view is
+        // in the NavigationStack background (non-visible destination). Observe here
+        // on the active visible view so server suggestions always land.
+        .onChange(of: analysisViewModel.phase) { _, newPhase in
+            guard case .complete = newPhase, navigatedOnPreliminary else { return }
+            reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
+            reviewViewModel.applyServerSuggestions(analysisViewModel.suggestions)
+        }
     }
 
     // MARK: - Helpers

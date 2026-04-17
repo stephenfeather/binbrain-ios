@@ -364,11 +364,13 @@ struct OllamaModel: Decodable {
 struct ListModelsResponse: Decodable {
     let version: String
     let activeModel: String
+    let visionProvider: String?
     let models: [OllamaModel]
 
     enum CodingKeys: String, CodingKey {
         case version
         case activeModel = "active_model"
+        case visionProvider = "vision_provider"
         case models
     }
 }

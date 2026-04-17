@@ -213,7 +213,17 @@ struct BinDetailView: View {
                     showShutterButton: .constant(true),
                     onQRCode: { _ in },
                     onPhotoCapture: { image in
-                        guard let rawData = image.jpegData(compressionQuality: 1.0) else { return }
+                        let oriented: UIImage
+                        if image.imageOrientation != .up {
+                            let fmt = UIGraphicsImageRendererFormat()
+                            fmt.scale = image.scale
+                            oriented = UIGraphicsImageRenderer(size: image.size, format: fmt).image { _ in
+                                image.draw(in: CGRect(origin: .zero, size: image.size))
+                            }
+                        } else {
+                            oriented = image
+                        }
+                        guard let rawData = oriented.jpegData(compressionQuality: 1.0) else { return }
                         capturedPhotoData = rawData
                         catalogingPath.append(.analysis)
                         Task {
@@ -324,6 +334,12 @@ struct BinDetailView: View {
                 escalateModelAndReSuggest()
             } : nil
         )
+        // Same fix as BinsListView: observe phase on the visible view, not the background AnalysisProgressView.
+        .onChange(of: analysisViewModel.phase) { _, newPhase in
+            guard case .complete = newPhase, navigatedOnPreliminary else { return }
+            reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
+            reviewViewModel.applyServerSuggestions(analysisViewModel.suggestions)
+        }
     }
 
     // MARK: - Cataloging Helpers
