@@ -90,11 +90,12 @@ final class SuggestionReviewViewModel {
 
     /// Whether the Confirm button should be enabled (Finding #16).
     ///
-    /// `confirm(...)` with zero included suggestions flips `isConfirming`
-    /// true → false within a single synchronous tick, which SwiftUI coalesces
-    /// — the parent view's `onChange(of:isConfirming)` never fires and the
-    /// sheet strands the user. Gating the button on this prevents the
-    /// dead-end at its source.
+    /// `confirm(...)` with zero included suggestions flips `isConfirming` true → false in a
+    /// single synchronous tick, which SwiftUI coalesces — the parent's `onChange(of:isConfirming)`
+    /// never fires and the sheet strands the user. Gating the button here prevents that dead-end.
+    ///
+    /// - Complexity: O(n) where n = `editableSuggestions.count`. Evaluated on each SwiftUI
+    ///   update; n is bounded by the number of VLM suggestions (typically ≤ 10).
     var canConfirm: Bool {
         editableSuggestions.contains { $0.included }
     }

@@ -50,6 +50,9 @@ struct SuggestionReviewView: View {
     /// The suggestion currently highlighted in the bbox overlay (`nil` = no highlight).
     @State private var selectedSuggestionId: Int?
 
+    /// Decoded image cached to avoid re-running `UIImage(data:)` on every body evaluation.
+    @State private var cachedPhoto: UIImage?
+
     // MARK: - Body
 
     var body: some View {
@@ -70,6 +73,15 @@ struct SuggestionReviewView: View {
             }
         }
         .navigationTitle("Review Items")
+        .onAppear {
+            cachedPhoto = viewModel.photoData.flatMap { UIImage(data: $0) }
+        }
+        .onChange(of: viewModel.photoData) { _, data in
+            cachedPhoto = data.flatMap { UIImage(data: $0) }
+        }
+        .onChange(of: viewModel.editableSuggestions.map(\.id)) { _, _ in
+            selectedSuggestionId = nil
+        }
         .onChange(of: viewModel.isConfirming) { _, newValue in
             guard !newValue else { return }
             if viewModel.teachFailureCount > 0 {
@@ -85,7 +97,7 @@ struct SuggestionReviewView: View {
 
     @ViewBuilder
     private var pinnedPhoto: some View {
-        if let data = viewModel.photoData, let uiImage = UIImage(data: data) {
+        if let uiImage = cachedPhoto {
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
@@ -310,10 +322,15 @@ struct SuggestionReviewView: View {
         let renderedH = imageSize.height * scale
         let ox = (frameSize.width - renderedW) / 2
         let oy = (frameSize.height - renderedH) / 2
-        let x1 = ox + CGFloat(bbox[0]) * renderedW
-        let y1 = oy + CGFloat(bbox[1]) * renderedH
-        let x2 = ox + CGFloat(bbox[2]) * renderedW
-        let y2 = oy + CGFloat(bbox[3]) * renderedH
+        // Clamp to [0,1] to guard against VLM output that slightly exceeds the image boundary.
+        let c0 = CGFloat(min(max(bbox[0], 0), 1))
+        let c1 = CGFloat(min(max(bbox[1], 0), 1))
+        let c2 = CGFloat(min(max(bbox[2], 0), 1))
+        let c3 = CGFloat(min(max(bbox[3], 0), 1))
+        let x1 = ox + c0 * renderedW
+        let y1 = oy + c1 * renderedH
+        let x2 = ox + c2 * renderedW
+        let y2 = oy + c3 * renderedH
         guard x2 > x1, y2 > y1 else { return nil }
         return CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
     }

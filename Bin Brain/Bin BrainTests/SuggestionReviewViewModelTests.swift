@@ -837,4 +837,29 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertEqual(coords[3], 0.9, accuracy: 0.001)
         XCTAssertNil(sut.editableSuggestions[1].bbox, "Absent bbox should decode as nil")
     }
+
+    // MARK: - Test 21: malformed bbox (wrong element count) is decoded and handled safely
+
+    func testLoadSuggestionsToleratesMalformedBbox() throws {
+        let json = Data("""
+        [
+            {
+                "item_id": null,
+                "name": "Widget",
+                "category": null,
+                "confidence": 0.8,
+                "bins": [],
+                "bbox": [0.1, 0.2]
+            }
+        ]
+        """.utf8)
+        // Decoding must not throw — [Float] accepts any-length array.
+        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+        XCTAssertEqual(suggestions[0].bbox?.count, 2, "Short bbox should decode as-is, not nil")
+
+        // loadSuggestions passes it through; bboxRect guards on count==4 (visual concern only).
+        sut.loadSuggestions(suggestions)
+        XCTAssertEqual(sut.editableSuggestions[0].bbox?.count, 2,
+                       "Malformed bbox passes through loadSuggestions without crashing")
+    }
 }
