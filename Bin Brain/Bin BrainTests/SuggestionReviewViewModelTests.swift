@@ -772,6 +772,60 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                        "photoData must retain the value that was assigned")
     }
 
+    // MARK: - Swift2_012: binId on the ViewModel (durable through cataloging flow)
+
+    func testBinIdIsEmptyByDefault() {
+        XCTAssertEqual(sut.binId, "",
+                       "binId must default to empty string on a fresh SuggestionReviewViewModel (Swift2_012)")
+    }
+
+    func testBinIdCanBeSetAndRead() {
+        sut.binId = "BIN-0003"
+        XCTAssertEqual(sut.binId, "BIN-0003",
+                       "binId must retain the value assigned by the parent cataloging flow")
+    }
+
+    /// Regression guard for Swift2_012. The VM now owns binId so Confirm reads
+    /// from a stable source instead of an ephemeral view-layer @State. This
+    /// test simulates the fixed call pattern — parent assigns VM.binId
+    /// alongside VM.photoData at ingest time, and Confirm later reads from
+    /// the VM rather than from a parent-view property.
+    func testConfirmReadsBinIdFromViewModel() async throws {
+        sut.binId = "BIN-0003"
+        sut.photoData = Data("jpeg-bytes".utf8)
+        sut.loadSuggestions(try makeSuggestions())
+
+        var receivedBinIds: [String] = []
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.contains("/bins/") {
+                // /bins/{binId}/... — record which binId the server sees.
+                if let comps = request.url?.pathComponents,
+                   let binsIdx = comps.firstIndex(of: "bins"),
+                   binsIdx + 1 < comps.count {
+                    receivedBinIds.append(comps[binsIdx + 1])
+                }
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        // Fixed call pattern: SuggestionReviewView's Confirm button will do
+        // `viewModel.confirm(binId: viewModel.binId, ...)` — reading from VM,
+        // not from a parent-view property. Simulate that here.
+        await sut.confirm(binId: sut.binId, apiClient: client)
+
+        XCTAssertTrue(sut.failedIndices.isEmpty,
+                      "Valid VM-held binId must drive a successful confirm")
+        XCTAssertFalse(receivedBinIds.isEmpty,
+                       "Server must receive at least one /bins/{id}/... request during confirm")
+        XCTAssertTrue(receivedBinIds.allSatisfy { $0 == "BIN-0003" },
+                      "All /bins/{id}/ requests must carry the VM-held binId 'BIN-0003'; got \(receivedBinIds)")
+    }
+
     // MARK: - Swift2_005 Step 4: shouldShowPhoto
 
     func testShouldShowPhotoReturnsFalseForNil() {
