@@ -133,6 +133,13 @@ final class SuggestionReviewViewModel {
         didSet { handlePhotoDataChange() }
     }
 
+    /// Bin identifier under review. Set by the parent view alongside
+    /// `photoData` at ingest time so Confirm reads a stable, VM-durable
+    /// value instead of an ephemeral parent-view @State (Swift2_012).
+    /// Empty string until assigned; the guard in `confirm(binId:apiClient:)`
+    /// treats empty as "not yet ready" and aborts the call.
+    var binId: String = ""
+
     /// Decoded image derived from `photoData`. Populated off the main actor
     /// via `Task.detached` and published back through `publish(image:generation:)`.
     /// Views bind directly to this instead of decoding in the view body.

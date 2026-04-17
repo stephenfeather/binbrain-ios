@@ -801,29 +801,34 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             if path.contains("/classes/confirm") {
                 return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
             }
-            if path.contains("/bins/") {
-                // /bins/{binId}/... — record which binId the server sees.
-                if let comps = request.url?.pathComponents,
-                   let binsIdx = comps.firstIndex(of: "bins"),
-                   binsIdx + 1 < comps.count {
-                    receivedBinIds.append(comps[binsIdx + 1])
+            if path.hasSuffix("/associate") {
+                if let body = request.bodyData,
+                   let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                   let binId = obj["bin_id"] as? String {
+                    receivedBinIds.append(binId)
                 }
                 return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            // /items upsert — capture its bin_id too for symmetry.
+            if let body = request.bodyData,
+               let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let binId = obj["bin_id"] as? String {
+                receivedBinIds.append(binId)
             }
             return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
         }
 
-        // Fixed call pattern: SuggestionReviewView's Confirm button will do
+        // Fixed call pattern: SuggestionReviewView's Confirm button now does
         // `viewModel.confirm(binId: viewModel.binId, ...)` — reading from VM,
         // not from a parent-view property. Simulate that here.
         await sut.confirm(binId: sut.binId, apiClient: client)
 
         XCTAssertTrue(sut.failedIndices.isEmpty,
-                      "Valid VM-held binId must drive a successful confirm")
+                      "Valid VM-held binId must drive a successful confirm; got failedIndices=\(sut.failedIndices)")
         XCTAssertFalse(receivedBinIds.isEmpty,
-                       "Server must receive at least one /bins/{id}/... request during confirm")
+                       "Server must receive at least one /items or /associate request carrying bin_id")
         XCTAssertTrue(receivedBinIds.allSatisfy { $0 == "BIN-0003" },
-                      "All /bins/{id}/ requests must carry the VM-held binId 'BIN-0003'; got \(receivedBinIds)")
+                      "All requests must carry the VM-held binId 'BIN-0003'; got \(receivedBinIds)")
     }
 
     // MARK: - Swift2_005 Step 4: shouldShowPhoto

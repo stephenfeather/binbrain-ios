@@ -121,7 +121,7 @@ struct BinDetailView: View {
                             .font(.title2)
                     }
                     .accessibilityLabel("Scan item into this bin")
-                    .sensoryFeedback(.impact(flexibility: .heavy, intensity: 0.75), trigger: cameraTapCount)
+                    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.75), trigger: cameraTapCount)
                 }
             }
             .task {
@@ -226,6 +226,9 @@ struct BinDetailView: View {
                         }
                         guard let rawData = oriented.jpegData(compressionQuality: 1.0) else { return }
                         capturedPhotoData = rawData
+                        // Swift2_012 — seed VM-durable binId from the view's
+                        // stable `let binId` before navigating to analysis.
+                        reviewViewModel.binId = binId
                         catalogingPath.append(.analysis)
                         Task {
                             await analysisViewModel.run(
@@ -323,10 +326,9 @@ struct BinDetailView: View {
     // MARK: - Review View
 
     private var reviewView: some View {
-        let _ = print("[BIND] reviewView binId=\(binId)")
+        let _ = print("[BIND] reviewView binId=\(binId) vmBinId=\(reviewViewModel.binId)")
         return SuggestionReviewView(
             viewModel: reviewViewModel,
-            binId: binId,
             apiClient: apiClient,
             onDone: {
                 showCamera = false

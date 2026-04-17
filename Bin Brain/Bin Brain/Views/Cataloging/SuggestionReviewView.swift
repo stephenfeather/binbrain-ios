@@ -35,12 +35,16 @@ struct SuggestionReviewView: View {
     // MARK: - Properties
 
     /// The view model managing suggestion state and confirmation logic.
+    ///
+    /// The VM owns `binId` — read it via `viewModel.binId` in the Confirm /
+    /// Retry closures. The view no longer carries a `let binId: String`
+    /// because that ephemeral parent-view input was the root cause of the
+    /// empty-binId bug (Swift2_012): on SwiftUI re-renders of the
+    /// `navigationDestination` closure, `binId: capturedBinId ?? ""` could
+    /// re-read a nilled `@State`. Sourcing from the VM gives a stable value.
     @Bindable var viewModel: SuggestionReviewViewModel
 
     @Environment(\.toast) private var toast
-
-    /// The bin identifier to associate confirmed items with.
-    let binId: String
 
     /// The API client used for upsert network calls.
     let apiClient: APIClient
@@ -173,14 +177,14 @@ struct SuggestionReviewView: View {
 
                     Button("Retry remaining (\(viewModel.failedIndices.count))") {
                         Task {
-                            await viewModel.retryRemaining(binId: binId, apiClient: apiClient)
+                            await viewModel.retryRemaining(binId: viewModel.binId, apiClient: apiClient)
                         }
                     }
                     .disabled(viewModel.isConfirming)
                 } else if viewModel.canConfirm {
                     Button("Confirm") {
                         Task {
-                            await viewModel.confirm(binId: binId, apiClient: apiClient)
+                            await viewModel.confirm(binId: viewModel.binId, apiClient: apiClient)
                         }
                     }
                     // Finding #16 — block confirm when nothing is included so the

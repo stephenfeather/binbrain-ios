@@ -133,6 +133,11 @@ struct BinsListView: View {
                         logger.debug("JPEG data: \(rawData.count, privacy: .public) bytes, binId: \(binId, privacy: .private)")
                         capturedPhotoData = rawData
                         capturedBinId = binId
+                        // Swift2_012 — put binId on the VM immediately so Confirm reads a
+                        // VM-durable value. The view's @State capturedBinId remains (used
+                        // by onOverride / escalateModelAndReSuggest) but Confirm no longer
+                        // depends on it.
+                        reviewViewModel.binId = binId
                         catalogingPath.append(.analysis)
                         // Launch analysis in an unstructured Task so SwiftUI
                         // re-renders cannot cancel the in-flight network call.
@@ -259,7 +264,6 @@ struct BinsListView: View {
     private var reviewView: some View {
         SuggestionReviewView(
             viewModel: reviewViewModel,
-            binId: capturedBinId ?? "",
             apiClient: apiClient,
             onDone: {
                 showCataloging = false
@@ -309,6 +313,7 @@ struct BinsListView: View {
         captureProxy.action = nil
         capturedPhotoData = nil
         capturedBinId = nil
+        reviewViewModel.binId = ""
         currentModelIndex = 0
         navigatedOnPreliminary = false
     }
