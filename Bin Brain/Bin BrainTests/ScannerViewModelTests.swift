@@ -185,4 +185,50 @@ final class ScannerViewModelTests: XCTestCase {
 
         XCTAssertNil(sut.scanError, "reset should clear scanError")
     }
+
+    // MARK: - Haptic feedback on successful scan
+
+    /// Simple counter used to observe init-injected haptic invocations in tests.
+    private final class HapticCounter {
+        var count = 0
+        func fire() { count += 1 }
+    }
+
+    func testQRDetectedFiresHapticOnSuccessfulScan() {
+        let haptic = HapticCounter()
+        let vm = ScannerViewModel(hapticFeedback: haptic.fire)
+
+        vm.qrDetected("BIN-0001")
+
+        XCTAssertEqual(haptic.count, 1,
+                       "A valid QR payload must fire the success haptic exactly once")
+        XCTAssertEqual(vm.phase, .awaitingPhoto,
+                       "precondition: successful scan should transition phase")
+    }
+
+    func testQRDetectedDoesNotFireHapticOnRejectedPayload() {
+        let haptic = HapticCounter()
+        let vm = ScannerViewModel(hapticFeedback: haptic.fire)
+
+        vm.qrDetected("BAD?x=1")
+        vm.qrDetected("../../escape")
+        vm.qrDetected("")
+        vm.qrDetected(String(repeating: "A", count: 33))
+
+        XCTAssertEqual(haptic.count, 0,
+                       "Rejected QR payloads must NOT fire the haptic (no false signal)")
+        XCTAssertEqual(vm.phase, .scanning,
+                       "precondition: rejected payloads should leave phase at .scanning")
+    }
+
+    func testQRDetectedDoesNotFireHapticOnDuplicateEvent() {
+        let haptic = HapticCounter()
+        let vm = ScannerViewModel(hapticFeedback: haptic.fire)
+
+        vm.qrDetected("BIN-0001")   // accepted — fires haptic
+        vm.qrDetected("BIN-0002")   // duplicate (phase != .scanning) — must NOT fire
+
+        XCTAssertEqual(haptic.count, 1,
+                       "Duplicate QR events after the first success must NOT re-fire the haptic")
+    }
 }
