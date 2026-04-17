@@ -162,7 +162,8 @@ struct AnalysisProgressView: View {
 ///
 /// - Integer-valued doubles ≥ 1 render without a decimal point ("1024", "64", "2").
 /// - Values in [0.0001, 1) or non-integer values ≥ 1 render to 4 decimal places.
-/// - Values < 0.0001 fall back to 2-significant-figure scientific notation.
+/// - Values < 0.0001 render to 6 decimal places in fixed-point form (no scientific notation);
+///   values that round to zero at that precision display as "0.000000".
 ///
 /// Exposed `internal` (not `private`) so `QualityGatesTests` can cover the
 /// formatting logic without spinning up a full view hierarchy.
@@ -172,7 +173,7 @@ func formatMetricValue(_ value: Double) -> String {
     } else if value >= 0.0001 {
         return String(format: "%.4f", value)
     } else {
-        return String(format: "%.2e", value)
+        return String(format: "%.6f", value)
     }
 }
 

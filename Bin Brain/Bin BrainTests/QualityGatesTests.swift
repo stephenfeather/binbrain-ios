@@ -315,10 +315,17 @@ final class QualityGatesTests: XCTestCase {
         XCTAssertEqual(formatMetricValue(0.7), "0.7000")
     }
 
-    func testFormatMetricValueForTinyValueUsesScientific() {
-        // Values below 0.0001 use scientific notation
-        let result = formatMetricValue(0.000001)
-        XCTAssertTrue(result.contains("e"), "Values < 0.0001 should use scientific notation, got \(result)")
+    func testFormatMetricValueForTinyValueUsesFixedPoint() {
+        // Values below 0.0001 stay in fixed-point with extended precision
+        // (scientific notation is hard to read for a blur-variance UI readout).
+        XCTAssertEqual(formatMetricValue(0.000001), "0.000001")
+    }
+
+    func testFormatMetricValueForVeryTinyValueUsesFixedPoint() {
+        // 6-decimal precision — values that round to zero still display as "0.000000",
+        // never in scientific form.
+        let result = formatMetricValue(0.0000001)
+        XCTAssertFalse(result.contains("e"), "Scientific notation leaked through: \(result)")
     }
 
     // MARK: - Sequential Ordering
