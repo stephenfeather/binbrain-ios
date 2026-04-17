@@ -51,6 +51,9 @@ fastlane/test_output
 thoughts/
 .worktrees/
 
+# Swarm (ephemeral per-task prompts; Guidance/Personas/Findings/Configurations are tracked)
+.swarm/Prompts/
+
 # Analysis output
 opengrep*
 .codegraph/

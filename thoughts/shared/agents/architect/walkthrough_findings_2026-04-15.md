@@ -123,6 +123,36 @@ Starting DB state: empty except one pre-existing API key.
 - `gemma2`, `llama3.1`, `llama3` appear under the "Vision Model" section without filtering. Not a validation bug (selection works), but misleading.
 - **Fix:** filter the Settings model list to vision-capable models only, or group with a visible separator.
 
+### P1 — Finding #19: overrideQualityGate + reSuggest paths have no background task grant
+
+**Observation (2026-04-16, flagged during Finding #15 implementation by Swift2):** `AnalysisViewModel.run()` is now protected end-to-end by `BackgroundTaskRunning` (#15), but the sibling flows `overrideQualityGate` and `reSuggest` have no `beginBackgroundTask` at all. During the Finding #18 149s `/suggest` window either of those flows can be OS-killed if the user backgrounds the app.
+
+**Fix direction:** apply the same `BackgroundTaskRunning` wrapper used by `run()` to both `overrideQualityGate` and `reSuggest`. Reuse the extracted protocol — no new abstraction needed. Add two tests mirroring the #15 coverage (success + late-expiration paths, begin:1 / end:1 assertions).
+
+**Why separate from #15:** Swift2 deliberately did not silently expand #15 scope. Keeping it as its own finding preserves the one-finding-per-change reviewability pattern.
+
+### P1 — Finding #18: /suggest cold-start exceeds iOS timeout and has no visible progress
+
+**Observation (2026-04-15, post-deploy):** Dev2 verified server-side that `POST /photos/{id}/suggest` took 149s on cold model load via qwen3-vl. iOS's default request timeout (15s based on prior APIClient config) kills the request long before the model returns, producing NSURLError -1001. There is also no sustained user-facing indicator during the wait, so even a longer timeout would feel broken.
+
+**Fix direction:** (a) Raise the /suggest timeout on the iOS side specifically (not the global default) to ~180s to cover cold starts; warm-model calls remain fast. (b) During the wait, surface a steady "Classifying…" or similar indicator with an elapsed timer so the user knows work is still happening (and not just the app frozen). Consider also pinging /health at intervals or having the server emit a heartbeat so a frozen-session state can be distinguished from a legitimately-slow model.
+
+**Tie-in:** Finding #15 (background task > 30s) overlaps — fixing timeout without extending the background task grant would still get the job killed if the user backgrounds. Coordinate with #15.
+
+### P1 — Finding #15: BinBrainAnalysis background task leaks (lifecycle > 30s, no timely endBackgroundTask)
+
+**Observation (2026-04-15, post-deploy on device):** Xcode console warns:
+```
+Background Task 2 ("BinBrainAnalysis"), was created over 30 seconds ago. In applications running
+in the background, this creates a risk of termination. Remember to call
+UIApplication.endBackgroundTask(_:) for your task in a timely manner to avoid this.
+```
+The analysis pipeline (ingest → classify → confirm) legitimately exceeds 30s for large photos. If the user backgrounds the app mid-cataloging, the OS may kill the task; current code doesn't shut down cleanly.
+
+**Prior art in memory:** this area has a documented architectural pattern (wrap inner async call in background-protected operation; `beginBackgroundTask` expiration handler cancels via a signal), and a known anti-pattern (`.task(id:)` for long-running work mutating @Observable state).
+
+**Fix direction:** audit every `beginBackgroundTask` call (grep for `beginBackgroundTask`). For each, verify the matching `endBackgroundTask` fires on (a) successful completion, (b) error paths, (c) the `expirationHandler` branch. The analysis flow appears to miss one or more of these paths. Add a ViewModel test asserting `endBackgroundTask` identifiers are released in all terminal states.
+
 ### P0-Process — Finding #14: Security-audit regressions escaped TDD because tests don't cover layer boundaries
 
 **Observation (2026-04-15 retrospective, after walkthrough):** The cataloging pipeline worked reliably pre-audit. F-02 (ATS tightening), F-04 (host-bound API key), and F-10 (photo path confinement) landed — and most of the 13 walkthrough findings trace directly back to them. TDD was in place; it passed; bugs shipped anyway.
@@ -201,6 +231,164 @@ Added after Swift2_003 instrumentation + Stephen's calibration pass.
   - On Stephen's calibration set (n≥20 mixed sharp/blurry on actual target hardware), the chosen metric separates the two distributions with <10% overlap at the chosen threshold.
   - Threshold is exposed in Settings (pattern already prototyped for blur, never shipped).
   - Pre-existing "Upload Anyway" bypass preserved.
+
+## Finding #29 — Image orientation bug: uploaded photos stored rotated 90° CCW
+
+Raised 2026-04-16 15:38 by Stephen. Root cause pinned 2026-04-16 15:40 by Architect via 3 sample photos from `/binbrain/data/photos/BIN-0003/`.
+
+- **Status:** OPEN — **P0** (corrupts training data; degrades every CV stage including classifier, YOLO, qwen suggest).
+- **Symptom:** iPhone rear-camera captures in portrait orientation are stored on the server rotated 90° counter-clockwise. Confirmed across 3 independent photos (Ritz Bits box, wallet+keys scene, close-up of same).
+- **Root cause:** `ImagePipeline.swift:154-158` `decodeCGImage(from:)`:
+  ```swift
+  guard let uiImage = UIImage(data: data), let cgImage = uiImage.cgImage else { ... }
+  return cgImage
+  ```
+  `UIImage(data:)` parses EXIF orientation into `uiImage.imageOrientation`, but `.cgImage` returns the raw sensor bitmap (iPhone rear camera shoots landscape-right natively). The orientation metadata is dropped at the accessor. All downstream stages (saliency, smart crop, CIImage, JPEG encode) operate on raw-orientation pixels and produce a JPEG with no EXIF tag, so the server stores bytes in the wrong orientation.
+- **Fix direction:** Bake orientation into pixels at decode time. Before returning `cgImage`, if `uiImage.imageOrientation != .up`, re-render via `UIGraphicsImageRenderer` at `uiImage.size`, then return `.cgImage` of the rendered result. Existing pipeline stages stay unchanged because they'll now receive correctly-oriented input.
+- **Surface impact (everywhere the optimized bytes flow):**
+  - Server storage: every photo since the pipeline was introduced is rotated in `data/photos/*`.
+  - Server-side CV: every `/detect` (YOLOE), `/suggest` (qwen3-vl), embeddings — all ran on sideways images.
+  - iOS display: `SuggestionReviewView` pinned photo (Swift2_005) shows the rotated bytes correctly because they're already rotated in bytes, but the user sees a sideways photo, which looks like an iOS bug.
+  - `AnalysisProgressView` rejected-photo: uses `lastRejectedPhotoData` which is the RAW jpegData (pre-pipeline) — probably displays correctly because `UIImage(data:)` respects EXIF at render time. Worth verifying.
+- **Cross-references and upstream implications:**
+  - **Finding #5** (on-device classifier biased toward background) — likely worsened by non-standard orientation input to VNClassifyImageRequest.
+  - **Dev1_009 qwen bbox quality** — the coarse-and-plausible boxes were generated from sideways images; a retest with properly-oriented input may yield dramatically better localization.
+  - **Finding #24** (silent schema drift) — possibly influenced by qwen receiving unusual-orientation inputs producing erratic output.
+  - **Future consideration:** existing server-side photos in the DB are all sideways. A one-time migration script could re-rotate them, but only matters if historical photos are used for training or re-displayed.
+- **Sequencing:** Swift2_006 (rotation fix) is in-flight; this should be Swift2_007 next. High priority.
+
+## Finding #28 — Model warm-up gaps cause cold-start latency on `/detect`, `/suggest`, embeddings
+
+Raised 2026-04-16 15:06 by peer-session research into `api/app/main.py:22-65` lifespan.
+
+- **Status:** OPEN — P2 (quality-of-life infra; not blocking but explains the 149s cold qwen load in Finding #18).
+- **Current state:**
+  - ✅ Ollama qwen preload via `POST /api/generate` with `keep_alive:-1` **already wired** in lifespan.
+  - ✅ `fastembed.TextEmbedding` is eager at module import (`deps.py:48`).
+  - ❌ YOLOE is **lazy** — only loads on first `/detect` call. `/health` shows `model_reload.status=never` after restart for this reason.
+  - ❌ No Docker healthcheck on api service.
+- **Gaps:**
+  1. **YOLOE warm missing** — weights load on init but CUDA kernels are not autotuned until first `.predict()`. Fix: dummy `.predict(zeros(imgsz))` in lifespan.
+  2. **fastembed ORT graph optimization** happens on first `.embed()`, not `__init__`. Fix: `list(embedder.embed(["warm"]))` in lifespan.
+  3. **qwen ViT vision encoder** only warms on first image because current preload uses `/api/generate` (text path). Fix: use `/api/chat` with a 1px dummy image to warm the multimodal path.
+  4. **No `/ready` endpoint** separate from `/health` liveness — orchestrator can't gate traffic during warm.
+  5. **No docker-compose healthcheck** with `start_period:120s` to avoid routing cold.
+- **Key constraint:** `keep_alive:-1` is **runtime-only**; does not survive `ollama serve` restart. Lifespan re-issue is correct. Also consider `OLLAMA_KEEP_ALIVE=-1` env on the Ollama daemon for system-wide persistence.
+- **Recommendation:** blocking lifespan warm + split `/ready` vs `/health` + compose healthcheck with generous `start_period`.
+- **Fix direction (Dev2_006, proposed):**
+  1. Add YOLOE dummy predict in lifespan.
+  2. Add fastembed dummy embed in lifespan.
+  3. Swap qwen preload to `/api/chat` with 1px image.
+  4. Add `/ready` endpoint (200 iff all warm paths succeeded).
+  5. Add compose healthcheck on the api service with `start_period:120s`.
+  6. Optional: `OLLAMA_KEEP_ALIVE=-1` env var on Ollama daemon.
+- **Pairs with:** Finding #18 (149s cold `/suggest`). This is the root-cause-adjacent fix.
+- **Sequencing:** hold until Dev1_009 verdict lands — if we end up changing the default model (2b → 4b per discussion today), the warm-up changes should cover the new model choice.
+
+## Finding #27 — Use Ollama structured outputs to eliminate schema drift at source
+
+Raised 2026-04-16 08:52 by Stephen. Reference: https://ollama.com/blog/structured-outputs
+
+- **Status:** OPEN — P1 (complements Dev2_005; root-cause fix for Finding #24).
+- **Context:** Dev2_005 (2026-04-16) added parser tolerance + WARN logging as a defensive patch. The *root cause* — qwen3-vl returning bare lists vs objects non-deterministically — is still there. Ollama supports `format=<JSONSchema>` to constrain the model to a specific output shape. Passing a schema eliminates the drift at source.
+- **Proposed change:**
+  1. Define the expected response shape as a Pydantic model (`SuggestResponseSchema` or similar) in `api/app/services/vision.py`.
+  2. Emit JSON Schema via `Model.model_json_schema()`.
+  3. Pass the schema as `format=<schema>` on the Ollama request.
+  4. Keep Dev2_005's tolerant parser for defense-in-depth (old-model backcompat, graceful degradation if Ollama ignores the constraint).
+  5. Mock Ollama in tests to assert `format` parameter is sent.
+  6. Smoke test on real `/suggest` → assert response conforms to schema (add to existing Dev2_003-era contract tests or similar).
+- **Benefits:**
+  - Eliminates Finding #24 at source instead of patching symptoms.
+  - Deterministic output shape → cleaner training data.
+  - Enables Finding #26 (bbox surfacing) cleanly — just extend the schema.
+- **Trade-offs:**
+  - Model may refuse or degrade under strict constraints (rare per Ollama blog; measure).
+  - Slightly slower inference (schema-validated sampling).
+  - Couples to Ollama's API; if model runtime changes later, need equivalent structured-output support.
+- **Sequencing:** wait for Dev2_005 device-verification (post-container-rebuild). If defensive fix is sufficient for now, Finding #27 stays in backlog. If it still fails intermittently, Finding #27 becomes the next priority.
+- **File:** `api/app/services/vision.py` (same area as Dev2_005).
+
+## Finding #26 — Surface YOLO-World bounding boxes in `/suggest` + overlay on photo
+
+Raised 2026-04-16 08:47 by Stephen via peer-session ARCHITECT REQUEST.
+
+- **Status:** OPEN — P2 (enhancement; unblocks a significant UX lift).
+- **Observation:** YOLO-World produces bounding boxes server-side during detection, but `/suggest` doesn't surface them in its response. The iOS app shows a flat list of suggestion chips with no visual tie to where each item appears in the photo.
+- **Proposed change (two-repo):**
+  - **Server:** extend `/suggest` response to include `bbox: [x, y, w, h]` (normalized 0–1 or pixel coords — TBD) per suggestion, pulled from the YOLO-World detection pass.
+  - **iOS:** overlay bounding boxes on the pinned photo in `SuggestionReviewView` (the Swift2_005 pinned-image surface). Tapping a chip could highlight its box; tapping a box could highlight its chip.
+- **Why this matters:**
+  - Makes the subject-to-label correspondence legible. User sees "the system thinks THIS region is a can of soup."
+  - Enables multi-item-per-photo disambiguation (related to Stephen's earlier note about batch photos for speed).
+  - Gives training signal — user corrections become richer (which box → which label).
+- **Scope when picked up:**
+  - Server: schema change on `/suggest` response, detection result plumbing (if YOLO boxes aren't already threaded through the suggest pipeline — needs verification).
+  - iOS: Swift `BBox` struct, overlay view over `AuthenticatedAsyncImage`/`Image(uiImage:)`, chip↔box interaction wiring.
+- **Pairs with:** Finding #24 fix (parser tolerance — need to preserve the bbox field through whatever schema the model returns), Swift2_005 (pinned image is the overlay target).
+- **Blockers before picking up:** verify YOLO-World is actually in the `/suggest` pipeline today vs. only `/detect`. Dev2's investigation suggested `/detect` is called rarely; `/suggest` may run qwen-only. If so, this change also requires wiring YOLO detections into `/suggest`.
+
+## Finding #25 — "Advanced Settings" page (backlog, enhancement)
+
+Raised 2026-04-16 08:42 by Stephen via peer-session ARCHITECT REQUEST.
+
+- **Status:** OPEN — P3 (enhancement, not urgent).
+- **Proposal:** Group existing power-user toggles into a dedicated "Advanced Settings" surface (separate from the main Settings page) to keep the primary settings page uncluttered. Candidate toggles:
+  - **Teach for future detection** — per-confirm default (currently defaults on/off on each review; move default to a setting).
+  - **Show/hide Vision confidence scores on chips** — preliminary chip UI decluttering.
+  - **Preliminary chip display** — ability to disable the preliminary pass entirely (useful for users who only trust server suggestions, or for calibration).
+  - **Preliminary top-K count** — number of preliminary chips surfaced from `VNClassifyImageRequest` (currently hardcoded; expose as a slider 1–10 or similar).
+  - **Blur gate threshold** — expose `kBlurVarianceThresholdAt1024` as a slider. Pairs with Finding #4-REDESIGN; useful once the metric is fixed.
+- **Scope when picked up:** new `AdvancedSettingsView.swift` + navigation link from `SettingsView.swift`. UserDefaults-backed, follows the existing `similarityThreshold` pattern. Add tests per established VM pattern.
+- **Pairs with:** Finding #4-REDESIGN (threshold exposure), existing teach toggle (already in review view), existing confidence chip rendering.
+- **Not currently blocking:** no user-reported pain; pure enhancement.
+
+## Finding #24 — `/suggest` silently returns empty when qwen schema varies
+
+Raised 2026-04-16 08:26 by Dev2 investigation (commissioned by ARCHITECT on Stephen's request).
+
+- **Status:** OPEN — P0. Cataloging suggestion pipeline effectively dead when model varies schema.
+- **Symptom:** `/photos/{id}/suggest` returns HTTP 200 with empty suggestions. User sees no server suggestions, only the on-device preliminary Vision labels.
+- **Root cause:** `api/app/services/vision.py:90-97`
+  1. Parser calls `parsed.get("suggestions", [])` assuming the model output is `{"suggestions":[...]}`.
+  2. qwen3-vl:2b is non-deterministic: sometimes returns the expected object, sometimes returns a bare JSON array `[{...}]` inside markdown fences.
+  3. When a bare list arrives, `.get(...)` raises `AttributeError` — caught by a bare `except` at line 96, returns `[]`.
+  4. No logging of the parse failure → silent loss of all suggestion data.
+- **Confirmed healthy (from Dev2 investigation):**
+  - qwen3-vl:2b loaded (2.96GB VRAM), qwen3-vl:4b + llama3.2-vision also loaded.
+  - Model responds in 76–116s (cold), producing valid JSON — just inconsistent wrapper schema.
+  - YOLOE (`yoloe-v8s-seg.pt`) loaded.
+  - Embed model BAAI/bge-small-en-v1.5 OK (384 dims).
+  - 7 `.pt` files on disk in `/app/models`.
+- **Pairs with:** `feedback_prefer_logging_over_silent_swallow.md` — the silent `except` that returns `[]` is exactly the anti-pattern that rule prohibits.
+- **Fix direction (Dev2_005):**
+  1. Accept both shapes: `dict` with `"suggestions"` key, OR bare `list`. Everything else → loud log + `[]`.
+  2. Replace silent `except` with scoped catches (`json.JSONDecodeError`, `AttributeError`) that log payload sample + photo_id at WARN/ERROR.
+  3. RED test: feed the parser a bare list response; assert it's treated as suggestions. RED test: feed malformed payload; assert log is emitted and empty list returned.
+- **Follow-up (separate, not this task):** prompt-engineering / Ollama `format: "json"` or schema-constrained decoding to get deterministic model output.
+- **Also surfaced but orthogonal:** iOS `APIClient` does not call `/detect` (YOLOE) anywhere. Even if qwen fails, YOLOE isn't offering a fallback because the iOS app doesn't request it. Worth revisiting once the parser fix lands — is YOLOE meant to be part of the suggestion fallback chain, or is it exclusively for a separate detection-groups UI?
+
+## Finding #23 — Device rotation closes capture + quality-gate views
+
+Raised 2026-04-16 08:00 by Stephen on device.
+
+- **Status:** OPEN — P1 (disruptive UX regression; loses in-flight capture).
+- **Symptom:** Rotating the device from portrait to landscape during (a) the capture screen (ScannerView) or (b) the quality-gate failure screen (`AnalysisProgressView` in `.qualityFailed` phase) **closes** the view. User loses the captured frame, rejection state, and has to retake.
+- **Likely root causes (hypotheses, need investigation):**
+  1. `ScannerView` wraps UIKit via `UIViewControllerRepresentable`. On size-class change, SwiftUI may rebuild the view instead of reusing it — check whether the wrapping adheres to the prior-session pattern (updateUIViewController vs makeUIViewController reuse).
+  2. The parent navigation (`.fullScreenCover` / `NavigationStack`) may reset on orientation-driven view-tree rebuild.
+  3. Modal presentation style may be size-class-sensitive (.formSheet on iPad behaves differently across orientations).
+- **Scope of fix:** Likely a single parent view change plus a sanity check in ScannerView's wrapper. Investigation should be <30 min; fix likely <1 hour once root cause is pinned.
+- **Pairs with:** the known memory `ac7202e6` about sheet dismissal + re-presentation triggering updateUIViewController.
+- **Investigation entry point:** `Bin Brain/Bin Brain/Views/Cataloging/ScannerView.swift` and its parent (`BinDetailView` / `BinsListView` presentation site).
+- **Not urgent to fix blocking current dev**, but should land before the next device test cycle so cataloging isn't fragile to orientation.
+
+## Finding #22 — "Upload Anyway" button label is inaccurate
+
+Raised 2026-04-16 07:25 by Stephen during Swift2_005 discussion, after tracing the upload timing.
+
+- **Status:** RESOLVED 2026-04-16 by Stephen (manual edit). `AnalysisProgressView.swift:99` now reads `Button("Continue Anyway")`. Doc comments at lines 30 + 64 still reference "Upload Anyway" — cosmetic, leave until next natural edit of the file.
+- **Observation (historical):** The quality-failed screen offered "Upload Anyway" as the bypass action. But upload is only one of several downstream steps after the gate decision: pipeline optimize → on-device preliminary classification → upload → server `/suggest` → review. A user tapping the button is really saying "continue through the remaining pipeline anyway."
 
 ## Ops housekeeping
 
