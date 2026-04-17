@@ -861,4 +861,151 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertEqual(sut.editableSuggestions[0].bbox?.count, 2,
                        "Malformed bbox passes through loadSuggestions without crashing")
     }
+
+    // MARK: - Swift2_009/010: async pinnedImage decode
+    //
+    // These tests assert the contract established by the pre-mortemed plan at
+    // thoughts/shared/plans/2026-04-17-uiimage-decode-to-viewmodel.md:
+    //   • decode runs off the main thread
+    //   • pinnedImage is populated after valid photoData
+    //   • malformed bytes leave pinnedImage nil (no crash)
+    //   • setting photoData = nil clears pinnedImage
+    //   • rapid photoData updates settle to the last value (generation guard)
+    //
+    // Synchronization strategy: `await sut.decodeTask?.value` acts as a hard
+    // barrier — the task body awaits `publish(image:generation:)` on the main
+    // actor, so when the task's value is reached, the main-actor publish has
+    // already run. No fixed sleeps; safe under parallel simulator clones.
+
+    /// Thread-safe box for capturing a Bool across actor boundaries in tests.
+    private final class ThreadBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value: Bool
+        init(_ initial: Bool) { _value = initial }
+        var value: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return _value }
+            set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+        }
+    }
+
+    /// Builds a 2×2 solid-color JPEG with a known RGB marker for pixel-sampling tests.
+    /// JPEG encoding is lossy, so callers compare with channel inequalities, not equality.
+    private func makeSolidColorJPEG(r: UInt8, g: UInt8, b: UInt8) -> Data? {
+        let width = 2, height = 2
+        var pixels: [UInt8] = []
+        pixels.reserveCapacity(width * height * 4)
+        for _ in 0..<(width * height) {
+            pixels.append(r)
+            pixels.append(g)
+            pixels.append(b)
+            pixels.append(255)
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let cg = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: width * 4,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              ) else { return nil }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.95)
+    }
+
+    /// Reads pixel (x, y) from a CGImage by blitting into a 1×1 RGBA8 context.
+    private func readPixel(cgImage: CGImage, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8)? {
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &bytes,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.translateBy(x: CGFloat(-x), y: CGFloat(-y))
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        return (bytes[0], bytes[1], bytes[2], bytes[3])
+    }
+
+    // MARK: Tests
+
+    @MainActor
+    func testPinnedImageIsNilByDefault() {
+        XCTAssertNil(sut.pinnedImage, "pinnedImage must start nil on a fresh SuggestionReviewViewModel")
+    }
+
+    @MainActor
+    func testSettingPhotoDataWithValidJPEGEventuallySetsPinnedImage() async throws {
+        let jpeg = try XCTUnwrap(makeMinimalJPEG(), "failed to synthesize test JPEG")
+        sut.photoData = jpeg
+        await sut.decodeTask?.value
+        let image = try XCTUnwrap(sut.pinnedImage, "pinnedImage must be non-nil after valid JPEG photoData")
+        XCTAssertGreaterThan(image.size.width, 0, "decoded image must have positive width")
+    }
+
+    @MainActor
+    func testSettingPhotoDataWithMalformedDataLeavesPinnedImageNil() async throws {
+        sut.photoData = Data("not-a-jpeg".utf8)
+        await sut.decodeTask?.value
+        XCTAssertNil(sut.pinnedImage, "malformed data must leave pinnedImage nil (no crash, no bogus image)")
+    }
+
+    @MainActor
+    func testSettingPhotoDataToNilClearsPinnedImage() async throws {
+        let jpeg = try XCTUnwrap(makeMinimalJPEG(), "failed to synthesize test JPEG")
+        sut.photoData = jpeg
+        await sut.decodeTask?.value
+        XCTAssertNotNil(sut.pinnedImage, "sanity: pinnedImage should populate before we clear photoData")
+
+        sut.photoData = nil
+        // Nil path is synchronous on the main actor — no await needed.
+        XCTAssertNil(sut.pinnedImage, "setting photoData = nil must clear pinnedImage immediately")
+    }
+
+    @MainActor
+    func testDecodeRunsOffMainThread() async throws {
+        let jpeg = try XCTUnwrap(makeMinimalJPEG(), "failed to synthesize test JPEG")
+        let onMainBox = ThreadBox(true)
+        let vm = SuggestionReviewViewModel(decoder: { data in
+            onMainBox.value = Thread.isMainThread
+            return UIImage(data: data)
+        })
+        vm.photoData = jpeg
+        await vm.decodeTask?.value
+        XCTAssertFalse(onMainBox.value, "decode must run off the main thread")
+    }
+
+    @MainActor
+    func testRapidPhotoDataUpdatesSettleToLastValue() async throws {
+        let red = try XCTUnwrap(makeSolidColorJPEG(r: 255, g: 0, b: 0), "failed to build red fixture")
+        let green = try XCTUnwrap(makeSolidColorJPEG(r: 0, g: 255, b: 0), "failed to build green fixture")
+        let blue = try XCTUnwrap(makeSolidColorJPEG(r: 0, g: 0, b: 255), "failed to build blue fixture")
+
+        sut.photoData = red
+        sut.photoData = green
+        sut.photoData = blue
+
+        // Await the most-recent decode task. Prior tasks were cancelled; this
+        // is the one carrying the "blue" generation.
+        await sut.decodeTask?.value
+
+        let image = try XCTUnwrap(sut.pinnedImage, "pinnedImage should be non-nil after rapid updates")
+        let cg = try XCTUnwrap(image.cgImage, "pinnedImage must have cgImage for pixel sampling")
+        let pixel = try XCTUnwrap(readPixel(cgImage: cg, x: 0, y: 0), "failed to sample pixel")
+
+        // Pixel-level assertion — JPEG quantization perturbs exact values, so
+        // compare channel dominance instead of equality. Blue channel must
+        // dominate R and G.
+        XCTAssertGreaterThan(pixel.b, pixel.r, "blue channel should dominate red in final image")
+        XCTAssertGreaterThan(pixel.b, pixel.g, "blue channel should dominate green in final image")
+    }
 }
