@@ -121,7 +121,7 @@ struct BinDetailView: View {
                             .font(.title2)
                     }
                     .accessibilityLabel("Scan item into this bin")
-                    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.75), trigger: cameraTapCount)
+                    .sensoryFeedback(.success, trigger: cameraTapCount)
                 }
             }
             .task {
