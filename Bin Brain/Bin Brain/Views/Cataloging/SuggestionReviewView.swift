@@ -228,23 +228,23 @@ struct SuggestionReviewView: View {
                 }
 
                 if !isPreliminary {
-                    Text(String(format: "%.0f%%", suggestion.confidence * 100))
+                    Text(String(format: "%.0f%%", s.confidence * 100))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                if suggestion.bbox != nil {
+                if s.bbox != nil {
                     Button {
-                        let newId = selectedSuggestionId == suggestion.id ? nil : suggestion.id
+                        let newId = selectedSuggestionId == s.id ? nil : s.id
                         selectedSuggestionId = newId
                     } label: {
-                        Image(systemName: selectedSuggestionId == suggestion.id
+                        Image(systemName: selectedSuggestionId == s.id
                               ? "viewfinder.circle.fill" : "viewfinder.circle")
-                            .foregroundStyle(selectedSuggestionId == suggestion.id
+                            .foregroundStyle(selectedSuggestionId == s.id
                                              ? Color.yellow : Color.secondary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(selectedSuggestionId == suggestion.id
+                    .accessibilityLabel(selectedSuggestionId == s.id
                                         ? "Deselect bounding box" : "Highlight bounding box")
                 }
             }

@@ -662,7 +662,6 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                        "teachFailureCount should reset at the start of each confirm")
     }
 
-<<<<<<< HEAD
     // MARK: - Test 20: Finding #6 — /items 200 + /associate 200 → success
 
     func testConfirmItemsAndAssociateBothSucceed() async throws {
