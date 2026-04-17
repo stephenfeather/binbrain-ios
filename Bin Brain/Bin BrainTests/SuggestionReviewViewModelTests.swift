@@ -662,6 +662,7 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                        "teachFailureCount should reset at the start of each confirm")
     }
 
+<<<<<<< HEAD
     // MARK: - Test 20: Finding #6 — /items 200 + /associate 200 → success
 
     func testConfirmItemsAndAssociateBothSucceed() async throws {
@@ -800,5 +801,40 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ), let cg = ctx.makeImage() else { return nil }
         return UIImage(cgImage: cg).jpegData(compressionQuality: 0.9)
+    }
+
+    // MARK: - Test 20: bbox passthrough from SuggestionItem → EditableSuggestion
+
+    func testLoadSuggestionsPassesThroughBbox() throws {
+        let json = Data("""
+        [
+            {
+                "item_id": null,
+                "name": "Widget",
+                "category": "Hardware",
+                "confidence": 0.9,
+                "bins": [],
+                "bbox": [0.1, 0.2, 0.8, 0.9]
+            },
+            {
+                "item_id": null,
+                "name": "Bolt",
+                "category": "Fasteners",
+                "confidence": 0.7,
+                "bins": []
+            }
+        ]
+        """.utf8)
+        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+
+        sut.loadSuggestions(suggestions)
+
+        let coords = try XCTUnwrap(sut.editableSuggestions[0].bbox, "bbox with 4 coords should pass through")
+        XCTAssertEqual(coords.count, 4)
+        XCTAssertEqual(coords[0], 0.1, accuracy: 0.001)
+        XCTAssertEqual(coords[1], 0.2, accuracy: 0.001)
+        XCTAssertEqual(coords[2], 0.8, accuracy: 0.001)
+        XCTAssertEqual(coords[3], 0.9, accuracy: 0.001)
+        XCTAssertNil(sut.editableSuggestions[1].bbox, "Absent bbox should decode as nil")
     }
 }

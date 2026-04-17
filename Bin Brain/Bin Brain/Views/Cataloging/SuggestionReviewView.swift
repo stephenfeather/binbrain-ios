@@ -47,6 +47,9 @@ struct SuggestionReviewView: View {
     /// `nil` hides the button (e.g. when already on the largest model).
     var onRetryWithLargerModel: (() -> Void)?
 
+    /// The suggestion currently highlighted in the bbox overlay (`nil` = no highlight).
+    @State private var selectedSuggestionId: Int?
+
     // MARK: - Body
 
     var body: some View {
@@ -78,7 +81,7 @@ struct SuggestionReviewView: View {
         }
     }
 
-    // MARK: - Pinned Photo
+    // MARK: - Pinned Photo with Bbox Overlay
 
     @ViewBuilder
     private var pinnedPhoto: some View {
@@ -87,6 +90,25 @@ struct SuggestionReviewView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: 240)
+                .overlay {
+                    GeometryReader { geo in
+                        Canvas { ctx, size in
+                            for suggestion in viewModel.editableSuggestions {
+                                guard let bbox = suggestion.bbox,
+                                      let rect = bboxRect(bbox, imageSize: uiImage.size, frameSize: size)
+                                else { continue }
+                                let isSelected = selectedSuggestionId == suggestion.id
+                                ctx.stroke(
+                                    Path(rect),
+                                    with: .color(isSelected ? .yellow : Color(white: 1, opacity: 0.55)),
+                                    lineWidth: isSelected ? 3 : 1.5
+                                )
+                            }
+                        }
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .accessibilityHidden(true)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
                 .padding(.top, 8)
@@ -193,9 +215,26 @@ struct SuggestionReviewView: View {
                         .foregroundStyle(isPreliminary ? .secondary : .primary)
                 }
 
-                Text(String(format: "%.0f%%", s.confidence * 100))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if !isPreliminary {
+                    Text(String(format: "%.0f%%", suggestion.confidence * 100))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if suggestion.bbox != nil {
+                    Button {
+                        let newId = selectedSuggestionId == suggestion.id ? nil : suggestion.id
+                        selectedSuggestionId = newId
+                    } label: {
+                        Image(systemName: selectedSuggestionId == suggestion.id
+                              ? "viewfinder.circle.fill" : "viewfinder.circle")
+                            .foregroundStyle(selectedSuggestionId == suggestion.id
+                                             ? Color.yellow : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selectedSuggestionId == suggestion.id
+                                        ? "Deselect bounding box" : "Highlight bounding box")
+                }
             }
 
             if s.isMatched {
@@ -256,5 +295,26 @@ struct SuggestionReviewView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityHint(isPreliminary ? "Preliminary — will be confirmed by the server" : "")
+    }
+
+    // MARK: - Bbox Geometry
+
+    /// Maps normalized `[x1, y1, x2, y2]` bbox coords to display-space `CGRect`.
+    ///
+    /// The image renders with `.aspectRatio(contentMode: .fit)` centered inside
+    /// `frameSize`, so letterbox offsets are applied before scaling.
+    private func bboxRect(_ bbox: [Float], imageSize: CGSize, frameSize: CGSize) -> CGRect? {
+        guard bbox.count == 4, imageSize.width > 0, imageSize.height > 0 else { return nil }
+        let scale = min(frameSize.width / imageSize.width, frameSize.height / imageSize.height)
+        let renderedW = imageSize.width * scale
+        let renderedH = imageSize.height * scale
+        let ox = (frameSize.width - renderedW) / 2
+        let oy = (frameSize.height - renderedH) / 2
+        let x1 = ox + CGFloat(bbox[0]) * renderedW
+        let y1 = oy + CGFloat(bbox[1]) * renderedH
+        let x2 = ox + CGFloat(bbox[2]) * renderedW
+        let y2 = oy + CGFloat(bbox[3]) * renderedH
+        guard x2 > x1, y2 > y1 else { return nil }
+        return CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
     }
 }

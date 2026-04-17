@@ -270,6 +270,8 @@ struct SuggestionMatch: Decodable {
 ///
 /// `itemId` is always `nil` — use `match?.itemId` for DB-matched items.
 /// `bins` is always empty — use `match?.bins` for DB-matched items.
+/// `bbox` holds normalized `[x1, y1, x2, y2]` coordinates (0–1, top-left origin)
+/// when the VLM returns a bounding box; `nil` for models that omit it.
 struct SuggestionItem: Decodable {
     let itemId: Int?
     let name: String
@@ -277,6 +279,7 @@ struct SuggestionItem: Decodable {
     let confidence: Double
     let bins: [String]
     let match: SuggestionMatch?
+    let bbox: [Float]?
 
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
@@ -285,6 +288,7 @@ struct SuggestionItem: Decodable {
         case confidence
         case bins
         case match
+        case bbox
     }
 }
 

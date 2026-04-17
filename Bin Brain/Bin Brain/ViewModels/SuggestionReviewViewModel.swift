@@ -50,6 +50,9 @@ struct EditableSuggestion: Identifiable {
     let visionName: String
     /// The catalogue match details, if a similar item was found (read-only).
     let match: SuggestionMatch?
+    /// Normalized `[x1, y1, x2, y2]` bounding box (0–1, top-left origin) from the VLM.
+    /// `nil` when the model did not return a bounding box for this item.
+    let bbox: [Float]?
     /// Whether the pre-filled name/category came from a catalogue match.
     var isMatched: Bool { match != nil }
     /// Whether the user wants to teach this item name as a YOLO-World class.
@@ -141,6 +144,7 @@ final class SuggestionReviewViewModel {
                 confidence: item.confidence,
                 visionName: item.name,
                 match: item.match,
+                bbox: item.bbox,
                 teach: true
             )
         }
@@ -252,6 +256,7 @@ final class SuggestionReviewViewModel {
                 confidence: Double(cls.confidence),
                 visionName: cls.label,
                 match: nil,
+                bbox: nil,
                 teach: true,
                 origin: .preliminary
             )
@@ -333,6 +338,7 @@ final class SuggestionReviewViewModel {
                     confidence: item.confidence,
                     visionName: item.name,
                     match: item.match,
+                    bbox: item.bbox,
                     teach: true,
                     origin: .server
                 )
