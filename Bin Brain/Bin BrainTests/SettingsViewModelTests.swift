@@ -769,4 +769,167 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertNil(sut.selectingModelId, "selectingModelId should still clear on failure")
         XCTAssertFalse(sut.isSwitchingModel, "isSwitchingModel should clear on failure")
     }
+
+    // MARK: - Swift2_011: refresh server-backed settings after successful testConnection
+
+    /// Canned `ListModelsResponse` body with one model.
+    private var listModelsSuccessJSON: Data {
+        Data("""
+        {"version":"1","active_model":"llava:latest","vision_provider":"ollama","models":[{"name":"llava:latest"}]}
+        """.utf8)
+    }
+
+    /// Canned `ImageSizeResponse` body.
+    private var imageSizeSuccessJSON: Data {
+        Data("""
+        {"version":"1","max_image_px":1920}
+        """.utf8)
+    }
+
+    /// Seeds a stored-and-host-bound key so `testConnection` runs the authed
+    /// probe path, then mounts a mock client whose handler counts calls by
+    /// endpoint. Returns (client, modelsCounter, imageSizeCounter).
+    private func makeRefreshObservingClient(
+        healthReply: @escaping () -> Data
+    ) -> (APIClient, UnsafeCallCounter, UnsafeCallCounter) {
+        let modelsCalls = UnsafeCallCounter()
+        let imageSizeCalls = UnsafeCallCounter()
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path == "/models" {
+                modelsCalls.increment()
+                return (mockResponse(statusCode: 200, for: request), listModelsSuccessJSON)
+            }
+            if path == "/settings/image-size" {
+                imageSizeCalls.increment()
+                return (mockResponse(statusCode: 200, for: request), imageSizeSuccessJSON)
+            }
+            // /health (and any other endpoint) — return the requested reply.
+            return (mockResponse(statusCode: 200, for: request), healthReply())
+        }
+        return (client, modelsCalls, imageSizeCalls)
+    }
+
+    func testSuccessfulConnectionTriggersModelRefresh() async throws {
+        // Seed a stored + host-bound key so the authed probe in testConnection
+        // can land on .connected(role:) — the only state that warrants refresh.
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        let (client, modelsCalls, _) = makeRefreshObservingClient { [self] in healthValidKeyUserJSON }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connected(role: .user),
+                       "precondition: testConnection should have succeeded")
+        XCTAssertEqual(modelsCalls.value, 1,
+                       "Successful testConnection must auto-refresh the models list (/models called once)")
+        XCTAssertEqual(sut.activeModel, "llava:latest",
+                       "activeModel should be populated from the auto-refresh response")
+    }
+
+    func testSuccessfulConnectionTriggersImageSizeRefresh() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        let (client, _, imageSizeCalls) = makeRefreshObservingClient { [self] in healthValidKeyUserJSON }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connected(role: .user),
+                       "precondition: testConnection should have succeeded")
+        XCTAssertEqual(imageSizeCalls.value, 1,
+                       "Successful testConnection must auto-refresh the image size (/settings/image-size called once)")
+        XCTAssertEqual(sut.maxImagePx, 1920,
+                       "maxImagePx should be populated from the auto-refresh response")
+    }
+
+    func testInvalidKeyConnectionDoesNotTriggerRefresh() async throws {
+        try testKeychain.writeString("abc-key", forKey: KeychainHelper.apiKeyAccount)
+        try testKeychain.writeString("http://10.1.1.205:8000", forKey: KeychainHelper.boundHostAccount)
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        let (client, modelsCalls, imageSizeCalls) = makeRefreshObservingClient { [self] in healthInvalidKeyJSON }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedKeyInvalid,
+                       "precondition: auth_ok=false should map to .connectedKeyInvalid")
+        XCTAssertEqual(modelsCalls.value, 0,
+                       ".connectedKeyInvalid must NOT trigger /models refresh (fetch would just 401)")
+        XCTAssertEqual(imageSizeCalls.value, 0,
+                       ".connectedKeyInvalid must NOT trigger /settings/image-size refresh")
+    }
+
+    func testUnreachableConnectionDoesNotTriggerRefresh() async {
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        let modelsCalls = UnsafeCallCounter()
+        let imageSizeCalls = UnsafeCallCounter()
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path == "/models" {
+                modelsCalls.increment()
+                return (mockResponse(statusCode: 200, for: request), listModelsSuccessJSON)
+            }
+            if path == "/settings/image-size" {
+                imageSizeCalls.increment()
+                return (mockResponse(statusCode: 200, for: request), imageSizeSuccessJSON)
+            }
+            // /health returns 500 → testConnection maps to .unreachable
+            return (mockResponse(statusCode: 500, for: request), healthErrorJSON)
+        }
+
+        await sut.testConnection(apiClient: client)
+
+        guard case .unreachable = sut.connectionStatus else {
+            XCTFail("precondition: testConnection with 500 /health should land in .unreachable; got \(sut.connectionStatus)")
+            return
+        }
+        XCTAssertEqual(modelsCalls.value, 0,
+                       ".unreachable must NOT trigger /models refresh")
+        XCTAssertEqual(imageSizeCalls.value, 0,
+                       ".unreachable must NOT trigger /settings/image-size refresh")
+    }
+
+    func testConnectedNoKeyDoesNotTriggerRefresh() async {
+        // No key stored → legacy health response (no auth_ok) → .connectedNoKey.
+        // Without a key, a server-backed fetch would 401; the prompt explicitly
+        // excludes .connectedNoKey from the refresh trigger.
+        sut.serverURL = "http://10.1.1.205:8000"
+
+        let (client, modelsCalls, imageSizeCalls) = makeRefreshObservingClient { [self] in healthSuccessJSON }
+
+        await sut.testConnection(apiClient: client)
+
+        if case .connectedNoKey = sut.connectionStatus {
+            // expected
+        } else {
+            XCTFail("precondition: empty keychain + legacy health should be .connectedNoKey; got \(sut.connectionStatus)")
+        }
+        XCTAssertEqual(modelsCalls.value, 0,
+                       ".connectedNoKey must NOT trigger /models refresh")
+        XCTAssertEqual(imageSizeCalls.value, 0,
+                       ".connectedNoKey must NOT trigger /settings/image-size refresh")
+    }
+
+    func testConnectedKeyNotBoundToHostDoesNotTriggerRefresh() async throws {
+        // Key stored but bound to a different host → .connectedKeyNotBoundToHost.
+        // Fetching would send a key that's not valid for the current host → 401.
+        try testKeychain.writeAPIKeyBinding(key: "k", boundHost: "http://10.1.1.205:8000")
+        sut.serverURL = "http://10.1.1.207:8000"
+
+        let (client, modelsCalls, imageSizeCalls) = makeRefreshObservingClient { [self] in healthNoKeyJSON }
+
+        await sut.testConnection(apiClient: client)
+
+        XCTAssertEqual(sut.connectionStatus, .connectedKeyNotBoundToHost(canRebind: true),
+                       "precondition: wrong-host key should map to .connectedKeyNotBoundToHost")
+        XCTAssertEqual(modelsCalls.value, 0,
+                       ".connectedKeyNotBoundToHost must NOT trigger /models refresh")
+        XCTAssertEqual(imageSizeCalls.value, 0,
+                       ".connectedKeyNotBoundToHost must NOT trigger /settings/image-size refresh")
+    }
 }
