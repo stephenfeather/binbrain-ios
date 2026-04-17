@@ -79,6 +79,7 @@ struct BinDetailView: View {
     // MARK: - Body
 
     var body: some View {
+        let _ = print("[BIND] body binId=\(binId)")
         content
             .navigationTitle(binId)
             .toolbar {
@@ -322,7 +323,8 @@ struct BinDetailView: View {
     // MARK: - Review View
 
     private var reviewView: some View {
-        SuggestionReviewView(
+        let _ = print("[BIND] reviewView binId=\(binId)")
+        return SuggestionReviewView(
             viewModel: reviewViewModel,
             binId: binId,
             apiClient: apiClient,
