@@ -181,6 +181,7 @@ private extension EditableSuggestion {
             confidence: confidence,
             visionName: name,
             match: nil,
+            bbox: nil,
             teach: true,
             origin: .preliminary
         )

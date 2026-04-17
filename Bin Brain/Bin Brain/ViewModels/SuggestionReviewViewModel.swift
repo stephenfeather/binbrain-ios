@@ -50,6 +50,9 @@ struct EditableSuggestion: Identifiable {
     let visionName: String
     /// The catalogue match details, if a similar item was found (read-only).
     let match: SuggestionMatch?
+    /// Normalized `[x1, y1, x2, y2]` bounding box (0–1, top-left origin) from the VLM.
+    /// `nil` when the model did not return a bounding box for this item.
+    let bbox: [Float]?
     /// Whether the pre-filled name/category came from a catalogue match.
     var isMatched: Bool { match != nil }
     /// Whether the user wants to teach this item name as a YOLO-World class.
@@ -87,11 +90,12 @@ final class SuggestionReviewViewModel {
 
     /// Whether the Confirm button should be enabled (Finding #16).
     ///
-    /// `confirm(...)` with zero included suggestions flips `isConfirming`
-    /// true → false within a single synchronous tick, which SwiftUI coalesces
-    /// — the parent view's `onChange(of:isConfirming)` never fires and the
-    /// sheet strands the user. Gating the button on this prevents the
-    /// dead-end at its source.
+    /// `confirm(...)` with zero included suggestions flips `isConfirming` true → false in a
+    /// single synchronous tick, which SwiftUI coalesces — the parent's `onChange(of:isConfirming)`
+    /// never fires and the sheet strands the user. Gating the button here prevents that dead-end.
+    ///
+    /// - Complexity: O(n) where n = `editableSuggestions.count`. Evaluated on each SwiftUI
+    ///   update; n is bounded by the number of VLM suggestions (typically ≤ 10).
     var canConfirm: Bool {
         editableSuggestions.contains { $0.included }
     }
@@ -141,6 +145,7 @@ final class SuggestionReviewViewModel {
                 confidence: item.confidence,
                 visionName: item.name,
                 match: item.match,
+                bbox: item.bbox,
                 teach: true
             )
         }
@@ -252,6 +257,7 @@ final class SuggestionReviewViewModel {
                 confidence: Double(cls.confidence),
                 visionName: cls.label,
                 match: nil,
+                bbox: nil,
                 teach: true,
                 origin: .preliminary
             )
@@ -333,6 +339,7 @@ final class SuggestionReviewViewModel {
                     confidence: item.confidence,
                     visionName: item.name,
                     match: item.match,
+                    bbox: item.bbox,
                     teach: true,
                     origin: .server
                 )
