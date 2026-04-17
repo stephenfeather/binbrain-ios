@@ -7,6 +7,7 @@
 import Foundation
 import AVFoundation
 import OSLog
+import UIKit
 import VisionKit
 import Observation
 
@@ -66,6 +67,24 @@ final class ScannerViewModel {
     /// inject query parameters, or carry non-ASCII content. See issue #15 / F-07.
     private static let binIdPattern = #"^[A-Za-z0-9_-]{1,32}$"#
 
+    /// Invoked once per successful, validated QR scan to give the user a
+    /// tactile confirmation. Init-injected so tests can observe invocation
+    /// without a real `UINotificationFeedbackGenerator`.
+    private let hapticFeedback: () -> Void
+
+    // MARK: - Init
+
+    /// Creates a ScannerViewModel.
+    ///
+    /// - Parameter hapticFeedback: Closure fired on every successful scan
+    ///   (after payload validation). Defaults to a `.success` notification
+    ///   haptic. Tests pass a counting closure.
+    init(hapticFeedback: @escaping () -> Void = {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }) {
+        self.hapticFeedback = hapticFeedback
+    }
+
     // MARK: - Actions
 
     /// Handles a decoded QR code from the scanner.
@@ -87,6 +106,7 @@ final class ScannerViewModel {
         scanError = nil
         scannedBinId = trimmed
         phase = .awaitingPhoto
+        hapticFeedback()
     }
 
     /// Initiates photo capture when the shutter button is tapped.
