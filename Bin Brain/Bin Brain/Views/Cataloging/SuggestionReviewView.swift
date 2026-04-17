@@ -13,6 +13,11 @@ import UIKit
 ///
 /// Pure function — no side effects. Exposed at file scope so tests can drive
 /// it without constructing a view (matching the `formatMetricValue` pattern).
+///
+/// TODO(post-Swift2_010): remove `shouldShowPhoto` — no production callers
+/// after decode moved to `SuggestionReviewViewModel.pinnedImage`. A dedicated
+/// cleanup task should drop this helper AND its tests at
+/// `SuggestionReviewViewModelTests.swift` (`testShouldShowPhoto*`).
 func shouldShowPhoto(_ data: Data?) -> Bool {
     guard let data else { return false }
     return UIImage(data: data) != nil
@@ -50,9 +55,6 @@ struct SuggestionReviewView: View {
     /// The suggestion currently highlighted in the bbox overlay (`nil` = no highlight).
     @State private var selectedSuggestionId: Int?
 
-    /// Decoded image cached to avoid re-running `UIImage(data:)` on every body evaluation.
-    @State private var cachedPhoto: UIImage?
-
     // MARK: - Body
 
     var body: some View {
@@ -73,12 +75,6 @@ struct SuggestionReviewView: View {
             }
         }
         .navigationTitle("Review Items")
-        .onAppear {
-            cachedPhoto = viewModel.photoData.flatMap { UIImage(data: $0) }
-        }
-        .onChange(of: viewModel.photoData) { _, data in
-            cachedPhoto = data.flatMap { UIImage(data: $0) }
-        }
         .onChange(of: viewModel.editableSuggestions.map(\.id)) { _, _ in
             selectedSuggestionId = nil
         }
@@ -97,7 +93,7 @@ struct SuggestionReviewView: View {
 
     @ViewBuilder
     private var pinnedPhoto: some View {
-        if let uiImage = cachedPhoto {
+        if let uiImage = viewModel.pinnedImage {
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
