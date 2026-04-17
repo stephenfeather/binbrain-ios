@@ -91,6 +91,15 @@ struct SuggestionReviewView: View {
                 onDone()
             }
         }
+        .onChange(of: viewModel.confirmationErrorMessage) { _, newValue in
+            // Surface confirm-path failures via the existing toast channel.
+            // Swift2_013: empty binId, network failure, 401/429/4xx/5xx, and
+            // partial-failure summaries all flow through here. Clearing after
+            // show prevents a stale message from re-firing on re-render.
+            guard let message = newValue else { return }
+            toast.show(message, duration: 4.0)
+            viewModel.confirmationErrorMessage = nil
+        }
     }
 
     // MARK: - Pinned Photo with Bbox Overlay

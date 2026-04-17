@@ -117,6 +117,14 @@ final class SuggestionReviewViewModel {
     /// `confirm` invocation so views can surface a toast when > 0.
     private(set) var teachFailureCount: Int = 0
 
+    /// User-facing message describing the most recent `confirm` failure, or
+    /// `nil` when the last call succeeded / no call has been made. The view
+    /// observes this with `onChange` and shows it via the toast environment,
+    /// then clears it back to `nil`. Set by the empty-binId guard, the
+    /// upsert/associate catch path (categorized by error type), and the
+    /// partial-failure summary. Never silently swallowed. (Swift2_013)
+    var confirmationErrorMessage: String?
+
     /// Snapshot of the on-device top-K classifications captured at
     /// `loadPreliminaryClassifications(_:topK:)` time. Used by the `#if DEBUG`
     /// logger in `confirm(...)` to emit (top-K vs. confirmed label) pairs.
@@ -218,11 +226,14 @@ final class SuggestionReviewViewModel {
     func confirm(binId: String, apiClient: APIClient) async {
         guard !binId.isEmpty else {
             logger.error("confirm called with empty binId — aborting to prevent server 400")
+            confirmationErrorMessage =
+                "Couldn't save — missing bin reference. Tap Back and rescan the bin QR."
             return
         }
         isConfirming = true
         failedIndices = []
         teachFailureCount = 0
+        confirmationErrorMessage = nil
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
         logger.debug("confirm: \(self.editableSuggestions.count, privacy: .public) total, \(includedIndices.count, privacy: .public) included")
         for idx in includedIndices {
@@ -247,7 +258,18 @@ final class SuggestionReviewViewModel {
                     quantity: quantity
                 )
             } catch {
-                failedIndices = includedIndices.filter { $0 >= idx }
+                let remaining = includedIndices.filter { $0 >= idx }
+                failedIndices = remaining
+                let total = includedIndices.count
+                let failedCount = remaining.count
+                let savedCount = total - failedCount
+                if savedCount > 0 {
+                    confirmationErrorMessage =
+                        "\(failedCount) of \(total) items failed. Tap Retry."
+                } else {
+                    confirmationErrorMessage = Self.userFacingMessage(for: error)
+                }
+                logger.error("confirm aborted at idx \(idx, privacy: .public): \(error.localizedDescription, privacy: .private)")
                 isConfirming = false
                 return
             }
@@ -481,5 +503,46 @@ final class SuggestionReviewViewModel {
     private func publish(image: UIImage?, generation: UInt64) {
         guard decodeGeneration == generation else { return }
         pinnedImage = image
+    }
+
+    // MARK: - Error Classification (Swift2_013)
+
+    /// Translates a `confirm`-path error into a specific, actionable user-facing
+    /// message. Caller is responsible for the partial-failure case — this
+    /// classifier is only invoked when nothing was saved yet.
+    ///
+    /// Order matters: `URLError` must be checked before `APIClientError` to
+    /// guarantee "connection" wording for transport failures (the
+    /// `APIClientError` path only covers HTTP-layer failures where the server
+    /// was reached).
+    static func userFacingMessage(for error: Error) -> String {
+        if error is URLError {
+            return "Couldn't reach the server. Check your connection and try again."
+        }
+        if let clientError = error as? APIClientError {
+            switch clientError {
+            case .missingAPIKey:
+                return "Your API key is invalid or expired. Open Settings to update it."
+            case .invalidURL:
+                return "Server URL is invalid. Open Settings to fix it."
+            case .unexpectedStatusCode(let code):
+                switch code {
+                case 401, 403:
+                    return "Your API key is invalid or expired. Open Settings to update it."
+                case 429:
+                    return "Server is busy — wait a moment and try again."
+                case 400...499:
+                    return "Couldn't save this item. (Server \(code))"
+                case 500...599:
+                    return "Server error while saving. Please retry."
+                default:
+                    return "Server error while saving. Please retry."
+                }
+            }
+        }
+        if let apiError = error as? APIError {
+            return "Couldn't save this item. (Server: \(apiError.error.message))"
+        }
+        return "Server error while saving. Please retry."
     }
 }
