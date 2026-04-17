@@ -1067,4 +1067,140 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertGreaterThan(pixel.b, pixel.r, "blue channel should dominate red in final image")
         XCTAssertGreaterThan(pixel.b, pixel.g, "blue channel should dominate green in final image")
     }
+
+    // MARK: - Swift2_013: confirmationErrorMessage for confirm() failures
+
+    /// Empty binId must set a user-visible message that mentions the bin.
+    /// The guard in `confirm(binId:apiClient:)` already early-returns; it must
+    /// ALSO publish a `confirmationErrorMessage` so the view can toast it.
+    func testConfirmWithEmptyBinIdSetsConfirmationErrorMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "", apiClient: client)
+
+        let message = try XCTUnwrap(sut.confirmationErrorMessage,
+                                    "confirm with empty binId must publish a user-facing message")
+        XCTAssertTrue(message.lowercased().contains("bin"),
+                      "message should mention the bin — got: \(message)")
+    }
+
+    /// Network-layer failure (e.g. offline) must set a connection-oriented
+    /// message, not be swallowed into bare `failedIndices`.
+    func testConfirmWithNetworkFailureSetsReadableErrorMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        let message = try XCTUnwrap(sut.confirmationErrorMessage,
+                                    "network failure must publish a user-facing message")
+        let lower = message.lowercased()
+        XCTAssertTrue(lower.contains("connection") || lower.contains("reach"),
+                      "message should mention connection/reachability — got: \(message)")
+    }
+
+    /// HTTP 401 with no APIError body falls through to
+    /// `APIClientError.unexpectedStatusCode(401)` — VM must translate that to
+    /// an auth-specific message pointing at Settings.
+    func testConfirmWith401SetsAuthErrorMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 401, for: request), Data())
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        let message = try XCTUnwrap(sut.confirmationErrorMessage,
+                                    "401 must publish a user-facing message")
+        XCTAssertTrue(message.contains("API key") || message.contains("Settings"),
+                      "401 message should mention API key or Settings — got: \(message)")
+    }
+
+    /// HTTP 500 with no APIError body falls through to
+    /// `APIClientError.unexpectedStatusCode(500)` — VM must translate that to
+    /// a server-error message.
+    func testConfirmWithServer500SetsGenericServerErrorMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 500, for: request), Data())
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        let message = try XCTUnwrap(sut.confirmationErrorMessage,
+                                    "500 must publish a user-facing message")
+        XCTAssertTrue(message.lowercased().contains("server"),
+                      "500 message should mention the server — got: \(message)")
+    }
+
+    /// First item succeeds, second fails → partial failure. Message must
+    /// count items and use the word "failed" so the user knows what to retry.
+    func testConfirmWithPartialFailureSetsWarnMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        XCTAssertEqual(sut.editableSuggestions.count, 2, "fixture has two suggestions")
+
+        var upsertAttempt = 0
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            // /items upsert
+            upsertAttempt += 1
+            if upsertAttempt == 1 {
+                return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+            }
+            return (mockResponse(statusCode: 500, for: request), Data())
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertFalse(sut.failedIndices.isEmpty, "partial failure should leave failedIndices non-empty")
+        let message = try XCTUnwrap(sut.confirmationErrorMessage,
+                                    "partial failure must publish a user-facing message")
+        let lower = message.lowercased()
+        XCTAssertTrue(lower.contains("failed"), "message should contain 'failed' — got: \(message)")
+        XCTAssertTrue(message.contains("1"), "message should include failed count (1) — got: \(message)")
+        XCTAssertTrue(message.contains("2"), "message should include total count (2) — got: \(message)")
+    }
+
+    /// Happy path must not leave a stale error message behind.
+    func testConfirmSuccessDoesNotSetErrorMessage() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertNil(sut.confirmationErrorMessage,
+                     "successful confirm must not leave a stale error message")
+        XCTAssertTrue(sut.failedIndices.isEmpty, "no failures expected on happy path")
+    }
 }
