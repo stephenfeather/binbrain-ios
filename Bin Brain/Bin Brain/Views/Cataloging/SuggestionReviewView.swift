@@ -129,8 +129,8 @@ struct SuggestionReviewView: View {
         VStack {
             pinnedPhoto
             List {
-                ForEach(viewModel.editableSuggestions.indices, id: \.self) { idx in
-                    suggestionRow(at: idx)
+                ForEach($viewModel.editableSuggestions) { $suggestion in
+                    suggestionRow(for: $suggestion)
                 }
             }
 
@@ -176,9 +176,9 @@ struct SuggestionReviewView: View {
 
     // MARK: - Suggestion Row
 
-    private func suggestionRow(at idx: Int) -> some View {
-        let suggestion = viewModel.editableSuggestions[idx]
-        let isPreliminary = suggestion.origin == .preliminary
+    private func suggestionRow(for suggestion: Binding<EditableSuggestion>) -> some View {
+        let s = suggestion.wrappedValue
+        let isPreliminary = s.origin == .preliminary
         return VStack(alignment: .leading, spacing: 8) {
             if isPreliminary {
                 Text("Preliminary — confirming with AI")
@@ -187,32 +187,30 @@ struct SuggestionReviewView: View {
                     .accessibilityLabel("Preliminary suggestion, confirming with AI")
             }
             HStack {
-                Toggle(
-                    isOn: $viewModel.editableSuggestions[idx].included
-                ) {
-                    Text(suggestion.editedName)
+                Toggle(isOn: suggestion.included) {
+                    Text(s.editedName)
                         .font(.headline)
                         .foregroundStyle(isPreliminary ? .secondary : .primary)
                 }
 
-                Text(String(format: "%.0f%%", suggestion.confidence * 100))
+                Text(String(format: "%.0f%%", s.confidence * 100))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if suggestion.isMatched {
+            if s.isMatched {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
                         .font(.caption2)
                         .accessibilityHidden(true)
                     Text("Matched to catalogue")
                         .font(.caption)
-                    if suggestion.visionName != suggestion.editedName {
-                        Text("(vision: \(suggestion.visionName))")
+                    if s.visionName != s.editedName {
+                        Text("(vision: \(s.visionName))")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
-                    if let score = suggestion.match?.score {
+                    if let score = s.match?.score {
                         Spacer()
                         Text(String(format: "%.0f%% similar", score * 100))
                             .font(.caption)
@@ -221,26 +219,26 @@ struct SuggestionReviewView: View {
                 .foregroundStyle(.secondary)
             }
 
-            TextField("Name", text: $viewModel.editableSuggestions[idx].editedName)
+            TextField("Name", text: suggestion.editedName)
                 .textFieldStyle(.roundedBorder)
-                .onChange(of: viewModel.editableSuggestions[idx].editedName) { _, _ in
-                    viewModel.markEditedIfPreliminary(index: idx)
+                .onChange(of: s.editedName) { _, _ in
+                    viewModel.markEditedIfPreliminary(id: s.id)
                 }
 
-            TextField("Category", text: $viewModel.editableSuggestions[idx].editedCategory)
+            TextField("Category", text: suggestion.editedCategory)
                 .textFieldStyle(.roundedBorder)
-                .onChange(of: viewModel.editableSuggestions[idx].editedCategory) { _, _ in
-                    viewModel.markEditedIfPreliminary(index: idx)
+                .onChange(of: s.editedCategory) { _, _ in
+                    viewModel.markEditedIfPreliminary(id: s.id)
                 }
 
-            TextField("Quantity", text: $viewModel.editableSuggestions[idx].editedQuantity)
+            TextField("Quantity", text: suggestion.editedQuantity)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.decimalPad)
-                .onChange(of: viewModel.editableSuggestions[idx].editedQuantity) { _, _ in
-                    viewModel.markEditedIfPreliminary(index: idx)
+                .onChange(of: s.editedQuantity) { _, _ in
+                    viewModel.markEditedIfPreliminary(id: s.id)
                 }
 
-            Toggle(isOn: $viewModel.editableSuggestions[idx].teach) {
+            Toggle(isOn: suggestion.teach) {
                 Label("Teach for future detection", systemImage: "brain")
                     .font(.caption)
                     .foregroundStyle(.secondary)

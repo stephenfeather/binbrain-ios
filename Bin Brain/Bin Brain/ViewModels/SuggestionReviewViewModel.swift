@@ -280,6 +280,12 @@ final class SuggestionReviewViewModel {
         editableSuggestions[index].origin = .edited
     }
 
+    func markEditedIfPreliminary(id: Int) {
+        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }),
+              editableSuggestions[idx].origin == .preliminary else { return }
+        editableSuggestions[idx].origin = .edited
+    }
+
     /// Reconciles the current preliminary chips with the server's suggestions.
     ///
     /// Behavior (from the merge-UX spike §2a):
