@@ -167,9 +167,14 @@ final class SuggestionReviewViewModel {
     /// fire guard requires a non-nil value.
     private(set) var visionModel: String?
 
-    /// Prompt revision identifier. Today the server does not emit
-    /// `prompt_version` on `/suggest`; this stays nil until a matching server
-    /// follow-up (flagged from Swift2_014). Nil is a valid server-side value.
+    /// Prompt revision identifier echoed by the server on `/suggest`
+    /// (binbrain PRs #22/#23). Threaded in via
+    /// `loadSuggestions(...,promptVersion:)` or
+    /// `applyServerSuggestions(...,promptVersion:)` and emitted on the
+    /// outcomes POST so the training signal records the exact prompt
+    /// under which the user's decisions were made. Nil is a valid
+    /// server-side value (pre-bump cache hit, or an older server build).
+    /// iOS must forward nil unchanged — never synthesize a client value.
     private(set) var promptVersion: String?
 
     /// Wall-clock time the first non-empty server suggestion list landed.

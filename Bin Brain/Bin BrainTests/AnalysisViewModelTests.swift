@@ -132,6 +132,24 @@ final class AnalysisViewModelTests: XCTestCase {
         """.utf8)
     }
 
+    /// Swift2_015 — suggest response that echoes the server's live
+    /// `prompt_version = "v2"` (PR #22). Used to verify the VM captures
+    /// the value into `lastPromptVersion` for downstream outcomes telemetry.
+    private var suggestSuccessJSONWithPromptVersion: Data {
+        Data("""
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "test-model",
+            "prompt_version": "v2",
+            "vision_elapsed_ms": 1200,
+            "suggestions": [
+                {"item_id": null, "name": "Widget", "category": "Hardware", "confidence": 0.92, "bins": ["BIN-0001"]}
+            ]
+        }
+        """.utf8)
+    }
+
     private var serverErrorJSON: Data {
         Data("""
         {"version": "1", "error": {"code": "server_error", "message": "Internal server error"}}
@@ -242,6 +260,64 @@ final class AnalysisViewModelTests: XCTestCase {
 
         XCTAssertNil(sut.lastVisionModel,
                      "reset() must clear lastVisionModel — stale model IDs would mislabel future outcomes telemetry")
+    }
+
+    // MARK: - Swift2_015 — lastPromptVersion capture & reset
+
+    /// The `/suggest` endpoint echoes `prompt_version` (binbrain PR #22).
+    /// AnalysisViewModel must capture it on successful completion so parent
+    /// views can thread it into `SuggestionReviewViewModel` for outcomes
+    /// telemetry. Without this capture, outcomes POST bodies would forever
+    /// carry `prompt_version: null` (the Phase 2a hack Swift2_015 removes).
+    func testRunCapturesLastPromptVersionFromSuggest() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSONWithPromptVersion)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.lastPromptVersion, "v2",
+                       "lastPromptVersion must be populated from /suggest response.prompt_version")
+    }
+
+    /// When the server omits `prompt_version` (older build or genuine
+    /// absence), iOS must forward nil — never synthesize a client-side value.
+    func testRunLeavesLastPromptVersionNilWhenSuggestOmitsField() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+
+        XCTAssertNil(sut.lastPromptVersion,
+                     "lastPromptVersion must stay nil when the server did not echo prompt_version")
+    }
+
+    /// Same leak risk as `lastVisionModel` — a stale prompt_version carried
+    /// across cataloging flows would mislabel which prompt produced the
+    /// user's decisions. `reset()` must clear it.
+    func testResetClearsLastPromptVersion() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSONWithPromptVersion)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+        XCTAssertEqual(sut.lastPromptVersion, "v2",
+                       "precondition — lastPromptVersion populated after a successful run")
+
+        sut.reset()
+
+        XCTAssertNil(sut.lastPromptVersion,
+                     "reset() must clear lastPromptVersion — stale prompt IDs would mislabel future outcomes telemetry")
     }
 
     // MARK: - Test 6: suggestions are cleared after reset

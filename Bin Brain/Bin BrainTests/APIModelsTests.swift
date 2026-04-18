@@ -343,6 +343,59 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(response.suggestions[2].bins, ["B-10", "B-42"])
     }
 
+    // MARK: - Swift2_015 — PhotoSuggestResponse.promptVersion decoding
+
+    /// Server PR #22 exposes `prompt_version` on `/suggest` responses.
+    /// A fresh call echoes the live `PROMPT_VERSION` constant (e.g. "v2").
+    /// The iOS decoder must capture it so outcomes telemetry can report the
+    /// exact prompt under which the user's decisions were made.
+    func testPhotoSuggestResponseDecodesPromptVersionWhenPresent() throws {
+        let json = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": "v2",
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let response = try decode(PhotoSuggestResponse.self, from: json)
+        XCTAssertEqual(response.promptVersion, "v2",
+                       "prompt_version echoed by /suggest must be decoded into PhotoSuggestResponse.promptVersion")
+    }
+
+    /// Pre-bump cache hits echo a historically stamped value that may be
+    /// `null`. Older server builds (pre-PR #22) omit the field entirely.
+    /// Both shapes must decode to `nil` — iOS must never synthesize a value.
+    func testPhotoSuggestResponseDecodesPromptVersionAsNilWhenAbsentOrNull() throws {
+        let explicitNullJSON = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": null,
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let missingKeyJSON = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let fromNull = try decode(PhotoSuggestResponse.self, from: explicitNullJSON)
+        XCTAssertNil(fromNull.promptVersion,
+                     "explicit null prompt_version must decode as nil — never a client-synthesized default")
+        let fromMissing = try decode(PhotoSuggestResponse.self, from: missingKeyJSON)
+        XCTAssertNil(fromMissing.promptVersion,
+                     "absent prompt_version must decode as nil (backward compat with pre-PR#22 server builds)")
+    }
+
     // MARK: - Test 9: Invalid JSON throws on missing required field
 
     func testDecodingBinSummaryThrowsOnMissingRequiredField() {

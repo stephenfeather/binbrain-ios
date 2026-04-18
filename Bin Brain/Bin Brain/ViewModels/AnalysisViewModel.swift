@@ -69,6 +69,16 @@ final class AnalysisViewModel {
     /// decisions being reported. `nil` until a suggest response lands.
     private(set) var lastVisionModel: String?
 
+    /// The prompt revision identifier echoed by the most recent
+    /// `/suggest` response (`PhotoSuggestResponse.promptVersion`). Threaded
+    /// into `SuggestionReviewViewModel` so outcomes telemetry records the
+    /// exact prompt version under which the user's decisions were made.
+    /// `nil` until a suggest response lands OR when the server omitted the
+    /// field (cache hit from before prompt_version was exposed, or any
+    /// future case where the value is genuinely absent). iOS must forward
+    /// nil unchanged — never synthesize a client-side value.
+    private(set) var lastPromptVersion: String?
+
     /// The last quality gate failure, if any. Set when `phase == .qualityFailed`.
     private(set) var lastQualityFailure: QualityGateFailure?
 
@@ -246,6 +256,7 @@ final class AnalysisViewModel {
             let suggestResponse = try await suggestTask.value
             suggestions = suggestResponse.suggestions
             lastVisionModel = suggestResponse.model
+            lastPromptVersion = suggestResponse.promptVersion
             phase = .complete
 
             // Clean up the pending analysis entry on success.
@@ -349,6 +360,7 @@ final class AnalysisViewModel {
             let suggestResponse = try await apiClient.suggest(photoId: photoId)
             suggestions = suggestResponse.suggestions
             lastVisionModel = suggestResponse.model
+            lastPromptVersion = suggestResponse.promptVersion
             phase = .complete
         } catch {
             phase = .failed(error.localizedDescription)
@@ -390,6 +402,7 @@ final class AnalysisViewModel {
             let response = try await apiClient.suggest(photoId: photoId)
             suggestions = response.suggestions
             lastVisionModel = response.model
+            lastPromptVersion = response.promptVersion
             phase = .complete
         } catch {
             phase = .failed(error.localizedDescription)
@@ -403,6 +416,7 @@ final class AnalysisViewModel {
         preliminaryClassifications = []
         lastPhotoId = nil
         lastVisionModel = nil
+        lastPromptVersion = nil
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastUploadedPhotoData = nil

@@ -306,10 +306,17 @@ struct SuggestionItem: Decodable {
 }
 
 /// The response returned by `GET /photos/{photo_id}/suggest`.
+///
+/// `promptVersion` mirrors the server's `prompt_version` field introduced by
+/// binbrain PRs #22/#23 — the live constant on fresh calls, or the historical
+/// stamp on cache hits (may differ from the live value after a prompt bump).
+/// Nil when the server did not echo the field (older server build or a future
+/// case where the value is genuinely absent).
 struct PhotoSuggestResponse: Decodable {
     let version: String
     let photoId: Int
     let model: String
+    let promptVersion: String?
     let visionElapsedMs: Int
     let suggestions: [SuggestionItem]
 
@@ -317,6 +324,7 @@ struct PhotoSuggestResponse: Decodable {
         case version
         case photoId = "photo_id"
         case model
+        case promptVersion = "prompt_version"
         case visionElapsedMs = "vision_elapsed_ms"
         case suggestions
     }
