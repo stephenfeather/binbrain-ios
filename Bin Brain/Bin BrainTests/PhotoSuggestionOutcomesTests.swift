@@ -22,8 +22,8 @@ import UIKit
 final class OutcomesMockURLProtocol: URLProtocol {
     static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override static func canInit(with request: URLRequest) -> Bool { true }
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         guard let handler = OutcomesMockURLProtocol.requestHandler else {
@@ -459,6 +459,31 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
                              "loadSuggestions must RESET shownAt on a fresh session — stale stamps corrupt training telemetry")
     }
 
+    /// Defense-in-depth: a caller that omits photoId/visionModel on a
+    /// subsequent `loadSuggestions` (e.g. an ad-hoc test path or a future
+    /// refactor) must not inherit the prior session's values. The
+    /// `resetOutcomesContext` call at the top of loadSuggestions zeros
+    /// everything out; `applyOutcomesContext` then only re-sets params the
+    /// new caller explicitly passed. (CodeRabbit PR#19 defensive follow-up.)
+    func testLoadSuggestionsWithoutContextParamsClearsPriorSessionValues() throws {
+        let suggestions = try makeSuggestionsJSON()
+
+        // Session 1: full context.
+        sut.loadSuggestions(suggestions, photoId: 99, visionModel: "vlm-a", promptVersion: "v2")
+        XCTAssertEqual(sut.photoId, 99)
+        XCTAssertEqual(sut.visionModel, "vlm-a")
+        XCTAssertEqual(sut.promptVersion, "v2")
+
+        // Session 2: caller omits context (photoId/visionModel/promptVersion default to nil).
+        sut.loadSuggestions(suggestions)
+        XCTAssertEqual(sut.photoId, 0,
+                       "photoId must be zeroed on fresh session — else fireOutcomes would post to the wrong photo")
+        XCTAssertNil(sut.visionModel,
+                     "visionModel must be cleared on fresh session — else telemetry mislabels which model produced the suggestions")
+        XCTAssertNil(sut.promptVersion,
+                     "promptVersion must be cleared on fresh session")
+    }
+
     /// Preliminary chips also mark a fresh session: the CoreML path runs
     /// BEFORE the server responds, and the subsequent `applyServerSuggestions`
     /// is what stamps `shownAt`. `loadPreliminaryClassifications` must clear
@@ -505,9 +530,21 @@ private enum SuggestionMatchFixture {
 ///
 /// `@MainActor` tests stream data from the handler thread; wrapping in a
 /// reference type lets the handler's escaping closure write while the test
-/// body reads after `fulfillment(of:)` returns.
+/// body reads after `fulfillment(of:)` returns. Mirrors `CallCounter`'s
+/// `NSLock` pattern so TSAN has nothing to complain about.
 private final class CapturedBody: @unchecked Sendable {
-    var data: Data?
+    private let lock = NSLock()
+    private var _data: Data?
+    var data: Data? {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _data
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _data = newValue
+        }
+    }
 }
 
 /// Atomic counter for mock invocation counts.

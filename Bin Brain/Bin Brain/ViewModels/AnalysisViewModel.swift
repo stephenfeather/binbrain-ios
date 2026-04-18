@@ -402,6 +402,7 @@ final class AnalysisViewModel {
         suggestions = []
         preliminaryClassifications = []
         lastPhotoId = nil
+        lastVisionModel = nil
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastUploadedPhotoData = nil

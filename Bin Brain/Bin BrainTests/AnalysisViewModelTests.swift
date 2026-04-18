@@ -218,6 +218,32 @@ final class AnalysisViewModelTests: XCTestCase {
         XCTAssertTrue(sut.suggestions.isEmpty, "reset() should clear suggestions")
     }
 
+    // MARK: - Regression — Swift2_014: reset() clears lastVisionModel
+
+    /// `lastVisionModel` is threaded into `SuggestionReviewViewModel` for
+    /// outcomes telemetry (Swift2_014). If `reset()` leaves it intact, a
+    /// subsequent cataloging flow whose `/suggest` response somehow lacks
+    /// the `model` field (or that never reaches `suggest`) would carry
+    /// forward the prior session's VLM string and attach it to the new
+    /// photo's outcomes POST — mislabeling which model produced what.
+    func testResetClearsLastVisionModel() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.run(jpegData: Data("fake-jpeg".utf8), binId: "BIN-0001", apiClient: client)
+        XCTAssertEqual(sut.lastVisionModel, "test-model",
+                       "lastVisionModel should be populated from /suggest response.model")
+
+        sut.reset()
+
+        XCTAssertNil(sut.lastVisionModel,
+                     "reset() must clear lastVisionModel — stale model IDs would mislabel future outcomes telemetry")
+    }
+
     // MARK: - Test 6: suggestions are cleared after reset
 
     func testSuggestionsAreEmptyAfterReset() async {

@@ -237,11 +237,13 @@ final class SuggestionReviewViewModel {
         visionModel: String? = nil,
         promptVersion: String? = nil
     ) {
-        // Fresh server-suggestion landing ⇒ fresh review session. Drop any
-        // prior `shownAt` so stale stamps from an earlier photo don't leak
-        // into this session's outcomes telemetry (ultrareview bug_003 — the
-        // VM outlives a cataloging flow via @State in the parent view).
-        shownAt = nil
+        // Fresh server-suggestion landing ⇒ fresh review session. Drop ALL
+        // prior outcomes context so stale values from an earlier photo don't
+        // leak into this session's telemetry. Production callers pass
+        // photoId + visionModel every time, but clearing defensively here
+        // guarantees a reused VM cannot attach new decisions to old context.
+        // (ultrareview bug_003 + CodeRabbit defense-in-depth follow-up.)
+        resetOutcomesContext()
         editableSuggestions = suggestions.enumerated().map { idx, item in
             let name = item.match?.name ?? item.name
             let category = item.match?.category ?? item.category ?? ""
@@ -379,10 +381,11 @@ final class SuggestionReviewViewModel {
     ///     default is `3`. Clamped to the available classification count.
     func loadPreliminaryClassifications(_ classifications: [ClassificationResult], topK: Int) {
         // Fresh session (on-device preliminary chips arrive BEFORE server
-        // suggestions). Reset `shownAt` here so the subsequent
-        // `applyServerSuggestions` stamp isn't shadowed by a leftover from
-        // an earlier cataloging flow (ultrareview bug_003).
-        shownAt = nil
+        // suggestions). Reset ALL outcomes context here so the subsequent
+        // `applyServerSuggestions` lands on a clean slate — otherwise a
+        // reused VM carries the prior session's photoId/visionModel forward
+        // if the new applyServerSuggestions caller were to omit them.
+        resetOutcomesContext()
         let limit = max(0, min(topK, classifications.count))
         originalPreliminaryTopK = Array(classifications.prefix(limit))
         editableSuggestions = classifications.prefix(limit).enumerated().map { idx, cls in
@@ -458,6 +461,18 @@ final class SuggestionReviewViewModel {
             visionModel: visionModel,
             promptVersion: promptVersion
         )
+    }
+
+    /// Clears all outcomes-telemetry context to a clean "not-yet-ready"
+    /// state. Called at fresh-session entry points (`loadSuggestions`,
+    /// `loadPreliminaryClassifications`) so a reused `@State`-held VM
+    /// cannot carry stale (photoId, visionModel, promptVersion, shownAt)
+    /// from a prior cataloging flow into the new session's outcomes POST.
+    private func resetOutcomesContext() {
+        photoId = 0
+        visionModel = nil
+        promptVersion = nil
+        shownAt = nil
     }
 
     /// Applies any supplied outcomes-telemetry context values and stamps
