@@ -1,20 +1,22 @@
 # Bin Brain iOS
 
-An iOS app for physical storage bin inventory management. Photograph a bin's contents, let AI identify the items, and maintain a searchable catalogue so you can instantly find which bin holds any given part.
+An iOS app for physical storage bin inventory management. Scan a bin's QR sticker, photograph each item as it goes in, and let AI identify it — building a searchable catalogue so you can instantly find which bin holds any given part.
 
 ## Overview
 
-Bin Brain solves the "which bin is that in?" problem for workshops, parts storage, and organized storage systems. Each physical bin gets a printed QR sticker. Scan the sticker, photograph the contents, and the AI catalogues everything automatically.
+Bin Brain solves the "which bin is that in?" problem for workshops, parts storage, and organized storage systems. Each physical bin gets a printed QR sticker. Scan the sticker, photograph the item you are placing in it, and the AI catalogues it automatically. The photographic subject is a **single item being added to a bin**, not a wide shot of the bin's contents — bin identity comes from the prior QR scan, not the image.
 
 The iOS app is a thin client to a self-hosted backend on a **Raspberry Pi 5** running Docker Compose with PostgreSQL + pgvector + Ollama (optionally accelerated by a Hailo AI hat).
 
 ## Features
 
 - **QR scan to identify bins** — DataScannerViewController reads bin stickers (`BIN-0001` format)
-- **AI-assisted cataloguing** — photograph bin contents, AI vision suggests item names and categories
+- **AI-assisted cataloguing** — photograph each item going into a bin; server-side vision (Ollama `qwen3-vl:4b`) suggests name and category
+- **On-device pre-classification** — `VNClassifyImageRequest` runs inside the capture pipeline and uploads top-K labels alongside the photo; a Mode A CoreML integration to surface these as tentative chips before the Ollama response is in design ([`docs/designs/coreml-preclassification-scope.md`](./docs/designs/coreml-preclassification-scope.md))
+- **Bounding-box overlay on suggestion review** — server-returned bboxes are rendered over the photo so the user can see which region each suggestion corresponds to before confirming
 - **Semantic search** — find any item across all bins using natural language queries (pgvector embeddings)
 - **Manual item entry** — add items without AI when preferred
-- **Offline photo queue** — photos taken when server is unreachable are queued and uploaded automatically when connectivity returns
+- **Offline photo queue** — photos taken when server is unreachable are queued (SwiftData) and uploaded automatically when connectivity returns
 
 ## Architecture
 
@@ -79,17 +81,26 @@ For a TLS-terminated deployment, `mkcert` provides a local CA and trusted certif
 
 ## API
 
-The backend API is fully specified in [`openapi.yaml`](./openapi.yaml). Key endpoints:
+The backend API is fully specified in [`openapi.yaml`](./openapi.yaml) (symlinked from the sibling `binbrain` repo — the server is the source of truth). Key endpoints used by the iOS client:
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /health` | Connection test |
-| `POST /ingest` | Upload photo to a bin |
-| `GET /photos/{id}/suggest` | AI vision suggestions |
+| `POST /ingest` | Upload photo + device metadata to a bin |
+| `GET /photos/{id}/suggest` | AI vision suggestions (items + bboxes) |
+| `GET /photos/{id}/suggest/status` | Poll suggestion progress (long Ollama calls) |
+| `GET /photos/{id}/detect` | Server-side bbox detection results |
+| `POST /photos/{id}/confirm` | Confirm suggestions → create items and associations |
+| `POST /photos/{id}/outcomes` | Record per-suggestion accept/reject outcomes |
+| `GET /photos/{id}/file` | Download the stored photo (for overlay rendering) |
 | `POST /items` | Create/upsert a catalogue item |
-| `GET /bins` | List all bins |
-| `GET /bins/{id}` | Get bin contents |
-| `GET /search?q=` | Semantic search |
+| `GET /upc/{upc}` | UPC lookup for barcode-scanned items |
+| `GET /bins` · `GET /bins/{id}` | List bins / get bin contents |
+| `POST /bins/{id}/add` | Add an existing item to a bin |
+| `GET /locations` · `GET /locations/{id}` | Physical location hierarchy |
+| `GET /models` · `GET /models/running` · `POST /models/select` | Vision model management (Settings) |
+| `POST /settings/image-size` | Configure server-side max image dimension |
+| `GET /search?q=` | Semantic search across all bins |
 
 ## Security & Threat Model
 
