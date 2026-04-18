@@ -237,6 +237,11 @@ final class SuggestionReviewViewModel {
         visionModel: String? = nil,
         promptVersion: String? = nil
     ) {
+        // Fresh server-suggestion landing ⇒ fresh review session. Drop any
+        // prior `shownAt` so stale stamps from an earlier photo don't leak
+        // into this session's outcomes telemetry (ultrareview bug_003 — the
+        // VM outlives a cataloging flow via @State in the parent view).
+        shownAt = nil
         editableSuggestions = suggestions.enumerated().map { idx, item in
             let name = item.match?.name ?? item.name
             let category = item.match?.category ?? item.category ?? ""
@@ -373,6 +378,11 @@ final class SuggestionReviewViewModel {
     ///   - topK: Maximum number of chips to render. Caller chooses; production
     ///     default is `3`. Clamped to the available classification count.
     func loadPreliminaryClassifications(_ classifications: [ClassificationResult], topK: Int) {
+        // Fresh session (on-device preliminary chips arrive BEFORE server
+        // suggestions). Reset `shownAt` here so the subsequent
+        // `applyServerSuggestions` stamp isn't shadowed by a leftover from
+        // an earlier cataloging flow (ultrareview bug_003).
+        shownAt = nil
         let limit = max(0, min(topK, classifications.count))
         originalPreliminaryTopK = Array(classifications.prefix(limit))
         editableSuggestions = classifications.prefix(limit).enumerated().map { idx, cls in
@@ -556,7 +566,14 @@ final class SuggestionReviewViewModel {
             let confirmed = confirmedIds.contains(item.id)
             let finalLabel = item.editedName.trimmingCharacters(in: .whitespacesAndNewlines)
             let originalLabel = item.visionName
-            let wasEdited = confirmed && !finalLabel.isEmpty && finalLabel != originalLabel
+            // Edit-detection baseline is the value `editedName` was PREFILLED
+            // with — which is `match.name` when a catalogue match exists,
+            // NOT `visionName`. Comparing against `visionName` alone would
+            // false-flag every catalogue-matched but untouched confirmation
+            // as `.edited` (poisoning the training signal Swift2_014 exists
+            // to collect — see ultrareview bug_001).
+            let prefilledLabel = item.match?.name ?? item.visionName
+            let wasEdited = confirmed && !finalLabel.isEmpty && finalLabel != prefilledLabel
 
             let decision: PhotoSuggestionOutcome.Decision
             let editedTo: String?

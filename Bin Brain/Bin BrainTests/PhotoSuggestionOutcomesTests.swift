@@ -83,7 +83,7 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    private let fixedShownAt = Date(timeIntervalSince1970: 1_744_920_000) // 2026-04-17T20:00:00Z
+    private let fixedShownAt = Date(timeIntervalSince1970: 1_776_456_000) // 2026-04-17T20:00:00Z
 
     private func makeEditable(
         id: Int,
@@ -368,6 +368,135 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
         )
         XCTAssertTrue(outcomes.isEmpty, "no presented suggestions → no decisions")
     }
+
+    // MARK: - 10. Regression — catalogue-matched untouched → .accepted (ultrareview bug_001)
+
+    /// When a server suggestion carries a `SuggestionMatch`, `loadSuggestions`
+    /// pre-fills `editedName` from `match.name` (not `visionName`). A naïve
+    /// `editedName != visionName` edit-detection would false-flag every
+    /// matched-but-untouched confirmation as `.edited`, poisoning the training
+    /// signal. `buildOutcomes` must compare against the pre-fill baseline
+    /// (`match.name ?? visionName`) so untouched matched items stay `.accepted`.
+    func testBuildOutcomes_catalogueMatchedUntouchedItemClassifiedAsAccepted() {
+        let match = SuggestionMatchFixture.hexNutM3
+        let matched = EditableSuggestion(
+            id: 0,
+            included: true,
+            editedName: match.name,       // pre-filled from match.name by loadSuggestions
+            editedCategory: match.category ?? "",
+            editedQuantity: "",
+            confidence: 0.9,
+            visionName: "hex nut",         // raw VLM label — diverges from editedName at load time
+            match: match,
+            bbox: nil,
+            teach: true,
+            origin: .server,
+            originalCategory: "fastener"
+        )
+        let outcomes = SuggestionReviewViewModel.buildOutcomes(
+            shownAt: fixedShownAt,
+            editable: [matched],
+            confirmedIds: [0]
+        )
+        XCTAssertEqual(outcomes.count, 1)
+        XCTAssertEqual(outcomes[0].decision, .accepted,
+                       "matched, user-untouched item must be .accepted — comparing editedName to visionName alone would wrongly emit .edited")
+        XCTAssertNil(outcomes[0].editedToLabel)
+        XCTAssertEqual(outcomes[0].label, "hex nut",
+                       "label must be the raw VLM signal (visionName), not the catalogue match name")
+    }
+
+    /// And confirm the real-edit path still fires when the user overrides a
+    /// matched pre-fill — the baseline shift must not suppress genuine edits.
+    func testBuildOutcomes_catalogueMatchedThenUserEditedStillEmitsEdited() {
+        let match = SuggestionMatchFixture.hexNutM3
+        let edited = EditableSuggestion(
+            id: 0,
+            included: true,
+            editedName: "M3 stainless nut", // user overrode the match prefill
+            editedCategory: "fastener",
+            editedQuantity: "",
+            confidence: 0.9,
+            visionName: "hex nut",
+            match: match,
+            bbox: nil,
+            teach: true,
+            origin: .edited,
+            originalCategory: "fastener"
+        )
+        let outcomes = SuggestionReviewViewModel.buildOutcomes(
+            shownAt: fixedShownAt,
+            editable: [edited],
+            confirmedIds: [0]
+        )
+        XCTAssertEqual(outcomes[0].decision, .edited)
+        XCTAssertEqual(outcomes[0].label, "hex nut")
+        XCTAssertEqual(outcomes[0].editedToLabel, "M3 stainless nut")
+    }
+
+    // MARK: - 11. Regression — shownAt restamps on fresh session (ultrareview bug_003)
+
+    /// `SuggestionReviewViewModel` is held as `@State` in the parent views and
+    /// survives across cataloging flows. Without an explicit reset, `shownAt`
+    /// would be stamped exactly once per VM lifetime — so the second review
+    /// session on a given screen would POST outcomes with the previous
+    /// session's wall-clock time, corrupting the telemetry. `loadSuggestions`
+    /// (the fresh-session entry point) must reset `shownAt` so each session
+    /// gets its own stamp.
+    func testLoadSuggestionsResetsShownAtAcrossSessions() async throws {
+        let suggestions = try makeSuggestionsJSON()
+
+        sut.loadSuggestions(suggestions, photoId: 10, visionModel: "vlm-a")
+        let firstShownAt = try XCTUnwrap(sut.shownAt, "first session must stamp shownAt")
+
+        // Nudge wall clock forward so the ordering check is robust.
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        sut.loadSuggestions(suggestions, photoId: 11, visionModel: "vlm-a")
+        let secondShownAt = try XCTUnwrap(sut.shownAt, "second session must stamp shownAt")
+
+        XCTAssertGreaterThan(secondShownAt, firstShownAt,
+                             "loadSuggestions must RESET shownAt on a fresh session — stale stamps corrupt training telemetry")
+    }
+
+    /// Preliminary chips also mark a fresh session: the CoreML path runs
+    /// BEFORE the server responds, and the subsequent `applyServerSuggestions`
+    /// is what stamps `shownAt`. `loadPreliminaryClassifications` must clear
+    /// any leftover stamp so the server-landing stamp is the one that lands.
+    func testLoadPreliminaryClassificationsResetsShownAtAcrossSessions() async throws {
+        let suggestions = try makeSuggestionsJSON()
+
+        // Session 1: server path stamps shownAt.
+        sut.loadSuggestions(suggestions, photoId: 10, visionModel: "vlm-a")
+        let firstShownAt = try XCTUnwrap(sut.shownAt)
+
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        // Session 2: preliminary chips land FIRST — must clear the prior stamp.
+        sut.loadPreliminaryClassifications([], topK: 0)
+        XCTAssertNil(sut.shownAt,
+                     "loadPreliminaryClassifications must clear shownAt so applyServerSuggestions re-stamps on server arrival")
+
+        // Subsequent server arrival stamps fresh.
+        sut.applyServerSuggestions(suggestions, photoId: 11, visionModel: "vlm-a")
+        let secondShownAt = try XCTUnwrap(sut.shownAt)
+        XCTAssertGreaterThan(secondShownAt, firstShownAt)
+    }
+}
+
+// MARK: - Fixtures
+
+private enum SuggestionMatchFixture {
+    /// Shared `SuggestionMatch` for catalogue-match regression tests.
+    /// Name differs from the VLM label so `editedName != visionName` at load
+    /// time — the exact condition that exposed ultrareview bug_001.
+    static let hexNutM3 = SuggestionMatch(
+        itemId: 1,
+        name: "Hex Nut M3",
+        category: "fastener",
+        score: 0.95,
+        bins: []
+    )
 }
 
 // MARK: - Test helpers
