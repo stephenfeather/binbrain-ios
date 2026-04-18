@@ -337,15 +337,26 @@ final class APIClient {
         confidence: Double?,
         quantity: Double?
     ) async throws -> AssociateItemResponse {
-        var json: [String: Any] = ["bin_id": binId, "item_id": itemId]
-        if let confidence { json["confidence"] = confidence }
-        if let quantity { json["quantity"] = quantity }
-        let body = try JSONSerialization.data(withJSONObject: json)
+        // OpenAPI /associate requires multipart/form-data; sending JSON causes
+        // FastAPI's Form(...) parser to reject with 400 "bin_id field required"
+        // (Finding #6 regression — see APIClientTests.testAssociateItemSendsMultipart…).
+        var fields: [String: String] = [
+            "bin_id": binId,
+            "item_id": String(itemId)
+        ]
+        if let confidence { fields["confidence"] = String(confidence) }
+        if let quantity { fields["quantity"] = String(quantity) }
+        let (body, boundary) = multipartBody(
+            fields: fields,
+            fileData: nil,
+            fileName: nil,
+            mimeType: nil
+        )
         return try await request(
             path: "/associate",
             method: "POST",
             body: body,
-            contentType: "application/json",
+            contentType: "multipart/form-data; boundary=\(boundary)",
             timeout: 10
         )
     }
