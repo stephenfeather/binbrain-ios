@@ -720,12 +720,12 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(capturedRequest?.httpMethod, "GET")
     }
 
-    // MARK: - Finding #6 regression: /associate request shape
+    // MARK: - /associate request shape
 
-    /// Asserts /associate is sent as multipart/form-data with exactly the
-    /// server-required field names `bin_id` and `item_id` (not `binId`/`itemId`).
-    /// Regression guard for the device-observed 400 "bin_id field required".
-    func testAssociateItemSendsMultipartWithSpecRequiredFieldNames() async throws {
+    /// Asserts /associate is sent as application/json with snake_case fields
+    /// `bin_id` / `item_id` (not `binId` / `itemId`).
+    /// Matches live OpenAPI contract: AssociateItemBody JSON body.
+    func testAssociateItemSendsJSONWithSnakeCaseFields() async throws {
         var captured: URLRequest?
         MockURLProtocol.requestHandler = { request in
             captured = request
@@ -748,30 +748,19 @@ final class APIClientTests: XCTestCase {
                        "Must hit exactly /associate — not /bins/.../associate or /associates")
 
         let contentType = try XCTUnwrap(req.value(forHTTPHeaderField: "Content-Type"))
-        XCTAssertTrue(contentType.hasPrefix("multipart/form-data; boundary="),
-                      "Server's Form(...) parser requires multipart/form-data. Got: \(contentType)")
+        XCTAssertEqual(contentType, "application/json",
+                       "Server's AssociateItemBody is a Pydantic JSON body. Got: \(contentType)")
 
         let body = try XCTUnwrap(req.bodyData)
-        let bodyString = try XCTUnwrap(String(data: body, encoding: .utf8))
-
-        XCTAssertTrue(bodyString.contains("name=\"bin_id\""),
-                      "Body must contain form field named exactly bin_id. Body:\n\(bodyString)")
-        XCTAssertTrue(bodyString.contains("name=\"item_id\""),
-                      "Body must contain form field named exactly item_id. Body:\n\(bodyString)")
-        XCTAssertFalse(bodyString.contains("name=\"binId\""),
-                       "Must NOT send camelCase binId — server expects snake_case bin_id")
-        XCTAssertFalse(bodyString.contains("name=\"itemId\""),
-                       "Must NOT send camelCase itemId — server expects snake_case item_id")
-
-        XCTAssertTrue(bodyString.contains("BIN-0003"),
-                      "Body must contain the bin_id value")
-        XCTAssertTrue(bodyString.contains("42"),
-                      "Body must contain the item_id value")
-
-        XCTAssertTrue(bodyString.contains("name=\"confidence\""),
-                      "confidence should be included when provided")
-        XCTAssertTrue(bodyString.contains("name=\"quantity\""),
-                      "quantity should be included when provided")
+        let decoded = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        XCTAssertEqual(decoded["bin_id"] as? String, "BIN-0003")
+        XCTAssertEqual(decoded["item_id"] as? Int, 42)
+        XCTAssertEqual(decoded["confidence"] as? Double, 0.9)
+        XCTAssertEqual(decoded["quantity"] as? Double, 2.0)
+        XCTAssertNil(decoded["binId"], "Must not send camelCase")
+        XCTAssertNil(decoded["itemId"], "Must not send camelCase")
     }
 
     // MARK: - Finding #8-B: fetchPhotoData attaches X-API-Key
@@ -874,15 +863,17 @@ final class APIClientTests: XCTestCase {
         )
 
         let body = try XCTUnwrap(captured?.bodyData)
-        let bodyString = try XCTUnwrap(String(data: body, encoding: .utf8))
-        XCTAssertFalse(bodyString.contains("name=\"confidence\""),
-                       "nil confidence must not appear in the multipart body")
-        XCTAssertFalse(bodyString.contains("name=\"quantity\""),
-                       "nil quantity must not appear in the multipart body")
-        XCTAssertTrue(bodyString.contains("name=\"bin_id\""),
-                      "bin_id is required — must still be present")
-        XCTAssertTrue(bodyString.contains("name=\"item_id\""),
-                      "item_id is required — must still be present")
+        let decoded = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        XCTAssertNil(decoded["confidence"],
+                     "nil confidence must be omitted, not sent as null")
+        XCTAssertNil(decoded["quantity"],
+                     "nil quantity must be omitted, not sent as null")
+        XCTAssertEqual(decoded["bin_id"] as? String, "BIN-0003",
+                       "bin_id is required — must still be present")
+        XCTAssertEqual(decoded["item_id"] as? Int, 42,
+                       "item_id is required — must still be present")
     }
 }
 
