@@ -222,13 +222,15 @@ struct BinsListView: View {
                     reviewViewModel.applyServerSuggestions(
                         suggestions,
                         photoId: analysisViewModel.lastPhotoId,
-                        visionModel: analysisViewModel.lastVisionModel
+                        visionModel: analysisViewModel.lastVisionModel,
+                        promptVersion: analysisViewModel.lastPromptVersion
                     )
                 } else {
                     reviewViewModel.loadSuggestions(
                         suggestions,
                         photoId: analysisViewModel.lastPhotoId,
-                        visionModel: analysisViewModel.lastVisionModel
+                        visionModel: analysisViewModel.lastVisionModel,
+                        promptVersion: analysisViewModel.lastPromptVersion
                     )
                     catalogingPath.append(.review)
                 }
@@ -290,7 +292,8 @@ struct BinsListView: View {
             reviewViewModel.applyServerSuggestions(
                 analysisViewModel.suggestions,
                 photoId: analysisViewModel.lastPhotoId,
-                visionModel: analysisViewModel.lastVisionModel
+                visionModel: analysisViewModel.lastVisionModel,
+                promptVersion: analysisViewModel.lastPromptVersion
             )
         }
     }

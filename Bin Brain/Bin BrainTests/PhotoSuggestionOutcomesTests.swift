@@ -484,6 +484,130 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
                      "promptVersion must be cleared on fresh session")
     }
 
+    // MARK: - Swift2_015 — prompt_version plumbing end-to-end
+
+    /// When the /suggest response echoes `prompt_version: "v2"` (server
+    /// PRs #22/#23), `SuggestionReviewViewModel` captures it via
+    /// `loadSuggestions(..., promptVersion: "v2")` and forwards the exact
+    /// value onto every outcomes POST fired from that session.
+    func testOutcomesRequestBodyCarriesPromptVersionWhenServerEchoedValue() async throws {
+        let suggestions = try makeSuggestionsJSON()
+        sut.loadSuggestions(suggestions, photoId: 42, visionModel: "qwen3p6-plus", promptVersion: "v2")
+
+        let expectation = XCTestExpectation(description: "POST /photos/42/outcomes is invoked")
+        let capturedBody = CapturedBody()
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/outcomes") {
+                capturedBody.data = request.outcomesBodyData
+                expectation.fulfill()
+                return (mockResponse(statusCode: 200, for: request), outcomesSuccessJSON)
+            }
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+        await fulfillment(of: [expectation], timeout: 2.0)
+
+        let body = try XCTUnwrap(capturedBody.data)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["prompt_version"] as? String, "v2",
+                       "outcomes POST must echo the server-captured prompt_version at the request level")
+    }
+
+    /// Pre-bump cache hits (or older server builds) produce a nil
+    /// prompt_version. iOS must forward nil unchanged — never synthesize a
+    /// client-side default.
+    func testOutcomesRequestBodyCarriesNullPromptVersionWhenServerReturnedNone() async throws {
+        let suggestions = try makeSuggestionsJSON()
+        sut.loadSuggestions(suggestions, photoId: 42, visionModel: "qwen3p6-plus", promptVersion: nil)
+
+        let expectation = XCTestExpectation(description: "POST /photos/42/outcomes is invoked")
+        let capturedBody = CapturedBody()
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/outcomes") {
+                capturedBody.data = request.outcomesBodyData
+                expectation.fulfill()
+                return (mockResponse(statusCode: 200, for: request), outcomesSuccessJSON)
+            }
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+        await fulfillment(of: [expectation], timeout: 2.0)
+
+        let body = try XCTUnwrap(capturedBody.data)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        // `JSONEncoder` emits nil optionals as absent keys, so the field is
+        // either missing or explicitly NSNull. Either shape is acceptable;
+        // what matters is that NO synthesized client value leaks.
+        let rawValue = json["prompt_version"]
+        if let stringValue = rawValue as? String {
+            XCTFail("prompt_version must not be a synthesized string when server returned none, got \(stringValue)")
+        }
+        // Either NSNull or nil (absent key) is correct.
+        XCTAssertTrue(rawValue == nil || rawValue is NSNull,
+                      "prompt_version must be absent or null when the server did not echo a value")
+    }
+
+    /// Defense-in-depth: a review session that captured prompt_version "v2"
+    /// must not leak that value into a SUBSEQUENT session on the same VM
+    /// whose /suggest returned nil. `resetOutcomesContext` already handles
+    /// this for the state field; this test locks in the end-to-end contract
+    /// so future refactors can't silently reintroduce the leak.
+    func testPriorSessionsPromptVersionDoesNotLeakWhenNewSessionReturnsNull() async throws {
+        let suggestions = try makeSuggestionsJSON()
+
+        // Session 1: /suggest echoed "v2" — VM captures it.
+        sut.loadSuggestions(suggestions, photoId: 10, visionModel: "vlm-a", promptVersion: "v2")
+        XCTAssertEqual(sut.promptVersion, "v2", "precondition — session 1 captures v2")
+
+        // Session 2: fresh /suggest, no prompt_version echoed.
+        sut.loadSuggestions(suggestions, photoId: 11, visionModel: "vlm-a", promptVersion: nil)
+
+        let expectation = XCTestExpectation(description: "POST /photos/11/outcomes fired")
+        let capturedBody = CapturedBody()
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/outcomes") {
+                capturedBody.data = request.outcomesBodyData
+                expectation.fulfill()
+                return (mockResponse(statusCode: 200, for: request), outcomesSuccessJSON)
+            }
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+        await fulfillment(of: [expectation], timeout: 2.0)
+
+        let body = try XCTUnwrap(capturedBody.data)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let rawValue = json["prompt_version"]
+        XCTAssertFalse(rawValue as? String == "v2",
+                       "session 2 outcomes must NOT carry session 1's prompt_version — telemetry mislabel risk")
+        XCTAssertTrue(rawValue == nil || rawValue is NSNull,
+                      "session 2 POST must carry null prompt_version (matches what the server echoed)")
+    }
+
     /// Preliminary chips also mark a fresh session: the CoreML path runs
     /// BEFORE the server responds, and the subsequent `applyServerSuggestions`
     /// is what stamps `shownAt`. `loadPreliminaryClassifications` must clear
