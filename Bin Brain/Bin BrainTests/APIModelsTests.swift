@@ -396,6 +396,103 @@ final class APIModelsTests: XCTestCase {
                      "absent prompt_version must decode as nil (backward compat with pre-PR#22 server builds)")
     }
 
+    // MARK: - Swift2_016 — Defensive length + control-char cap on prompt_version
+
+    /// Regression guard: the custom decoder must not break the existing
+    /// happy path. A normal server value (`"v2"`) decodes unchanged.
+    func testPhotoSuggestResponsePreservesNormalPromptVersion() throws {
+        let json = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": "v2",
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let response = try decode(PhotoSuggestResponse.self, from: json)
+        XCTAssertEqual(response.promptVersion, "v2")
+        // Other fields must still decode normally after the custom init took over.
+        XCTAssertEqual(response.version, "1")
+        XCTAssertEqual(response.photoId, 42)
+        XCTAssertEqual(response.model, "qwen3-vl:4b")
+        XCTAssertEqual(response.visionElapsedMs, 1200)
+        XCTAssertTrue(response.suggestions.isEmpty)
+    }
+
+    /// Boundary: exactly 64 characters is within the cap and decodes through.
+    func testPhotoSuggestResponseAllowsPromptVersionAtMaxLength() throws {
+        let sixtyFour = String(repeating: "a", count: 64)
+        XCTAssertEqual(sixtyFour.count, 64, "precondition — fixture is 64 chars")
+        let json = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": "\(sixtyFour)",
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let response = try decode(PhotoSuggestResponse.self, from: json)
+        XCTAssertEqual(response.promptVersion, sixtyFour,
+                       "64-char value is at the cap and must pass through unchanged")
+    }
+
+    /// F8: a malformed/compromised server echoing an over-length value
+    /// must become nil on iOS — never truncated (truncation would lie
+    /// about which prompt produced the decisions). Other fields must
+    /// continue to decode normally so the rest of the session is usable.
+    func testPhotoSuggestResponseClampsOverlengthPromptVersionToNil() throws {
+        let sixtyFive = String(repeating: "a", count: 65)
+        XCTAssertEqual(sixtyFive.count, 65, "precondition — fixture is 65 chars (one over cap)")
+        let json = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": "\(sixtyFive)",
+            "vision_elapsed_ms": 1200,
+            "suggestions": [
+                {"item_id": null, "name": "hex bolt", "category": null, "confidence": 0.9, "bins": []}
+            ]
+        }
+        """
+        let response = try decode(PhotoSuggestResponse.self, from: json)
+        XCTAssertNil(response.promptVersion,
+                     "over-length prompt_version must decode to nil — never truncated")
+        XCTAssertEqual(response.suggestions.count, 1,
+                       "other fields must decode normally even when prompt_version is rejected")
+        XCTAssertEqual(response.model, "qwen3-vl:4b")
+    }
+
+    /// F8: ASCII control characters (< 0x20) in a server-echoed value
+    /// indicate a malformed or tampered stream. Reject to nil.
+    ///
+    /// The JSON payload uses the `\u0007` escape sequence rather than a
+    /// raw BEL byte because strict JSON (RFC 8259) forbids unescaped
+    /// control characters in strings — JSONDecoder would throw at parse
+    /// time before the sanitizer ever saw the value. The escape yields
+    /// a Swift String whose unicodeScalars contain U+0007 once decoded.
+    func testPhotoSuggestResponseClampsControlCharPromptVersionToNil() throws {
+        let json = """
+        {
+            "version": "1",
+            "photo_id": 42,
+            "model": "qwen3-vl:4b",
+            "prompt_version": "v2\\u0007",
+            "vision_elapsed_ms": 1200,
+            "suggestions": []
+        }
+        """
+        let response = try decode(PhotoSuggestResponse.self, from: json)
+        XCTAssertNil(response.promptVersion,
+                     "prompt_version containing ASCII control chars must decode to nil")
+        XCTAssertEqual(response.model, "qwen3-vl:4b",
+                       "other fields must decode normally even when prompt_version is rejected")
+    }
+
     // MARK: - Test 9: Invalid JSON throws on missing required field
 
     func testDecodingBinSummaryThrowsOnMissingRequiredField() {
