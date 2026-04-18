@@ -160,7 +160,7 @@ struct BinDetailView: View {
                 set: { if !$0 { editingItem = nil } }
             )) {
                 if let item = editingItem {
-                    EditItemSheet(
+                    ItemDetailView(
                         item: item,
                         binId: binId,
                         apiClient: apiClient,
@@ -605,85 +605,3 @@ private struct AddItemSheet: View {
     }
 }
 
-// MARK: - EditItemSheet
-
-private struct EditItemSheet: View {
-    let item: BinItemRecord
-    let binId: String
-    let apiClient: APIClient
-    let viewModel: BinDetailViewModel
-    @Binding var isPresented: Bool
-
-    @State private var quantityText: String = ""
-    @State private var confidenceText: String = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    HStack {
-                        Text("Name")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(item.name)
-                    }
-                    if let category = item.category {
-                        HStack {
-                            Text("Category")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(category)
-                        }
-                    }
-                }
-
-                Section("Editable Fields") {
-                    TextField("Quantity", text: $quantityText)
-                        .keyboardType(.decimalPad)
-                    TextField("Confidence (0–1)", text: $confidenceText)
-                        .keyboardType(.decimalPad)
-                }
-            }
-            .navigationTitle("Edit Item")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let newQuantity = Double(quantityText)
-                        let newConfidence = Double(confidenceText)
-                        isPresented = false
-                        Task {
-                            await viewModel.updateItem(
-                                itemId: item.itemId,
-                                quantity: newQuantity,
-                                confidence: newConfidence,
-                                binId: binId,
-                                apiClient: apiClient
-                            )
-                        }
-                    }
-                    .disabled(!hasChanges)
-                }
-            }
-            .onAppear {
-                if let q = item.quantity {
-                    quantityText = String(format: "%.0f", q)
-                }
-                if let c = item.confidence {
-                    confidenceText = String(format: "%.2f", c)
-                }
-            }
-        }
-    }
-
-    private var hasChanges: Bool {
-        let newQuantity = Double(quantityText)
-        let newConfidence = Double(confidenceText)
-        let quantityChanged = newQuantity != item.quantity
-        let confidenceChanged = newConfidence != item.confidence
-        return quantityChanged || confidenceChanged
-    }
-}

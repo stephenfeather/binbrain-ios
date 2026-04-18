@@ -175,6 +175,8 @@ struct BinItemRecord: Decodable {
     let upc: String?
     let quantity: Double?
     let confidence: Double?
+    let sourcePhotoId: Int?
+    let sourceBbox: [Float]?
 
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
@@ -183,6 +185,8 @@ struct BinItemRecord: Decodable {
         case upc
         case quantity
         case confidence
+        case sourcePhotoId = "source_photo_id"
+        case sourceBbox = "source_bbox"
     }
 }
 

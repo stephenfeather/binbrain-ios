@@ -129,6 +129,24 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(quantity, 50.0, accuracy: 1e-10)
         let confidence = try XCTUnwrap(item.confidence)
         XCTAssertEqual(confidence, 0.92, accuracy: 1e-10)
+        XCTAssertNil(item.sourcePhotoId)
+        XCTAssertNil(item.sourceBbox)
+    }
+
+    func testBinItemRecordDecodesSourcePhotoLinkage() throws {
+        let json = """
+        {
+            "item_id": 77,
+            "name": "Box Cutter",
+            "source_photo_id": 4242,
+            "source_bbox": [0.1, 0.2, 0.3, 0.4]
+        }
+        """
+        let item = try decode(BinItemRecord.self, from: json)
+
+        XCTAssertEqual(item.sourcePhotoId, 4242)
+        let bbox = try XCTUnwrap(item.sourceBbox)
+        XCTAssertEqual(bbox, [0.1, 0.2, 0.3, 0.4])
     }
 
     // MARK: - Test 4: SuggestionItem with null item_id
