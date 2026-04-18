@@ -352,6 +352,10 @@ final class SuggestionReviewViewModel {
             }
         }
 
+        // Swift2_014 — telemetry fires only on confirm-success; failures here
+        // MUST NOT surface (fire-and-forget detached Task swallows errors).
+        fireOutcomesIfReady(apiClient: apiClient)
+
         isConfirming = false
     }
 
@@ -584,6 +588,38 @@ final class SuggestionReviewViewModel {
         }
     }
 
+    /// Fires `POST /photos/{id}/outcomes` in a detached Task when the VM has
+    /// everything needed. Silent no-op otherwise — outcomes are best-effort.
+    ///
+    /// Must be called ONLY from a confirm-success path (no failedIndices,
+    /// upsert+associate loop completed). Errors are logged, never surfaced.
+    private func fireOutcomesIfReady(apiClient: APIClient) {
+        guard photoId > 0,
+              let visionModel,
+              let shownAt,
+              !editableSuggestions.isEmpty else {
+            return
+        }
+        let confirmedIds = Set(editableSuggestions.filter { $0.included }.map(\.id))
+        let decisions = Self.buildOutcomes(
+            shownAt: shownAt,
+            editable: editableSuggestions,
+            confirmedIds: confirmedIds
+        )
+        let request = PhotoSuggestionOutcomesRequest(
+            visionModel: visionModel,
+            promptVersion: promptVersion,
+            decisions: decisions
+        )
+        let pid = photoId
+        Task { [apiClient, pid, request] in
+            do {
+                _ = try await apiClient.postPhotoSuggestionOutcomes(photoId: pid, request: request)
+            } catch {
+                logger.error("[OUTCOMES] fire-and-forget post failed: \(error.localizedDescription, privacy: .private)")
+            }
+        }
+    }
 
     /// Resumes upsert from the first previously failed index.
     ///
@@ -622,6 +658,9 @@ final class SuggestionReviewViewModel {
                 return
             }
         }
+        // Swift2_014 — retry success path also fires outcomes (server is
+        // idempotent per (photoId, visionModel), so re-firing is safe).
+        fireOutcomesIfReady(apiClient: apiClient)
         isConfirming = false
     }
 
