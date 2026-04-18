@@ -137,7 +137,7 @@ final class MetadataExtractorsTests: XCTestCase {
         // VNClassificationObservation cannot be constructed directly in tests.
         // Verify the threshold and limit constants are set correctly.
         XCTAssertEqual(MetadataExtractors.classificationConfidenceThreshold, 0.1)
-        XCTAssertEqual(MetadataExtractors.classificationMaxResults, 5)
+        XCTAssertEqual(MetadataExtractors.classificationMaxResults, 10)
     }
 
     func testFilterClassificationsReturnsEmptyForEmptyInput() {
