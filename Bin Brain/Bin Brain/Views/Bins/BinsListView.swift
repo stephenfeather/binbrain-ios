@@ -219,9 +219,17 @@ struct BinsListView: View {
             onComplete: { suggestions in
                 reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
                 if navigatedOnPreliminary {
-                    reviewViewModel.applyServerSuggestions(suggestions)
+                    reviewViewModel.applyServerSuggestions(
+                        suggestions,
+                        photoId: analysisViewModel.lastPhotoId,
+                        visionModel: analysisViewModel.lastVisionModel
+                    )
                 } else {
-                    reviewViewModel.loadSuggestions(suggestions)
+                    reviewViewModel.loadSuggestions(
+                        suggestions,
+                        photoId: analysisViewModel.lastPhotoId,
+                        visionModel: analysisViewModel.lastVisionModel
+                    )
                     catalogingPath.append(.review)
                 }
             },
@@ -279,7 +287,11 @@ struct BinsListView: View {
         .onChange(of: analysisViewModel.phase) { _, newPhase in
             guard case .complete = newPhase, navigatedOnPreliminary else { return }
             reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-            reviewViewModel.applyServerSuggestions(analysisViewModel.suggestions)
+            reviewViewModel.applyServerSuggestions(
+                analysisViewModel.suggestions,
+                photoId: analysisViewModel.lastPhotoId,
+                visionModel: analysisViewModel.lastVisionModel
+            )
         }
     }
 

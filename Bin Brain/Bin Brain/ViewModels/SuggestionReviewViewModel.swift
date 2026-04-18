@@ -60,6 +60,12 @@ struct EditableSuggestion: Identifiable {
     var teach: Bool
     /// Chip provenance — drives preliminary styling and merge rules.
     var origin: ChipOrigin = .server
+    /// Category from the original server suggestion, preserved even after the
+    /// user edits `editedCategory`. Used by Swift2_014 to emit accurate
+    /// `PhotoSuggestionOutcome.category` — the original VLM signal is what the
+    /// server wants for training, not the user's replacement. Nil for chips
+    /// that did not come from a server suggestion (preliminary CoreML chips).
+    let originalCategory: String?
 }
 
 // MARK: - SuggestionReviewViewModel
@@ -148,6 +154,30 @@ final class SuggestionReviewViewModel {
     /// treats empty as "not yet ready" and aborts the call.
     var binId: String = ""
 
+    // MARK: - Swift2_014 Outcomes State
+
+    /// Photo identifier under review, threaded from `AnalysisViewModel.lastPhotoId`.
+    /// Required for `POST /photos/{id}/outcomes`. Zero is a "not-yet-assigned"
+    /// sentinel — the outcomes fire-and-forget guard short-circuits in that state.
+    var photoId: Int = 0
+
+    /// The VLM that produced the current suggestion list. Captured from
+    /// `PhotoSuggestResponse.model` via `loadSuggestions(_:photoId:visionModel:promptVersion:)`
+    /// or `applyServerSuggestions(_:photoId:visionModel:promptVersion:)`. The outcomes
+    /// fire guard requires a non-nil value.
+    private(set) var visionModel: String?
+
+    /// Prompt revision identifier. Today the server does not emit
+    /// `prompt_version` on `/suggest`; this stays nil until a matching server
+    /// follow-up (flagged from Swift2_014). Nil is a valid server-side value.
+    private(set) var promptVersion: String?
+
+    /// Wall-clock time the first non-empty server suggestion list landed.
+    /// Every `PhotoSuggestionOutcome.shownAt` inherits this value. Stamped
+    /// once per review session; preserved across subsequent merges and
+    /// retries so confirm+retry cycles report a stable presentation time.
+    private(set) var shownAt: Date?
+
     /// Decoded image derived from `photoData`. Populated off the main actor
     /// via `Task.detached` and published back through `publish(image:generation:)`.
     /// Views bind directly to this instead of decoding in the view body.
@@ -186,14 +216,34 @@ final class SuggestionReviewViewModel {
     ///
     /// When a suggestion has a catalogue `match`, the matched item's name and
     /// category are used as defaults (since the catalogue entry is more accurate
-    /// than the raw vision label). The original vision name is preserved in
-    /// `visionName` for reference.
+    /// than the raw vision label). The original vision name and category are
+    /// preserved in `visionName` and `originalCategory` for reference and for
+    /// Swift2_014 outcome telemetry.
     ///
     /// Each item starts with `included = true`. Calling this method clears
     /// any previous `failedIndices`.
     ///
-    /// - Parameter suggestions: The suggestion items returned by vision inference.
-    func loadSuggestions(_ suggestions: [SuggestionItem]) {
+    /// - Parameters:
+    ///   - suggestions: The suggestion items returned by vision inference.
+    ///   - photoId: Optional photo ID to thread through for outcomes telemetry.
+    ///     Omit (or pass `nil`) to leave the current value unchanged.
+    ///   - visionModel: Optional VLM identifier from `PhotoSuggestResponse.model`.
+    ///     Omit to leave the current value unchanged.
+    ///   - promptVersion: Optional prompt revision identifier. Kept nil today
+    ///     (server follow-up pending).
+    func loadSuggestions(
+        _ suggestions: [SuggestionItem],
+        photoId: Int? = nil,
+        visionModel: String? = nil,
+        promptVersion: String? = nil
+    ) {
+        // Fresh server-suggestion landing ⇒ fresh review session. Drop ALL
+        // prior outcomes context so stale values from an earlier photo don't
+        // leak into this session's telemetry. Production callers pass
+        // photoId + visionModel every time, but clearing defensively here
+        // guarantees a reused VM cannot attach new decisions to old context.
+        // (ultrareview bug_003 + CodeRabbit defense-in-depth follow-up.)
+        resetOutcomesContext()
         editableSuggestions = suggestions.enumerated().map { idx, item in
             let name = item.match?.name ?? item.name
             let category = item.match?.category ?? item.category ?? ""
@@ -207,10 +257,16 @@ final class SuggestionReviewViewModel {
                 visionName: item.name,
                 match: item.match,
                 bbox: item.bbox,
-                teach: true
+                teach: true,
+                originalCategory: item.category
             )
         }
         failedIndices = []
+        applyOutcomesContext(
+            photoId: photoId,
+            visionModel: visionModel,
+            promptVersion: promptVersion
+        )
     }
 
     // MARK: - Actions
@@ -303,6 +359,10 @@ final class SuggestionReviewViewModel {
             }
         }
 
+        // Swift2_014 — telemetry fires only on confirm-success; failures here
+        // MUST NOT surface (fire-and-forget detached Task swallows errors).
+        fireOutcomesIfReady(apiClient: apiClient)
+
         isConfirming = false
     }
 
@@ -320,6 +380,12 @@ final class SuggestionReviewViewModel {
     ///   - topK: Maximum number of chips to render. Caller chooses; production
     ///     default is `3`. Clamped to the available classification count.
     func loadPreliminaryClassifications(_ classifications: [ClassificationResult], topK: Int) {
+        // Fresh session (on-device preliminary chips arrive BEFORE server
+        // suggestions). Reset ALL outcomes context here so the subsequent
+        // `applyServerSuggestions` lands on a clean slate — otherwise a
+        // reused VM carries the prior session's photoId/visionModel forward
+        // if the new applyServerSuggestions caller were to omit them.
+        resetOutcomesContext()
         let limit = max(0, min(topK, classifications.count))
         originalPreliminaryTopK = Array(classifications.prefix(limit))
         editableSuggestions = classifications.prefix(limit).enumerated().map { idx, cls in
@@ -334,7 +400,8 @@ final class SuggestionReviewViewModel {
                 match: nil,
                 bbox: nil,
                 teach: true,
-                origin: .preliminary
+                origin: .preliminary,
+                originalCategory: nil
             )
         }
         failedIndices = []
@@ -377,9 +444,55 @@ final class SuggestionReviewViewModel {
     /// - Server-empty + no edited chips → `[]` (clean empty state; no stale
     ///   preliminary list visible).
     ///
-    /// - Parameter server: The server's `/ingest` suggestion response.
-    func applyServerSuggestions(_ server: [SuggestionItem]) {
+    /// - Parameters:
+    ///   - server: The server's `/ingest` suggestion response.
+    ///   - photoId: Optional photo ID threaded through for outcomes telemetry.
+    ///   - visionModel: Optional VLM identifier from `PhotoSuggestResponse.model`.
+    ///   - promptVersion: Optional prompt revision identifier (server follow-up pending).
+    func applyServerSuggestions(
+        _ server: [SuggestionItem],
+        photoId: Int? = nil,
+        visionModel: String? = nil,
+        promptVersion: String? = nil
+    ) {
         editableSuggestions = Self.merge(preliminary: editableSuggestions, server: server)
+        applyOutcomesContext(
+            photoId: photoId,
+            visionModel: visionModel,
+            promptVersion: promptVersion
+        )
+    }
+
+    /// Clears all outcomes-telemetry context to a clean "not-yet-ready"
+    /// state. Called at fresh-session entry points (`loadSuggestions`,
+    /// `loadPreliminaryClassifications`) so a reused `@State`-held VM
+    /// cannot carry stale (photoId, visionModel, promptVersion, shownAt)
+    /// from a prior cataloging flow into the new session's outcomes POST.
+    private func resetOutcomesContext() {
+        photoId = 0
+        visionModel = nil
+        promptVersion = nil
+        shownAt = nil
+    }
+
+    /// Applies any supplied outcomes-telemetry context values and stamps
+    /// `shownAt` on the first non-empty suggestion landing.
+    ///
+    /// `nil` parameters are no-ops, so existing callers that don't pass context
+    /// preserve any state set through another path. `shownAt` is stamped at most
+    /// once per review session — subsequent merges don't reset it, so confirm +
+    /// retryRemaining cycles report a stable presentation time.
+    private func applyOutcomesContext(
+        photoId: Int?,
+        visionModel: String?,
+        promptVersion: String?
+    ) {
+        if let photoId { self.photoId = photoId }
+        if let visionModel { self.visionModel = visionModel }
+        if let promptVersion { self.promptVersion = promptVersion }
+        if shownAt == nil, !editableSuggestions.isEmpty {
+            shownAt = Date()
+        }
     }
 
     // MARK: - Pure merge
@@ -416,7 +529,8 @@ final class SuggestionReviewViewModel {
                     match: item.match,
                     bbox: item.bbox,
                     teach: true,
-                    origin: .server
+                    origin: .server,
+                    originalCategory: item.category
                 )
             )
             nextId += 1
@@ -427,6 +541,116 @@ final class SuggestionReviewViewModel {
     /// Case- and whitespace-insensitive key for chip-name overlap detection.
     private static func normalize(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    // MARK: - Swift2_014 Outcomes Building
+
+    /// Builds per-suggestion decision telemetry from the presented list.
+    ///
+    /// Pure function — exposed as `static` so tests can drive the classification
+    /// logic without constructing a view model, network stack, or Task scheduler.
+    ///
+    /// Classification rules (Phase 2a):
+    /// - Item in `confirmedIds` with unchanged label → `.accepted`.
+    /// - Item in `confirmedIds` with `editedName != visionName` → `.edited`
+    ///   (carries `editedToLabel`).
+    /// - Item NOT in `confirmedIds` → `.rejected`.
+    /// - `.ignored` is never emitted — deferred until the UI has an explicit
+    ///   dismiss gesture that distinguishes "saw but didn't act" from "toggled
+    ///   off".
+    ///
+    /// Defensive: an `.edited` decision with a missing/empty `editedToLabel`
+    /// would trip the server's Pydantic validator (422). Such entries are
+    /// dropped from the output rather than emitted, per the fire-and-forget
+    /// contract — never throw from telemetry.
+    ///
+    /// - Parameters:
+    ///   - shownAt: Client-captured timestamp at which the suggestion list
+    ///     was first presented. Every outcome inherits this value.
+    ///   - editable: The presented suggestion list as the user last saw it.
+    ///   - confirmedIds: IDs of items that made it through upsert + associate.
+    ///     Every other item is classified `.rejected`.
+    /// - Returns: One `PhotoSuggestionOutcome` per presented item, minus any
+    ///   defensively-dropped broken `.edited` entries.
+    static func buildOutcomes(
+        shownAt: Date,
+        editable: [EditableSuggestion],
+        confirmedIds: Set<Int>
+    ) -> [PhotoSuggestionOutcome] {
+        editable.compactMap { item in
+            let confirmed = confirmedIds.contains(item.id)
+            let finalLabel = item.editedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let originalLabel = item.visionName
+            // Edit-detection baseline is the value `editedName` was PREFILLED
+            // with — which is `match.name` when a catalogue match exists,
+            // NOT `visionName`. Comparing against `visionName` alone would
+            // false-flag every catalogue-matched but untouched confirmation
+            // as `.edited` (poisoning the training signal Swift2_014 exists
+            // to collect — see ultrareview bug_001).
+            let prefilledLabel = item.match?.name ?? item.visionName
+            let wasEdited = confirmed && !finalLabel.isEmpty && finalLabel != prefilledLabel
+
+            let decision: PhotoSuggestionOutcome.Decision
+            let editedTo: String?
+            if wasEdited {
+                decision = .edited
+                editedTo = finalLabel
+            } else if confirmed {
+                decision = .accepted
+                editedTo = nil
+            } else {
+                decision = .rejected
+                editedTo = nil
+            }
+
+            if decision == .edited, (editedTo ?? "").isEmpty {
+                logger.error("[OUTCOMES] dropping edited decision with empty label for '\(originalLabel, privacy: .private)'")
+                return nil
+            }
+
+            return PhotoSuggestionOutcome(
+                label: originalLabel,
+                category: item.originalCategory,
+                confidence: item.confidence,
+                bbox: item.bbox,
+                shownAt: shownAt,
+                decision: decision,
+                editedToLabel: editedTo
+            )
+        }
+    }
+
+    /// Fires `POST /photos/{id}/outcomes` in a detached Task when the VM has
+    /// everything needed. Silent no-op otherwise — outcomes are best-effort.
+    ///
+    /// Must be called ONLY from a confirm-success path (no failedIndices,
+    /// upsert+associate loop completed). Errors are logged, never surfaced.
+    private func fireOutcomesIfReady(apiClient: APIClient) {
+        guard photoId > 0,
+              let visionModel,
+              let shownAt,
+              !editableSuggestions.isEmpty else {
+            return
+        }
+        let confirmedIds = Set(editableSuggestions.filter { $0.included }.map(\.id))
+        let decisions = Self.buildOutcomes(
+            shownAt: shownAt,
+            editable: editableSuggestions,
+            confirmedIds: confirmedIds
+        )
+        let request = PhotoSuggestionOutcomesRequest(
+            visionModel: visionModel,
+            promptVersion: promptVersion,
+            decisions: decisions
+        )
+        let pid = photoId
+        Task { [apiClient, pid, request] in
+            do {
+                _ = try await apiClient.postPhotoSuggestionOutcomes(photoId: pid, request: request)
+            } catch {
+                logger.error("[OUTCOMES] fire-and-forget post failed: \(error.localizedDescription, privacy: .private)")
+            }
+        }
     }
 
     /// Resumes upsert from the first previously failed index.
@@ -466,6 +690,9 @@ final class SuggestionReviewViewModel {
                 return
             }
         }
+        // Swift2_014 — retry success path also fires outcomes (server is
+        // idempotent per (photoId, visionModel), so re-firing is safe).
+        fireOutcomesIfReady(apiClient: apiClient)
         isConfirming = false
     }
 

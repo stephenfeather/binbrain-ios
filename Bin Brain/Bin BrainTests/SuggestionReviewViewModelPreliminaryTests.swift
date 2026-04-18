@@ -183,7 +183,8 @@ private extension EditableSuggestion {
             match: nil,
             bbox: nil,
             teach: true,
-            origin: .preliminary
+            origin: .preliminary,
+            originalCategory: nil
         )
     }
 }

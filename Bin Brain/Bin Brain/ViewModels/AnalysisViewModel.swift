@@ -62,6 +62,13 @@ final class AnalysisViewModel {
     /// The photo ID from the last successful ingest; `nil` until ingest completes.
     private(set) var lastPhotoId: Int?
 
+    /// The VLM that produced the most recent suggestion list, sourced from
+    /// `PhotoSuggestResponse.model`. Consumed by parent views (BinsListView,
+    /// BinDetailView) when handing off to `SuggestionReviewViewModel` so
+    /// Swift2_014 outcomes telemetry knows which model produced the
+    /// decisions being reported. `nil` until a suggest response lands.
+    private(set) var lastVisionModel: String?
+
     /// The last quality gate failure, if any. Set when `phase == .qualityFailed`.
     private(set) var lastQualityFailure: QualityGateFailure?
 
@@ -238,6 +245,7 @@ final class AnalysisViewModel {
         do {
             let suggestResponse = try await suggestTask.value
             suggestions = suggestResponse.suggestions
+            lastVisionModel = suggestResponse.model
             phase = .complete
 
             // Clean up the pending analysis entry on success.
@@ -340,6 +348,7 @@ final class AnalysisViewModel {
         do {
             let suggestResponse = try await apiClient.suggest(photoId: photoId)
             suggestions = suggestResponse.suggestions
+            lastVisionModel = suggestResponse.model
             phase = .complete
         } catch {
             phase = .failed(error.localizedDescription)
@@ -380,6 +389,7 @@ final class AnalysisViewModel {
         do {
             let response = try await apiClient.suggest(photoId: photoId)
             suggestions = response.suggestions
+            lastVisionModel = response.model
             phase = .complete
         } catch {
             phase = .failed(error.localizedDescription)
@@ -392,6 +402,7 @@ final class AnalysisViewModel {
         suggestions = []
         preliminaryClassifications = []
         lastPhotoId = nil
+        lastVisionModel = nil
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastUploadedPhotoData = nil
