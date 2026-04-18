@@ -21,38 +21,42 @@ struct ItemDetailView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            VStack(spacing: 0) {
+                // Photo card sits outside the Form so its AuthenticatedAsyncImage
+                // isn't churned by Form cell recycling (which was cancelling the
+                // in-flight photo fetch every layout pass).
                 if let photoId = item.sourcePhotoId {
-                    Section("Source Photo") {
-                        SourcePhotoCard(
-                            photoId: photoId,
-                            bbox: item.sourceBbox,
-                            apiClient: apiClient
-                        )
-                        .listRowInsets(EdgeInsets())
-                    }
+                    SourcePhotoCard(
+                        photoId: photoId,
+                        bbox: item.sourceBbox,
+                        apiClient: apiClient
+                    )
+                    .padding(.horizontal)
+                    .padding(.top, 8)
                 }
 
-                Section {
-                    HStack {
-                        Text("Name").foregroundStyle(.secondary)
-                        Spacer()
-                        Text(item.name)
-                    }
-                    if let category = item.category {
+                Form {
+                    Section {
                         HStack {
-                            Text("Category").foregroundStyle(.secondary)
+                            Text("Name").foregroundStyle(.secondary)
                             Spacer()
-                            Text(category)
+                            Text(item.name)
+                        }
+                        if let category = item.category {
+                            HStack {
+                                Text("Category").foregroundStyle(.secondary)
+                                Spacer()
+                                Text(category)
+                            }
                         }
                     }
-                }
 
-                Section("Editable Fields") {
-                    TextField("Quantity", text: $quantityText)
-                        .keyboardType(.decimalPad)
-                    TextField("Confidence (0–1)", text: $confidenceText)
-                        .keyboardType(.decimalPad)
+                    Section("Editable Fields") {
+                        TextField("Quantity", text: $quantityText)
+                            .keyboardType(.decimalPad)
+                        TextField("Confidence (0–1)", text: $confidenceText)
+                            .keyboardType(.decimalPad)
+                    }
                 }
             }
             .navigationTitle("Item Details")
@@ -107,6 +111,11 @@ private struct SourcePhotoCard: View {
     let bbox: [Float]?
     let apiClient: APIClient
 
+    /// Fixed height for the card so the Form Section cell has a bounded size.
+    /// Without this, aspect-ratio sizing inside a Form triggers layout loops
+    /// that cancel the in-flight photo fetch before its response body arrives.
+    private static let cardHeight: CGFloat = 240
+
     var body: some View {
         AuthenticatedAsyncImage(photoId: photoId, width: 1024, apiClient: apiClient) { phase in
             switch phase {
@@ -115,10 +124,10 @@ private struct SourcePhotoCard: View {
             case .failure:
                 placeholder(systemName: "photo.badge.exclamationmark")
             case .loading:
-                placeholder(systemName: "photo")
-                    .overlay(ProgressView())
+                placeholder(systemName: "photo").overlay(ProgressView())
             }
         }
+        .frame(height: Self.cardHeight)
     }
 
     private func photoContent(uiImage: UIImage) -> some View {
@@ -135,13 +144,11 @@ private struct SourcePhotoCard: View {
                 }
             }
         }
-        .aspectRatio(uiImage.size, contentMode: .fit)
     }
 
     private func placeholder(systemName: String) -> some View {
         Rectangle()
             .fill(Color(.secondarySystemBackground))
-            .aspectRatio(4.0 / 3.0, contentMode: .fit)
             .overlay(
                 Image(systemName: systemName)
                     .foregroundStyle(.tertiary)
