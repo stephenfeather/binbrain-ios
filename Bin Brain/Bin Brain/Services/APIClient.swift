@@ -255,6 +255,35 @@ final class APIClient {
         )
     }
 
+    /// Posts the per-suggestion decision list for a photo as fire-and-forget telemetry.
+    ///
+    /// The server persists one row per decision to `photo_suggestion_outcomes`,
+    /// idempotently per (`photoId`, `request.visionModel`) — safe to retry.
+    /// This call is NOT on the confirm critical path; callers should wrap it
+    /// in a detached `Task` and swallow errors. See Swift2_014 / Dev2_017.
+    ///
+    /// - Parameters:
+    ///   - photoId: The photo ID returned by a prior `ingest` call.
+    ///   - request: The batched outcomes request (`visionModel`, optional
+    ///     `promptVersion`, and the full per-suggestion decision list).
+    /// - Throws: `APIClientError.missingAPIKey` / `.invalidURL` /
+    ///   `.unexpectedStatusCode`, or any underlying `URLError`. Callers are
+    ///   expected to log and discard — outcomes failure must never surface.
+    @discardableResult
+    func postPhotoSuggestionOutcomes(
+        photoId: Int,
+        request: PhotoSuggestionOutcomesRequest
+    ) async throws -> PhotoSuggestionOutcomesResponse {
+        let body = try JSONEncoder.binBrain.encode(request)
+        return try await self.request(
+            path: "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes",
+            method: "POST",
+            body: body,
+            contentType: "application/json",
+            timeout: 10
+        )
+    }
+
     /// Creates or upserts an item in the catalogue, optionally linking it to a bin.
     ///
     /// Fields with `nil` values are omitted from the multipart request body.
