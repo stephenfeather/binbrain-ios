@@ -73,6 +73,10 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         sut = SuggestionReviewViewModel()
+        // Outcome telemetry tests pre-date Swift2_020 and assert legacy
+        // semantics (no .ignored decisions emitted; rows arrive included).
+        // Three-state telemetry is covered in SuggestionReviewThreeStateTests.swift.
+        sut.threeStateEnabled = false
     }
 
     override func tearDown() async throws {

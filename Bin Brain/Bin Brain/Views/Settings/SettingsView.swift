@@ -28,6 +28,13 @@ struct SettingsView: View {
     /// (Finding #9). Kept in the view, not the view model, because it's pure UI.
     @State private var showModelSelectToast: Bool = false
 
+    /// Swift2_020 — three-state outcome toggle feature flag. Default `true`
+    /// (yellow/green/red tap-cycle UX in suggestion review). Flipping to
+    /// `false` reverts the sheet to the legacy default-on toggle without a
+    /// code release — the VM reads the same key at init time.
+    @AppStorage(SuggestionReviewViewModel.outcomeModelEnabledDefaultsKey)
+    private var outcomeModelEnabled: Bool = true
+
     // MARK: - Body
 
     var body: some View {
@@ -46,6 +53,7 @@ struct SettingsView: View {
             visionModelSection
             imageSizeSection
             searchSection
+            catalogingSection
             uploadQueueSection
         }
         .navigationTitle("Settings")
@@ -348,6 +356,18 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var catalogingSection: some View {
+        Section("Cataloging") {
+            Toggle("Three-state outcome toggle", isOn: $outcomeModelEnabled)
+            Text(outcomeModelEnabled
+                 ? "Tap each suggestion to cycle: ignored (yellow) → accepted (green) → rejected (red). Only accepted items are saved."
+                 : "Legacy behaviour: every suggestion is accepted by default — flip its switch to exclude.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
