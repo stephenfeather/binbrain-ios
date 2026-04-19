@@ -35,6 +35,21 @@ extension EnvironmentValues {
     }
 }
 
+// MARK: - OutcomeQueueManager
+
+struct OutcomeQueueManagerKey: EnvironmentKey {
+    static let defaultValue = OutcomeQueueManager()
+}
+
+extension EnvironmentValues {
+    /// The shared `OutcomeQueueManager` for offline-resilient delivery of
+    /// `POST /photos/{id}/outcomes` (Swift2_018).
+    var outcomeQueueManager: OutcomeQueueManager {
+        get { self[OutcomeQueueManagerKey.self] }
+        set { self[OutcomeQueueManagerKey.self] = newValue }
+    }
+}
+
 // MARK: - Embedded in Split View
 
 struct EmbeddedInSplitViewKey: EnvironmentKey {

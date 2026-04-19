@@ -38,6 +38,7 @@ struct BinDetailView: View {
     @State private var viewModel = BinDetailViewModel()
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.outcomeQueueManager) private var outcomeQueueManager
     @State private var showAddItem = false
     @State private var showCamera = false
     @State private var sortOrder: SortOrder = .name
@@ -348,6 +349,13 @@ struct BinDetailView: View {
                 escalateModelAndReSuggest()
             } : nil
         )
+        // Swift2_018 — inject the durable outcomes queue + context so
+        // confirm() persists each outcomes POST instead of firing it as a
+        // one-shot detached Task. Both must be set before confirm() runs.
+        .onAppear {
+            reviewViewModel.outcomeQueueManager = outcomeQueueManager
+            reviewViewModel.outcomeQueueContext = modelContext
+        }
         // Same fix as BinsListView: observe phase on the visible view, not the background AnalysisProgressView.
         .onChange(of: analysisViewModel.phase) { _, newPhase in
             guard case .complete = newPhase, navigatedOnPreliminary else { return }

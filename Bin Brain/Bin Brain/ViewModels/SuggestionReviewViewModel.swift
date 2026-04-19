@@ -8,6 +8,7 @@
 import Foundation
 import Observation
 import OSLog
+import SwiftData
 import UIKit
 
 // MARK: - ChipOrigin
@@ -159,6 +160,19 @@ final class SuggestionReviewViewModel {
     /// treats empty as "not yet ready" and aborts the call.
     var binId: String = ""
 
+    // MARK: - Swift2_018 Outcomes Queue
+
+    /// Optional reference to the durable outcomes queue. When the view
+    /// injects this alongside `outcomeQueueContext`, `confirm()` enqueues
+    /// the outcomes payload instead of firing it as a one-shot detached
+    /// `Task`. When either is `nil`, the legacy fire-and-forget path
+    /// runs unchanged so the 30+ existing `confirm(...)` test call sites
+    /// keep passing.
+    var outcomeQueueManager: OutcomeQueueManager?
+
+    /// Main-thread `ModelContext` paired with `outcomeQueueManager`.
+    var outcomeQueueContext: ModelContext?
+
     // MARK: - Swift2_014 Outcomes State
 
     /// Photo identifier under review, threaded from `AnalysisViewModel.lastPhotoId`.
@@ -243,8 +257,11 @@ final class SuggestionReviewViewModel {
 
     /// Advances `editableSuggestions[id].outcomeState` per the tap cycle and
     /// keeps `included` in sync (only `.accepted` rows fire the upsert
-    /// pipeline). Unknown ids are no-ops.
+    /// pipeline). Unknown ids are no-ops. Also a no-op while `isConfirming`
+    /// — defence-in-depth for SEC-22-2; the view's `.disabled` already
+    /// blocks the taps in practice.
     func cycleOutcome(id: Int) {
+        guard !isConfirming else { return }
         guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
         let newState = editableSuggestions[idx].outcomeState.next()
         editableSuggestions[idx].outcomeState = newState
@@ -776,6 +793,30 @@ final class SuggestionReviewViewModel {
             decisions: decisions
         )
         let pid = photoId
+
+        // Swift2_018 — preferred path. The queue persists the payload so
+        // network or 5xx failures retry on backoff, NWPathMonitor, and
+        // foreground transitions instead of being silently dropped.
+        if let queue = outcomeQueueManager, let context = outcomeQueueContext {
+            do {
+                let body = try JSONEncoder.binBrain.encode(request)
+                Task { @MainActor in
+                    await queue.enqueue(
+                        photoId: pid,
+                        payload: body,
+                        context: context,
+                        apiClient: apiClient
+                    )
+                }
+            } catch {
+                logger.error("[OUTCOMES] payload encode failed (queue path): \(error.localizedDescription, privacy: .private)")
+            }
+            return
+        }
+
+        // Legacy fire-and-forget path — kept for tests that pre-date the
+        // queue. Production view sites set `outcomeQueueManager` and
+        // `outcomeQueueContext`, which short-circuits this branch.
         Task { [apiClient, pid, request] in
             do {
                 _ = try await apiClient.postPhotoSuggestionOutcomes(photoId: pid, request: request)

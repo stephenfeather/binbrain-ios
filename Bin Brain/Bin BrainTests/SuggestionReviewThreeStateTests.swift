@@ -124,6 +124,59 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
                        "Unknown id must not mutate state — Karpathy: surgical changes")
     }
 
+    /// SEC-22-2 (LOW from PR #22 review): tapping the chip while the
+    /// upsert loop is in flight previously raced with the confirm-time
+    /// `included` filter. The view now disables the Button while
+    /// `isConfirming`; the VM-level guard is defence-in-depth so a direct
+    /// `cycleOutcome` call from code cannot corrupt state either.
+    ///
+    /// The mock handler parks the first `/items` request on a
+    /// `DispatchSemaphore` so the test can observe `isConfirming = true`,
+    /// call `cycleOutcome`, assert it was a no-op, then release the
+    /// semaphore to let confirm complete normally.
+    func testCycleOutcomeNoOpWhileConfirming() async throws {
+        sut.loadSuggestions(try makeSuggestions())
+        let id = sut.editableSuggestions[0].id
+        sut.cycleOutcome(id: id) // → .accepted so confirm has work to do
+
+        let hitItems = expectation(description: "/items request reached the mock")
+        let release = DispatchSemaphore(value: 0)
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path == "/items" {
+                hitItems.fulfill()
+                // Park the URL handler thread (sync context — `wait` is
+                // legal here) until the test releases it.
+                release.wait()
+                return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+            }
+            if path.contains("/outcomes") {
+                return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+            }
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        let confirmTask = Task { await sut.confirm(binId: "BIN-0001", apiClient: client) }
+        await fulfillment(of: [hitItems], timeout: 2.0)
+
+        XCTAssertTrue(sut.isConfirming, "precondition: confirm must be in flight")
+        let before = sut.editableSuggestions[0].outcomeState
+        sut.cycleOutcome(id: id)
+        XCTAssertEqual(sut.editableSuggestions[0].outcomeState, before,
+                       "Cycle must be a no-op while isConfirming — SEC-22-2")
+
+        // Let confirm finish.
+        release.signal()
+        await confirmTask.value
+        XCTAssertFalse(sut.isConfirming)
+    }
+
     // MARK: - Edit-flips-to-accepted
 
     func testEditingIgnoredRowAutoFlipsToAccepted() throws {
