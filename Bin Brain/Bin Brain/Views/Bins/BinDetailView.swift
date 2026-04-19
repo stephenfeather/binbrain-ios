@@ -39,6 +39,7 @@ struct BinDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
     @Environment(\.outcomeQueueManager) private var outcomeQueueManager
+    @Environment(\.sessionManager) private var sessionManager
     @State private var showAddItem = false
     @State private var showCamera = false
     @State private var sortOrder: SortOrder = .name
@@ -232,10 +233,17 @@ struct BinDetailView: View {
                         reviewViewModel.binId = binId
                         catalogingPath.append(.analysis)
                         Task {
+                            // Swift2_019 — transparently open a session on
+                            // the first photo so the natural "open app, tap
+                            // shutter" flow still works. SessionManager
+                            // caches the id for subsequent captures and
+                            // auto-closes after 30 min of inactivity.
+                            let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                             await analysisViewModel.run(
                                 jpegData: rawData,
                                 binId: binId,
                                 apiClient: apiClient,
+                                sessionId: sessionId,
                                 context: modelContext
                             )
                         }
@@ -314,10 +322,12 @@ struct BinDetailView: View {
                 Task {
                     guard let data = capturedPhotoData else { return }
                     navigatedOnPreliminary = false
+                    let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                     await analysisViewModel.overrideQualityGate(
                         jpegData: data,
                         binId: binId,
                         apiClient: apiClient,
+                        sessionId: sessionId,
                         context: modelContext
                     )
                 }

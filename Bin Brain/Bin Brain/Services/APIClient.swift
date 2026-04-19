@@ -216,10 +216,21 @@ final class APIClient {
     ///   - deviceMetadata: Optional JSON string of on-device processing metadata
     ///     (quality scores, OCR, barcodes, classifications). Sent as a
     ///     `device_metadata` text field in the multipart body when non-nil.
-    func ingest(jpegData: Data, binId: String, deviceMetadata: String? = nil) async throws -> IngestResponse {
+    ///   - sessionId: Optional server-minted session UUID (`Swift2_019`).
+    ///     Sent as a `session_id` multipart field. Server PR #35 rejects
+    ///     any non-UUID value with 400 `invalid_session`.
+    func ingest(
+        jpegData: Data,
+        binId: String,
+        deviceMetadata: String? = nil,
+        sessionId: UUID? = nil
+    ) async throws -> IngestResponse {
         var fields = ["bin_id": binId]
         if let deviceMetadata {
             fields["device_metadata"] = deviceMetadata
+        }
+        if let sessionId {
+            fields["session_id"] = sessionId.uuidString.lowercased()
         }
         let (body, boundary) = multipartBody(
             fields: fields,
@@ -233,6 +244,79 @@ final class APIClient {
             body: body,
             contentType: "multipart/form-data; boundary=\(boundary)",
             timeout: 30
+        )
+    }
+
+    // MARK: - Sessions (Swift2_019)
+
+    /// Creates a new server-minted cataloging session. Response row contains
+    /// the `session_id` that subsequent `/ingest` calls must carry.
+    ///
+    /// - Parameter label: Optional human-readable hint, e.g.
+    ///   `"Garage bins 2026-04-19"`. Max 120 chars server-side.
+    /// - Returns: The freshly-opened `Session`.
+    func createSession(label: String? = nil) async throws -> Session {
+        let body: Data
+        if let label {
+            body = try JSONSerialization.data(withJSONObject: ["label": label])
+        } else {
+            body = try JSONSerialization.data(withJSONObject: [:] as [String: Any])
+        }
+        return try await request(
+            path: "/sessions",
+            method: "POST",
+            body: body,
+            contentType: "application/json",
+            timeout: 10
+        )
+    }
+
+    /// Closes the given session on the server. 404 / 410 responses are
+    /// treated as idempotent success because both mean "already gone" —
+    /// the server-side row is in a terminal state either way.
+    ///
+    /// - Parameter id: The session UUID to close.
+    /// - Returns: The closed session row (or `nil` if 404/410).
+    /// - Throws: `URLError` on transport failure so the caller can decide
+    ///   whether to retry. All other HTTP-layer errors bubble up via
+    ///   `APIClientError.unexpectedStatusCode`.
+    @discardableResult
+    func endSession(id: UUID) async throws -> Session? {
+        // Bypass the generic request<T> path so we can treat 404/410 as
+        // success without relying on throw/catch control flow.
+        guard hasAPIKey else { throw APIClientError.missingAPIKey }
+        let path = "/sessions/\(id.uuidString.lowercased())"
+        let urlString = baseURL + path
+        guard let url = URL(string: urlString) else {
+            throw APIClientError.invalidURL(urlString)
+        }
+        var urlRequest = URLRequest(url: url, timeoutInterval: 10)
+        urlRequest.httpMethod = "DELETE"
+        if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.unexpectedStatusCode(-1)
+        }
+        if (200...299).contains(http.statusCode) {
+            return try? JSONDecoder.binBrain.decode(Session.self, from: data)
+        }
+        if http.statusCode == 404 || http.statusCode == 410 {
+            return nil
+        }
+        throw APIClientError.unexpectedStatusCode(http.statusCode)
+    }
+
+    /// Fetches a single session by id. 404 if not owned or not found.
+    func getSession(id: UUID) async throws -> Session {
+        try await request(
+            path: "/sessions/\(id.uuidString.lowercased())",
+            method: "GET",
+            body: nil,
+            contentType: nil,
+            timeout: 10
         )
     }
 

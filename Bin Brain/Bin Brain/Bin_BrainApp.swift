@@ -20,6 +20,7 @@ struct Bin_BrainApp: App {
     @State private var apiClient = APIClient()
     @State private var uploadQueueManager = UploadQueueManager()
     @State private var outcomeQueueManager = OutcomeQueueManager()
+    @State private var sessionManager = SessionManager()
     @State private var serverMonitor = ServerMonitor()
 
     // MARK: - Initializer
@@ -75,6 +76,7 @@ struct Bin_BrainApp: App {
                 .environment(\.apiClient, apiClient)
                 .environment(\.uploadQueueManager, uploadQueueManager)
                 .environment(\.outcomeQueueManager, outcomeQueueManager)
+                .environment(\.sessionManager, sessionManager)
                 .environment(\.serverMonitor, serverMonitor)
         }
         .modelContainer(sharedModelContainer)
