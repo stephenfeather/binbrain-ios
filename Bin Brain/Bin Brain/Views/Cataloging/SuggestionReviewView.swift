@@ -191,7 +191,13 @@ struct SuggestionReviewView: View {
                     }
                     .disabled(viewModel.isConfirming)
                 } else if viewModel.canConfirm {
-                    Button("Confirm") {
+                    // Swift2_020 — `confirmButtonTitle` shows the ignored count
+                    // under three-state so users see what they are skipping.
+                    // Still tappable with ignored rows present; the label is
+                    // the guardrail (not a hard block) per the plan's rationale
+                    // against forcing per-row engagement when the user simply
+                    // doesn't care about some items.
+                    Button(viewModel.confirmButtonTitle) {
                         Task {
                             await viewModel.confirm(binId: viewModel.binId, apiClient: apiClient)
                         }
@@ -230,10 +236,22 @@ struct SuggestionReviewView: View {
                     .accessibilityLabel("Preliminary suggestion, confirming with AI")
             }
             HStack {
-                Toggle(isOn: suggestion.included) {
+                // Swift2_020 — three-state chip replaces the legacy Toggle when
+                // the feature flag is on. The Toggle path stays available so
+                // a Settings flip (no code release) reverts to the default-on
+                // UX without losing any other row behaviour.
+                if viewModel.threeStateEnabled {
+                    outcomeChip(for: s)
                     Text(s.editedName)
                         .font(.headline)
                         .foregroundStyle(isPreliminary ? .secondary : .primary)
+                    Spacer(minLength: 0)
+                } else {
+                    Toggle(isOn: suggestion.included) {
+                        Text(s.editedName)
+                            .font(.headline)
+                            .foregroundStyle(isPreliminary ? .secondary : .primary)
+                    }
                 }
 
                 if !isPreliminary {
@@ -316,6 +334,75 @@ struct SuggestionReviewView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityHint(isPreliminary ? "Preliminary — will be confirmed by the server" : "")
+    }
+
+    // MARK: - Swift2_020 Three-State Chip
+
+    /// Tappable chip that cycles the row's `OutcomeState` on each tap.
+    ///
+    /// Don't-rely-on-color: renders a distinct SF Symbol per state on top of
+    /// the color fill so users without color perception still read the state
+    /// from the icon shape. A short fade cross-dissolves the chip when the
+    /// state changes; no spring, no bounce (HIG: respect reduced-motion; the
+    /// fade is brief enough that it renders as a state swap, not animation).
+    private func outcomeChip(for suggestion: EditableSuggestion) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                viewModel.cycleOutcome(id: suggestion.id)
+            }
+        } label: {
+            Image(systemName: Self.chipIcon(for: suggestion.outcomeState))
+                .font(.title2)
+                .foregroundStyle(.white)
+                .padding(6)
+                .background(
+                    Circle()
+                        .fill(Self.chipColor(for: suggestion.outcomeState))
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(.primary.opacity(0.15), lineWidth: 0.5)
+                )
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Self.chipAccessibilityLabel(
+            name: suggestion.editedName,
+            state: suggestion.outcomeState
+        ))
+        .accessibilityHint(Self.chipAccessibilityHint(current: suggestion.outcomeState))
+    }
+
+    private static func chipIcon(for state: OutcomeState) -> String {
+        switch state {
+        case .ignored: return "circle"
+        case .accepted: return "checkmark"
+        case .rejected: return "xmark"
+        }
+    }
+
+    private static func chipColor(for state: OutcomeState) -> Color {
+        switch state {
+        case .ignored: return .yellow
+        case .accepted: return .green
+        case .rejected: return .red
+        }
+    }
+
+    private static func chipAccessibilityLabel(name: String, state: OutcomeState) -> String {
+        switch state {
+        case .ignored: return "\(name), ignored"
+        case .accepted: return "\(name), accepted"
+        case .rejected: return "\(name), rejected"
+        }
+    }
+
+    private static func chipAccessibilityHint(current: OutcomeState) -> String {
+        switch current.next() {
+        case .ignored: return "Double-tap to ignore"
+        case .accepted: return "Double-tap to accept"
+        case .rejected: return "Double-tap to reject"
+        }
     }
 
     // MARK: - Bbox Geometry
