@@ -65,6 +65,13 @@ struct Bin_BrainApp: App {
             RootView()
                 .task { await requestNotificationPermission() }
                 .task {
+                    // Swift2_018b F-1 — reclaim any rows left `.sending`
+                    // by a previous process that crashed mid-POST. Must
+                    // run BEFORE the first drain; `startMonitoring` may
+                    // trigger a drain via NWPathMonitor immediately.
+                    outcomeQueueManager.reclaimOrphanedSendingRows(
+                        context: sharedModelContainer.mainContext
+                    )
                     // Swift2_018 — start NWPathMonitor + foreground observer
                     // for the outcomes queue so retries fire automatically
                     // on connectivity recovery. Idempotent.

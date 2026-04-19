@@ -190,6 +190,36 @@ final class OutcomeQueueManager {
         refreshCounts(context: context)
     }
 
+    /// Flips every `.sending` row back to `.pending` without touching
+    /// `retryCount`. Call once per process at launch before the first
+    /// `drain(...)` — `Bin_BrainApp` does this.
+    ///
+    /// Swift2_018b F-1 / SEC-23-1: `.sending` rows that the app
+    /// crashed-in-flight previously leaked for 7 days until `expireAged`
+    /// swept them to `.expired` with zero retries. Server is append-only
+    /// (per F-6 client idempotency plan) — a duplicate POST is strictly
+    /// preferable to a dropped training signal, so we do NOT bump
+    /// `retryCount` on reclaim: callers can distinguish "crashed mid
+    /// first attempt" from "retried normally" via the count.
+    func reclaimOrphanedSendingRows(context: ModelContext) {
+        let all: [PendingOutcome]
+        do {
+            all = try context.fetch(FetchDescriptor<PendingOutcome>())
+        } catch {
+            logger.error("[OUTCOMES] reclaim fetch failed: \(error.localizedDescription, privacy: .private)")
+            return
+        }
+        var touched = false
+        for row in all where row.status == .sending {
+            row.status = .pending
+            touched = true
+        }
+        if touched {
+            save(context)
+            refreshCounts(context: context)
+        }
+    }
+
     /// Recomputes `pendingCount`, `deliveredCount`, and `expiredCount`
     /// from the persisted rows. Called after every mutation.
     func refreshCounts(context: ModelContext) {
@@ -284,6 +314,14 @@ final class OutcomeQueueManager {
         context: ModelContext,
         apiClient: APIClient
     ) async {
+        // Swift2_018b F-3 — CAS guard. Concurrent drain triggers
+        // (NWPathMonitor `.satisfied` + willEnterForeground +
+        // scenePhase `.active`) can schedule two `attemptDelivery`
+        // Tasks for the same row. Main-actor isolation guarantees the
+        // check-flip-save below runs to completion between awaits, so
+        // the second task on resumption sees `.sending` and returns
+        // early — only one POST fires.
+        guard row.status == .pending else { return }
         row.status = .sending
         save(context)
 
@@ -293,7 +331,8 @@ final class OutcomeQueueManager {
             status = try await apiClient.postPhotoSuggestionOutcomesRaw(
                 photoId: row.photoId,
                 body: row.payload,
-                clientRetryCount: row.retryCount
+                clientRetryCount: row.retryCount,
+                idempotencyKey: row.id
             )
         } catch let urlError as URLError {
             row.lastErrorCode = urlError.code.rawValue

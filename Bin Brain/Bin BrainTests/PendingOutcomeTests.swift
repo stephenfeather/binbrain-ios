@@ -113,4 +113,57 @@ final class PendingOutcomeTests: XCTestCase {
         XCTAssertEqual(OutcomeQueueManager.backoff(retryCount: -1), 0,
                        "Negative retryCount defends against corrupt persistence")
     }
+
+    // MARK: - F-5: on-disk persistence round-trip
+
+    /// Swift2_018b F-5. The whole point of the `PendingOutcome` queue is
+    /// that it "survives app termination" (see the file header comment).
+    /// Every prior test uses `isStoredInMemoryOnly: true` — that never
+    /// exercises the SQLite write path, the store-file format, or the
+    /// `@Attribute(.unique)` enforcement. This test creates a file-backed
+    /// `ModelContainer` in a tempdir, writes a row through container1,
+    /// tears container1 down (simulated app exit), opens container2
+    /// against the same URL, and asserts the row is intact.
+    func testRowSurvivesContainerTeardownAndRelaunch() throws {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingoutcome-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: tempURL)
+            let wal = tempURL.appendingPathExtension("wal")
+            let shm = tempURL.appendingPathExtension("shm")
+            try? FileManager.default.removeItem(at: wal)
+            try? FileManager.default.removeItem(at: shm)
+        }
+
+        // Launch 1 — write a row and tear down.
+        let originalId: UUID
+        do {
+            let schema = Schema([PendingOutcome.self])
+            let config = ModelConfiguration(schema: schema, url: tempURL)
+            let container1 = try ModelContainer(for: schema, configurations: config)
+            let ctx1 = ModelContext(container1)
+            let row = PendingOutcome(photoId: 77, payload: Data("{\"hi\":1}".utf8))
+            row.retryCount = 4
+            originalId = row.id
+            ctx1.insert(row)
+            try ctx1.save()
+            // container1 released when scope ends — simulates app exit.
+        }
+
+        // Launch 2 — open the same on-disk store and fetch the row.
+        let schema = Schema([PendingOutcome.self])
+        let config = ModelConfiguration(schema: schema, url: tempURL)
+        let container2 = try ModelContainer(for: schema, configurations: config)
+        let ctx2 = ModelContext(container2)
+        let rows = try ctx2.fetch(FetchDescriptor<PendingOutcome>())
+
+        XCTAssertEqual(rows.count, 1,
+                       "PendingOutcome must persist across ModelContainer teardown — the queue's whole guarantee")
+        XCTAssertEqual(rows.first?.id, originalId,
+                       "UUID identity must round-trip through SQLite")
+        XCTAssertEqual(rows.first?.photoId, 77)
+        XCTAssertEqual(rows.first?.retryCount, 4)
+        XCTAssertEqual(rows.first?.status, .pending,
+                       "Int raw value of the status enum must round-trip — frozen values per PendingOutcome doc")
+    }
 }

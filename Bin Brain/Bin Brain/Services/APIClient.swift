@@ -380,11 +380,18 @@ final class APIClient {
     ///   - body: Already-serialized JSON payload (frozen at enqueue time).
     ///   - clientRetryCount: Value forwarded as `X-Client-Retry-Count` so
     ///     the server can log the number of attempts it took to deliver.
+    ///   - idempotencyKey: Stable client-side UUID forwarded as
+    ///     `Idempotency-Key` (`Swift2_018b` F-6). Every retry for the
+    ///     same `PendingOutcome` row reuses the same value so the server
+    ///     can collapse duplicate attempts once the matching ApiDev PR
+    ///     adds the dedup column. Until that server PR ships, the header
+    ///     is ignored — still safe to send.
     /// - Returns: The HTTP status code returned by the server.
     func postPhotoSuggestionOutcomesRaw(
         photoId: Int,
         body: Data,
-        clientRetryCount: Int
+        clientRetryCount: Int,
+        idempotencyKey: UUID
     ) async throws -> Int {
         guard hasAPIKey else { throw APIClientError.missingAPIKey }
         let urlString = baseURL + "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes"
@@ -396,6 +403,7 @@ final class APIClient {
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("\(max(clientRetryCount, 0))", forHTTPHeaderField: "X-Client-Retry-Count")
+        urlRequest.setValue(idempotencyKey.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
         if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
