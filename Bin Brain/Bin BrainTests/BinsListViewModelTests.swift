@@ -180,4 +180,141 @@ final class BinsListViewModelTests: XCTestCase {
         XCTAssertEqual(sut.bins[0].binId, "BIN-0001", "First bin should be BIN-0001")
         XCTAssertEqual(sut.bins[1].binId, "BIN-0002", "Second bin should be BIN-0002")
     }
+
+    // MARK: - Swift2_022 — Binless (UNASSIGNED sentinel) surfacing
+
+    /// Server returns UNASSIGNED ordered by its default alphanumeric spot.
+    /// The VM must pin it to index 0 regardless of that position so users
+    /// can always find binless items at the top of the list.
+    private var listBinsWithSentinelJSON: Data {
+        Data("""
+        {
+            "version": "1",
+            "bins": [
+                {"bin_id": "BIN-0001", "item_count": 3, "photo_count": 2, "last_updated": "2026-02-25T20:00:00Z"},
+                {"bin_id": "UNASSIGNED", "item_count": 0, "photo_count": 0, "last_updated": "2026-04-01T00:00:00Z"},
+                {"bin_id": "BIN-0002", "item_count": 1, "photo_count": 1, "last_updated": "2026-02-24T10:00:00Z"}
+            ]
+        }
+        """.utf8)
+    }
+
+    func testLoadPinsSentinelToTopRegardlessOfAlphanumericOrder() async {
+        let client = makeMockAPIClient { [self] request in
+            return (mockResponse(statusCode: 200, for: request), listBinsWithSentinelJSON)
+        }
+
+        await sut.load(apiClient: client)
+
+        XCTAssertEqual(sut.bins.count, 3)
+        XCTAssertEqual(sut.bins[0].binId, "UNASSIGNED",
+                       "UNASSIGNED must be pinned first so Binless is always discoverable")
+        XCTAssertEqual(sut.bins[1].binId, "BIN-0001",
+                       "Non-sentinel bins retain APIClient's alphanumeric order")
+        XCTAssertEqual(sut.bins[2].binId, "BIN-0002")
+    }
+
+    func testDisplayNameRemapsSentinelToBinless() {
+        XCTAssertEqual(BinsListViewModel.displayName(for: "UNASSIGNED"), "Binless",
+                       "The raw sentinel id must never be shown to the user")
+        XCTAssertEqual(BinsListViewModel.displayName(for: "BIN-0042"), "BIN-0042",
+                       "Regular bin ids pass through unchanged")
+    }
+
+    func testIsSentinelIdentifiesUnassignedOnly() {
+        XCTAssertTrue(BinsListViewModel.isSentinel("UNASSIGNED"))
+        XCTAssertFalse(BinsListViewModel.isSentinel("BIN-0001"))
+        XCTAssertFalse(BinsListViewModel.isSentinel("unassigned"),
+                       "Sentinel detection is case-sensitive — server id is UPPER-CASE")
+    }
+
+    // MARK: - Swift2_022 — deleteBin
+
+    private var deleteBinSuccessJSON: Data {
+        Data("""
+        {"status":"deleted","bin_id":"BIN-0001","moved_item_count":3,"deleted_at":"2026-04-19T22:30:00Z"}
+        """.utf8)
+    }
+
+    private var notFoundJSON: Data {
+        Data("""
+        {"version":"1","error":{"code":"not_found","message":"Bin not found"}}
+        """.utf8)
+    }
+
+    private var cannotDeleteSentinelJSON: Data {
+        Data("""
+        {"version":"1","error":{"code":"cannot_delete_sentinel","message":"The UNASSIGNED bin cannot be deleted."}}
+        """.utf8)
+    }
+
+    func testDeleteBinHappyPathSetsToastAndRefreshes() async {
+        var callCount = 0
+        let client = makeMockAPIClient { [self] request in
+            callCount += 1
+            if request.httpMethod == "DELETE" {
+                return (mockResponse(statusCode: 200, for: request), deleteBinSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), listBinsSuccessJSON)
+        }
+
+        await sut.deleteBin(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(callCount, 2, "deleteBin must issue DELETE then reload via listBins")
+        XCTAssertNotNil(sut.toastMessage, "Successful delete must surface a toast")
+        XCTAssertTrue(sut.toastMessage?.contains("3") ?? false,
+                      "Toast must cite moved_item_count so the user sees where items went")
+        XCTAssertTrue(sut.toastMessage?.localizedCaseInsensitiveContains("binless") ?? false,
+                      "Toast copy must use the word 'binless' not 'unassigned'")
+    }
+
+    /// Even though the UI removes the swipe affordance for UNASSIGNED, the VM
+    /// must still reject a sentinel delete if one is ever invoked — defense
+    /// in depth against a latent bug in the view layer.
+    func testDeleteBinRejectsSentinelWithoutTouchingNetwork() async {
+        var networkHit = false
+        let client = makeMockAPIClient { [self] request in
+            networkHit = true
+            return (mockResponse(statusCode: 500, for: request), Data())
+        }
+
+        await sut.deleteBin(binId: "UNASSIGNED", apiClient: client)
+
+        XCTAssertFalse(networkHit,
+                       "Sentinel delete must short-circuit before any network call — matches the OpenAPI guidance that the UI should never make this call")
+        XCTAssertNil(sut.toastMessage, "No toast on a refused sentinel delete")
+    }
+
+    func testDeleteBin404SetsBinNoLongerExistsBanner() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.httpMethod == "DELETE" {
+                return (mockResponse(statusCode: 404, for: request), notFoundJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), listBinsSuccessJSON)
+        }
+
+        await sut.deleteBin(binId: "BIN-MISSING", apiClient: client)
+
+        XCTAssertEqual(sut.toastMessage, "Bin no longer exists",
+                       "404 treated as idempotent success but banner tells the user the bin was already gone")
+        XCTAssertEqual(sut.bins.count, 2, "List must be refreshed after 404")
+    }
+
+    func testDeleteBin400CannotDeleteSentinelSurfacesErrorMessage() async {
+        let client = makeMockAPIClient { [self] request in
+            if request.httpMethod == "DELETE" {
+                return (mockResponse(statusCode: 400, for: request), cannotDeleteSentinelJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), listBinsSuccessJSON)
+        }
+
+        // Force past the VM's own sentinel guard by passing a non-sentinel id
+        // (the server-side rejection reflects a latent UI bug per the prompt).
+        await sut.deleteBin(binId: "BIN-SOMEHOW", apiClient: client)
+
+        XCTAssertNotNil(sut.error,
+                        "Server 400 cannot_delete_sentinel must surface so we notice the UI guard bug")
+        XCTAssertTrue(sut.error?.contains("UNASSIGNED") ?? false,
+                      "Error message should include the server's explanation")
+    }
 }

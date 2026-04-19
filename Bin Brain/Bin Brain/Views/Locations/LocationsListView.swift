@@ -73,7 +73,7 @@ struct LocationsListView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { location in
-                Text("Delete \"\(location.name)\"? Bins assigned to this location will become unassigned.")
+                Text("Delete \"\(location.name)\"? Bins assigned to this location will become binless.")
             }
     }
 
