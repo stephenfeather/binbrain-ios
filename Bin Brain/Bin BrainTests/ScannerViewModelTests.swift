@@ -231,4 +231,46 @@ final class ScannerViewModelTests: XCTestCase {
         XCTAssertEqual(haptic.count, 1,
                        "Duplicate QR events after the first success must NOT re-fire the haptic")
     }
+
+    // MARK: - Swift2_023 — reserved bin name pre-flight
+
+    /// A QR encoding the reserved sentinel must be rejected before reaching
+    /// `scannedBinId` or transitioning to `.awaitingPhoto`. Closes QA PR #27
+    /// observation O-1 (raw "UNASSIGNED" displayed in scan HUD).
+    func testReservedBinNameQRDoesNotAdvancePhase() {
+        let haptic = HapticCounter()
+        let vm = ScannerViewModel(hapticFeedback: haptic.fire)
+
+        vm.qrDetected("UNASSIGNED")
+
+        XCTAssertEqual(vm.phase, .scanning,
+                       "Reserved-name QR must leave the phase at .scanning so the user can scan a real bin")
+        XCTAssertNil(vm.scannedBinId,
+                     "scannedBinId must remain nil — the scan HUD reads this directly")
+        XCTAssertEqual(vm.scanError, "This QR encodes a reserved bin name and was ignored.",
+                       "Friendly inline error must explain why the QR was rejected")
+        XCTAssertEqual(haptic.count, 0,
+                       "Haptic confirms a *successful* scan; it must NOT fire on a reserved-name reject")
+    }
+
+    func testReservedBinNameRejectionIsCaseAndWhitespaceInsensitive() {
+        sut.qrDetected("  binless  ")
+
+        XCTAssertEqual(sut.phase, .scanning)
+        XCTAssertNil(sut.scannedBinId)
+        XCTAssertNotNil(sut.scanError)
+    }
+
+    /// After a reserved-name reject, the user can still scan a normal bin —
+    /// state is recoverable, not latched.
+    func testRecoveryAfterReservedNameReject() {
+        sut.qrDetected("UNASSIGNED")
+        XCTAssertEqual(sut.phase, .scanning)
+
+        sut.qrDetected("BIN-0001")
+
+        XCTAssertEqual(sut.phase, .awaitingPhoto)
+        XCTAssertEqual(sut.scannedBinId, "BIN-0001")
+        XCTAssertNil(sut.scanError, "scanError must clear on the next successful scan")
+    }
 }
