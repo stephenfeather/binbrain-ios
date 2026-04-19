@@ -66,6 +66,11 @@ struct EditableSuggestion: Identifiable {
     /// server wants for training, not the user's replacement. Nil for chips
     /// that did not come from a server suggestion (preliminary CoreML chips).
     let originalCategory: String?
+    /// Three-state outcome (Swift2_020). Defaults to `.accepted` so any code
+    /// path that constructs an `EditableSuggestion` without setting state
+    /// keeps the legacy default-on semantics. The view model overrides this
+    /// at `loadSuggestions` time when the feature flag is on.
+    var outcomeState: OutcomeState = .accepted
 }
 
 // MARK: - SuggestionReviewViewModel
@@ -204,15 +209,76 @@ final class SuggestionReviewViewModel {
     /// no public mutable seam.
     private let decoder: @Sendable (Data) -> UIImage?
 
+    // MARK: - Swift2_020 Three-State Outcome Toggle
+
+    /// `UserDefaults` key surfaced via `@AppStorage` in `SettingsView`.
+    /// Production default is `true` (three-state on); flipping to `false`
+    /// reverts the suggestion-review screen to legacy default-on UX without
+    /// a code release.
+    static let outcomeModelEnabledDefaultsKey = "outcomeModelEnabled"
+
+    /// Whether the three-state outcome toggle is active. Reads
+    /// `UserDefaults.standard` at init time so settings flips take effect on
+    /// the next sheet presentation; tests override directly.
+    var threeStateEnabled: Bool
+
+    /// Number of rows currently in the `.ignored` state. Drives
+    /// `confirmButtonTitle` so users can see what they're about to skip.
+    /// Always zero in legacy mode (rows arrive `.accepted`).
+    ///
+    /// - Complexity: O(n).
+    var ignoredCount: Int {
+        editableSuggestions.reduce(into: 0) { count, item in
+            if item.outcomeState == .ignored { count += 1 }
+        }
+    }
+
+    /// Title for the Confirm button. `"Confirm"` when nothing is ignored or
+    /// the flag is off; `"Confirm (N ignored)"` when N > 0 under three-state.
+    var confirmButtonTitle: String {
+        guard threeStateEnabled else { return "Confirm" }
+        let n = ignoredCount
+        return n == 0 ? "Confirm" : "Confirm (\(n) ignored)"
+    }
+
+    /// Advances `editableSuggestions[id].outcomeState` per the tap cycle and
+    /// keeps `included` in sync (only `.accepted` rows fire the upsert
+    /// pipeline). Unknown ids are no-ops.
+    func cycleOutcome(id: Int) {
+        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        let newState = editableSuggestions[idx].outcomeState.next()
+        editableSuggestions[idx].outcomeState = newState
+        editableSuggestions[idx].included = (newState == .accepted)
+    }
+
     // MARK: - Init
 
     /// Creates a SuggestionReviewViewModel with an optional custom decoder.
     ///
-    /// - Parameter decoder: The function used to decode `photoData` JPEG bytes
-    ///   into a `UIImage`. Defaults to `UIImage(data:)`. Tests supply a
-    ///   capturing closure to observe the decode thread or intercept results.
-    init(decoder: @escaping @Sendable (Data) -> UIImage? = { UIImage(data: $0) }) {
+    /// - Parameters:
+    ///   - decoder: The function used to decode `photoData` JPEG bytes into a
+    ///     `UIImage`. Defaults to `UIImage(data:)`. Tests supply a capturing
+    ///     closure to observe the decode thread or intercept results.
+    ///   - threeStateEnabled: Override the `outcomeModelEnabled` user default.
+    ///     Production callers omit this so the value tracks Settings; tests
+    ///     pass an explicit Bool to pin the mode.
+    init(
+        decoder: @escaping @Sendable (Data) -> UIImage? = { UIImage(data: $0) },
+        threeStateEnabled: Bool? = nil
+    ) {
         self.decoder = decoder
+        if let threeStateEnabled {
+            self.threeStateEnabled = threeStateEnabled
+        } else {
+            // `UserDefaults.bool(forKey:)` returns `false` for an unset key,
+            // which would silently disable the flag on first launch. Read via
+            // `object(forKey:)` so an absent key falls back to the documented
+            // production default of `true`.
+            let stored = UserDefaults.standard.object(
+                forKey: Self.outcomeModelEnabledDefaultsKey
+            ) as? Bool
+            self.threeStateEnabled = stored ?? true
+        }
     }
 
     // MARK: - Setup
@@ -249,12 +315,16 @@ final class SuggestionReviewViewModel {
         // guarantees a reused VM cannot attach new decisions to old context.
         // (ultrareview bug_003 + CodeRabbit defense-in-depth follow-up.)
         resetOutcomesContext()
+        // Swift2_020 — under three-state, new rows arrive `.ignored`
+        // (yellow) and excluded; legacy mode keeps default-on `.accepted`.
+        let initialState: OutcomeState = threeStateEnabled ? .ignored : .accepted
+        let initialIncluded = (initialState == .accepted)
         editableSuggestions = suggestions.enumerated().map { idx, item in
             let name = item.match?.name ?? item.name
             let category = item.match?.category ?? item.category ?? ""
             return EditableSuggestion(
                 id: idx,
-                included: true,
+                included: initialIncluded,
                 editedName: name,
                 editedCategory: category,
                 editedQuantity: "",
@@ -263,7 +333,8 @@ final class SuggestionReviewViewModel {
                 match: item.match,
                 bbox: item.bbox,
                 teach: true,
-                originalCategory: item.category
+                originalCategory: item.category,
+                outcomeState: initialState
             )
         }
         failedIndices = []
@@ -393,10 +464,15 @@ final class SuggestionReviewViewModel {
         resetOutcomesContext()
         let limit = max(0, min(topK, classifications.count))
         originalPreliminaryTopK = Array(classifications.prefix(limit))
+        // Swift2_020 — preliminary chips obey the same three-state initial
+        // state as server suggestions, so the user sees a consistent yellow
+        // baseline regardless of which inference path produced the chip.
+        let initialState: OutcomeState = threeStateEnabled ? .ignored : .accepted
+        let initialIncluded = (initialState == .accepted)
         editableSuggestions = classifications.prefix(limit).enumerated().map { idx, cls in
             EditableSuggestion(
                 id: idx,
-                included: true,
+                included: initialIncluded,
                 editedName: cls.label,
                 editedCategory: "",
                 editedQuantity: "",
@@ -406,7 +482,8 @@ final class SuggestionReviewViewModel {
                 bbox: nil,
                 teach: true,
                 origin: .preliminary,
-                originalCategory: nil
+                originalCategory: nil,
+                outcomeState: initialState
             )
         }
         failedIndices = []
@@ -434,9 +511,18 @@ final class SuggestionReviewViewModel {
     }
 
     func markEditedIfPreliminary(id: Int) {
-        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }),
-              editableSuggestions[idx].origin == .preliminary else { return }
-        editableSuggestions[idx].origin = .edited
+        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        if editableSuggestions[idx].origin == .preliminary {
+            editableSuggestions[idx].origin = .edited
+        }
+        // Swift2_020 — editing implies endorsement: an .ignored row that the
+        // user starts modifying flips to .accepted so the upsert pipeline
+        // picks it up. .rejected rows stay rejected (require explicit
+        // re-tap to revive).
+        if threeStateEnabled, editableSuggestions[idx].outcomeState == .ignored {
+            editableSuggestions[idx].outcomeState = .accepted
+            editableSuggestions[idx].included = true
+        }
     }
 
     /// Reconciles the current preliminary chips with the server's suggestions.
@@ -460,7 +546,11 @@ final class SuggestionReviewViewModel {
         visionModel: String? = nil,
         promptVersion: String? = nil
     ) {
-        editableSuggestions = Self.merge(preliminary: editableSuggestions, server: server)
+        editableSuggestions = Self.merge(
+            preliminary: editableSuggestions,
+            server: server,
+            threeStateEnabled: threeStateEnabled
+        )
         applyOutcomesContext(
             photoId: photoId,
             visionModel: visionModel,
@@ -509,7 +599,8 @@ final class SuggestionReviewViewModel {
     /// the prompt's TDD plan (REFACTOR step).
     static func merge(
         preliminary: [EditableSuggestion],
-        server: [SuggestionItem]
+        server: [SuggestionItem],
+        threeStateEnabled: Bool = false
     ) -> [EditableSuggestion] {
         let editedChips = preliminary.filter { $0.origin == .edited }
         let editedNames = Set(editedChips.map { Self.normalize($0.editedName) })
@@ -517,6 +608,11 @@ final class SuggestionReviewViewModel {
         var result = editedChips
         var nextId = (result.map(\.id).max() ?? -1) + 1
 
+        // Server items added by merge follow the same three-state initial
+        // state as a fresh `loadSuggestions` call so the user sees a
+        // consistent baseline regardless of the load path.
+        let initialState: OutcomeState = threeStateEnabled ? .ignored : .accepted
+        let initialIncluded = (initialState == .accepted)
         for item in server {
             let key = Self.normalize(item.name)
             if editedNames.contains(key) { continue }
@@ -525,7 +621,7 @@ final class SuggestionReviewViewModel {
             result.append(
                 EditableSuggestion(
                     id: nextId,
-                    included: true,
+                    included: initialIncluded,
                     editedName: name,
                     editedCategory: category,
                     editedQuantity: "",
@@ -535,7 +631,8 @@ final class SuggestionReviewViewModel {
                     bbox: item.bbox,
                     teach: true,
                     origin: .server,
-                    originalCategory: item.category
+                    originalCategory: item.category,
+                    outcomeState: initialState
                 )
             )
             nextId += 1
@@ -580,10 +677,10 @@ final class SuggestionReviewViewModel {
     static func buildOutcomes(
         shownAt: Date,
         editable: [EditableSuggestion],
-        confirmedIds: Set<Int>
+        confirmedIds: Set<Int>,
+        threeStateEnabled: Bool = false
     ) -> [PhotoSuggestionOutcome] {
         editable.compactMap { item in
-            let confirmed = confirmedIds.contains(item.id)
             let finalLabel = item.editedName.trimmingCharacters(in: .whitespacesAndNewlines)
             let originalLabel = item.visionName
             // Edit-detection baseline is the value `editedName` was PREFILLED
@@ -593,19 +690,43 @@ final class SuggestionReviewViewModel {
             // as `.edited` (poisoning the training signal Swift2_014 exists
             // to collect — see ultrareview bug_001).
             let prefilledLabel = item.match?.name ?? item.visionName
-            let wasEdited = confirmed && !finalLabel.isEmpty && finalLabel != prefilledLabel
+            let labelChanged = !finalLabel.isEmpty && finalLabel != prefilledLabel
 
             let decision: PhotoSuggestionOutcome.Decision
             let editedTo: String?
-            if wasEdited {
-                decision = .edited
-                editedTo = finalLabel
-            } else if confirmed {
-                decision = .accepted
-                editedTo = nil
+            if threeStateEnabled {
+                // Swift2_020 — `outcomeState` is authoritative. `.accepted`
+                // with a divergent label still surfaces as `.edited` so the
+                // training signal mirrors what the user actually saved.
+                switch item.outcomeState {
+                case .accepted:
+                    if labelChanged {
+                        decision = .edited
+                        editedTo = finalLabel
+                    } else {
+                        decision = .accepted
+                        editedTo = nil
+                    }
+                case .rejected:
+                    decision = .rejected
+                    editedTo = nil
+                case .ignored:
+                    decision = .ignored
+                    editedTo = nil
+                }
             } else {
-                decision = .rejected
-                editedTo = nil
+                let confirmed = confirmedIds.contains(item.id)
+                let wasEdited = confirmed && labelChanged
+                if wasEdited {
+                    decision = .edited
+                    editedTo = finalLabel
+                } else if confirmed {
+                    decision = .accepted
+                    editedTo = nil
+                } else {
+                    decision = .rejected
+                    editedTo = nil
+                }
             }
 
             if decision == .edited, (editedTo ?? "").isEmpty {
@@ -641,7 +762,8 @@ final class SuggestionReviewViewModel {
         let decisions = Self.buildOutcomes(
             shownAt: shownAt,
             editable: editableSuggestions,
-            confirmedIds: confirmedIds
+            confirmedIds: confirmedIds,
+            threeStateEnabled: threeStateEnabled
         )
         let request = PhotoSuggestionOutcomesRequest(
             visionModel: visionModel,

@@ -403,6 +403,27 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
 
 // MARK: - Helpers
 
+/// File-local mirror of the `bodyData` helper in SuggestionReviewViewModelTests
+/// so this file does not need a cross-file `internal` extension. Reads the
+/// request body from `httpBody` or drains `httpBodyStream` as a fallback.
+private extension URLRequest {
+    var bodyData: Data? {
+        if let data = httpBody { return data }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 65_536
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(&buffer, maxLength: bufferSize)
+            guard bytesRead > 0 else { break }
+            data.append(contentsOf: buffer.prefix(bytesRead))
+        }
+        return data
+    }
+}
+
 /// Locked Data box so the URLProtocol callback (executed on a background
 /// queue) can hand a captured request body back to the test thread without
 /// triggering Swift 6 sendable warnings.
