@@ -530,8 +530,16 @@ struct BinDetailView: View {
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
+            // Swift2_025 — declaring the LazyHStack as a scroll target lets
+            // `.scrollTargetBehavior(.viewAligned)` raise this horizontal
+            // scroll's gesture priority over the ancestor `.refreshable`, so a
+            // sideways swipe on the photo strip no longer flickers the
+            // pull-to-refresh indicator. Side benefit: thumbnails snap to
+            // alignment on release, which reads as more deliberate.
+            .scrollTargetLayout()
         }
         .frame(height: 116)
+        .scrollTargetBehavior(.viewAligned)
     }
 
     private func placeholderThumbnail(systemName: String) -> some View {
