@@ -8,7 +8,15 @@ import Foundation
 import CoreGraphics
 import CoreImage
 import ImageIO
+import OSLog
 import UniformTypeIdentifiers
+
+/// Crop-debug logger — same subsystem/category as `cropDebugLogger` in
+/// `QualityGates.swift`. Filter Console.app with
+/// `subsystem:com.binbrain.app category:crop-debug` to see the full
+/// per-photo trace: salient objects → union → coverage check → final
+/// pixel crop rect → output dims.
+nonisolated private let optimizerCropLogger = Logger(subsystem: "com.binbrain.app", category: "crop-debug")
 
 // MARK: - Image Optimizer
 
@@ -59,6 +67,7 @@ nonisolated struct ImageOptimizer: Sendable {
         var cropInfo: CropInfo?
 
         // Stage 1: Smart crop
+        optimizerCropLogger.notice("[optimize] in image=\(imageWidth, privacy: .public)x\(imageHeight, privacy: .public) bbox=\(saliencyBoundingBox.map { "(\($0.origin.x),\($0.origin.y),\($0.width),\($0.height))" } ?? "nil", privacy: .public)")
         if let box = saliencyBoundingBox {
             let coverage = box.width * box.height
             if coverage < Self.cropThreshold {
@@ -67,6 +76,7 @@ nonisolated struct ImageOptimizer: Sendable {
                     imageWidth: imageWidth,
                     imageHeight: imageHeight
                 )
+                optimizerCropLogger.notice("[optimize] coverage=\(coverage, privacy: .public) < threshold=\(Self.cropThreshold, privacy: .public) → CROPPING to pixelRect=(x=\(cropRect.origin.x, privacy: .public), y=\(cropRect.origin.y, privacy: .public), w=\(cropRect.width, privacy: .public), h=\(cropRect.height, privacy: .public)) padding=\(Self.cropPadding, privacy: .public)")
                 if let cropped = cgImage.cropping(to: cropRect) {
                     cropInfo = CropInfo(
                         originalSize: [imageWidth, imageHeight],
@@ -78,8 +88,15 @@ nonisolated struct ImageOptimizer: Sendable {
                         ]
                     )
                     currentImage = cropped
+                    optimizerCropLogger.notice("[optimize] cropped result=\(cropped.width, privacy: .public)x\(cropped.height, privacy: .public)")
+                } else {
+                    optimizerCropLogger.error("[optimize] cgImage.cropping(to:) returned nil — pixelRect may be out of bounds; uploading uncropped frame")
                 }
+            } else {
+                optimizerCropLogger.notice("[optimize] coverage=\(coverage, privacy: .public) ≥ threshold=\(Self.cropThreshold, privacy: .public) → SKIP crop, full frame")
             }
+        } else {
+            optimizerCropLogger.notice("[optimize] no saliency bbox → SKIP crop, full frame")
         }
 
         // Stage 2: Auto-enhance (disabled by default)
@@ -101,6 +118,7 @@ nonisolated struct ImageOptimizer: Sendable {
         // Stage 4: Render and JPEG encode
         let renderedImage = renderToCGImage(ciImage: ciImage, context: context) ?? currentImage
         let jpegData = encodeJPEG(renderedImage)
+        optimizerCropLogger.notice("[optimize] out image=\(renderedImage.width, privacy: .public)x\(renderedImage.height, privacy: .public) jpeg=\(jpegData.count, privacy: .public)B")
 
         return (jpegData: jpegData, cropInfo: cropInfo)
     }
