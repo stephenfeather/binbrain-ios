@@ -264,6 +264,33 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertNotNil(sut.current, "current must be populated after auto-begin")
     }
 
+    /// Swift2_019b — F-2 / SEC-24-2. Two concurrent callers must coalesce
+    /// into a single `POST /sessions`. Before the fix, `activeSessionId`
+    /// suspends on `await beginSession`; both callers pass the `current
+    /// == nil` gate and both fire a POST, creating orphan sessions that
+    /// count against the server's 20-open cap.
+    func testActiveSessionIdSerializesConcurrentCallers() async throws {
+        var postCount = 0
+        let client = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                postCount += 1
+                return (response(201, for: request), sessionJSON)
+            }
+            return (response(500, for: request), Data())
+        }
+
+        async let a: UUID = sut.activeSessionId(apiClient: client)
+        async let b: UUID = sut.activeSessionId(apiClient: client)
+        async let c: UUID = sut.activeSessionId(apiClient: client)
+        let (ida, idb, idc) = try await (a, b, c)
+
+        XCTAssertEqual(postCount, 1,
+                       "Concurrent activeSessionId callers must coalesce into ONE POST /sessions")
+        XCTAssertEqual(ida, fixedSessionId)
+        XCTAssertEqual(idb, fixedSessionId)
+        XCTAssertEqual(idc, fixedSessionId)
+    }
+
     func testActiveSessionIdReturnsExistingWithoutBeginning() async throws {
         var postCount = 0
         let client = makeClient { [self] request in
