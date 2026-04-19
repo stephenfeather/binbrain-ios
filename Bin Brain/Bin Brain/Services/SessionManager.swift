@@ -97,7 +97,15 @@ final class SessionManager {
     /// Clears `current` without calling the server. Intended for the
     /// `invalid_session` 400 path — the server already told us the row
     /// is gone, so any DELETE would just 404.
-    func invalidateCurrentSession() {
+    ///
+    /// `ifCurrentIs` guards against a stale-id recovery clobbering a
+    /// newer legitimate session (Swift2_019b G-1 / PR #25 QA review):
+    /// if the caller passes the id it *thinks* it's invalidating and
+    /// `current` has since moved on, the clear is a no-op. The
+    /// zero-argument call (optional defaults to `nil`) preserves the
+    /// prior unconditional-clear behaviour for sign-out flows.
+    func invalidateCurrentSession(ifCurrentIs staleId: UUID? = nil) {
+        if let staleId, current?.id != staleId { return }
         cancelIdleTimer()
         current = nil
     }

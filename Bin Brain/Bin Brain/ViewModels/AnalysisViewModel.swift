@@ -471,7 +471,12 @@ final class AnalysisViewModel {
             // nil (legacy callers without session wiring), the original
             // error propagates — no silent retry.
             guard let sessionManager else { throw apiError }
-            sessionManager.invalidateCurrentSession()
+            // Swift2_019b G-1 / SEC-25-2 — only invalidate if `current`
+            // is still the id that the failing /ingest used. Prevents a
+            // delayed 400 from clobbering a newer legitimate session
+            // (manual End-now, server idle sweep, auto-begin race).
+            logger.info("[SESSION] server returned invalid_session for \(sessionId?.uuidString ?? "nil", privacy: .private) — invalidating and retrying with fresh session")
+            sessionManager.invalidateCurrentSession(ifCurrentIs: sessionId)
             let freshId = try await sessionManager.activeSessionId(apiClient: apiClient)
             return try await apiClient.ingest(
                 jpegData: jpegData,

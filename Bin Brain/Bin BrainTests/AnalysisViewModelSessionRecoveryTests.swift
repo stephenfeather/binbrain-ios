@@ -179,6 +179,57 @@ final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
                        "After successful retry, phase must land on .complete")
     }
 
+    /// Swift2_019b G-1 (PR #25 QA). A delayed `invalid_session` 400 for
+    /// a stale in-flight request must not wipe out a newer legitimate
+    /// session that the manager has since advanced to. The recovery
+    /// path now passes `ifCurrentIs: sessionId`; `invalidateCurrentSession`
+    /// no-ops when `current.id != sessionId`.
+    func testRecoveryDoesNotClobberSessionThatChangedDuringIngest() async throws {
+        let staleId = UUID()
+        let newId = UUID()  // NOT the id the client is trying to ingest with
+
+        let seedClient = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                return (response(201, for: request), sessionJSON(newId))
+            }
+            return (response(500, for: request), Data())
+        }
+        // Seed the manager with `newId` — the CURRENT, legitimate session.
+        _ = try await sessionManager.beginSession(apiClient: seedClient)
+        XCTAssertEqual(sessionManager.current?.id, newId, "precondition")
+
+        // Then fire an /ingest that references the STALE id (an in-flight
+        // request from before the session flipped). Server returns
+        // invalid_session for the stale id.
+        var beganCount = 0
+        let client = makeClient { [self] request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/sessions" {
+                beganCount += 1
+                return (response(201, for: request), sessionJSON(UUID()))
+            }
+            if path == "/ingest" {
+                return (response(400, for: request), invalidSessionErrorJSON)
+            }
+            return (response(500, for: request), Data())
+        }
+
+        await sut.run(
+            jpegData: Data("fake".utf8),
+            binId: "BIN-0001",
+            apiClient: client,
+            sessionId: staleId,            // ← the in-flight uses the stale id
+            sessionManager: sessionManager
+        )
+
+        XCTAssertEqual(sessionManager.current?.id, newId,
+                       "Recovery must NOT clobber a session-manager session whose id "
+                       + "differs from the id that the /ingest actually used")
+        XCTAssertEqual(beganCount, 0,
+                       "Recovery must not mint a new session when current has already "
+                       + "advanced past the stale id")
+    }
+
     /// If the retry also fails (e.g. server 500), surface the error
     /// normally. The VM must not loop indefinitely.
     func testRunInvalidSessionRetryFailureSurfacesError() async throws {
