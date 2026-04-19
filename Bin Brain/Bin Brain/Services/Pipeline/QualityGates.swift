@@ -17,6 +17,13 @@ import OSLog
 /// `Logger` is `Sendable`, so a plain `let` is safe from nonisolated contexts.
 nonisolated private let blurGateLogger = Logger(subsystem: "com.binbrain.app", category: "quality")
 
+/// Dedicated logger for the crop pipeline (Vision saliency → ImageOptimizer).
+/// Filter in Console.app with `subsystem:com.binbrain.app category:crop-debug`
+/// to see per-photo: salient-object count, every Vision bbox, the computed
+/// union, coverage vs threshold, and the final pixel crop rect. Geometric
+/// data only — no PII — so values are logged with `privacy: .public`.
+nonisolated let cropDebugLogger = Logger(subsystem: "com.binbrain.app", category: "crop-debug")
+
 // MARK: - Thresholds
 
 /// Blur detection threshold for a 1024px shortest side.
@@ -399,8 +406,17 @@ nonisolated struct QualityGates: Sendable {
 
                 let salientObjects = observation.salientObjects ?? []
                 if salientObjects.isEmpty {
+                    cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=0 → no bbox, full frame uploaded")
                     continuation.resume(returning: (0, nil, noObjectsFailure))
                     return
+                }
+
+                // Per-object dump: helps confirm whether Vision actually
+                // saw every user-framed subject. If a subject is missing
+                // from this list, the union fix can't recover it.
+                for (i, obj) in salientObjects.enumerated() {
+                    let b = obj.boundingBox
+                    cropDebugLogger.notice("[saliency] object \(i, privacy: .public)/\(salientObjects.count, privacy: .public): bbox=(x=\(b.origin.x, privacy: .public), y=\(b.origin.y, privacy: .public), w=\(b.width, privacy: .public), h=\(b.height, privacy: .public)) confidence=\(obj.confidence, privacy: .public)")
                 }
 
                 // Swift2_024 — union of every salient object's bbox, not just
@@ -412,6 +428,7 @@ nonisolated struct QualityGates: Sendable {
                 // toggle if union proves insufficient in the wild.
                 let unionBox = Self.unionBoundingBox(of: salientObjects.map { $0.boundingBox })!
                 let coverage = Double(unionBox.width * unionBox.height)
+                cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=\(salientObjects.count, privacy: .public) union=(x=\(unionBox.origin.x, privacy: .public), y=\(unionBox.origin.y, privacy: .public), w=\(unionBox.width, privacy: .public), h=\(unionBox.height, privacy: .public)) coverage=\(coverage, privacy: .public)")
                 continuation.resume(returning: (coverage, unionBox, nil))
             }
         }
