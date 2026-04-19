@@ -146,12 +146,15 @@ struct BinsListView: View {
                         Task {
                             // Swift2_019 — transparently open a server
                             // session so /ingest passes the new validator.
+                            // Swift2_019b — pass the manager for 400
+                            // invalid_session invalidate + retry.
                             let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                             await analysisViewModel.run(
                                 jpegData: rawData,
                                 binId: binId,
                                 apiClient: apiClient,
                                 sessionId: sessionId,
+                                sessionManager: sessionManager,
                                 context: modelContext
                             )
                         }
@@ -261,6 +264,7 @@ struct BinsListView: View {
                         binId: binId,
                         apiClient: apiClient,
                         sessionId: sessionId,
+                        sessionManager: sessionManager,
                         context: modelContext
                     )
                 }

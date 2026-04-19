@@ -130,8 +130,15 @@ final class AnalysisViewModel {
     ///     field. Callers typically obtain this by awaiting
     ///     `SessionManager.activeSessionId(apiClient:)` so the first
     ///     photo after launch opens a session transparently.
+    ///   - sessionManager: Optional `SessionManager` reference
+    ///     (`Swift2_019b` / SEC-24-1). When present, an `/ingest` failure
+    ///     that decodes as `APIError { code == "invalid_session" }`
+    ///     invalidates the cached session, auto-begins a fresh one via
+    ///     `activeSessionId`, and retries `/ingest` once. Without this
+    ///     wiring the client loops on 400s whenever the server rotates
+    ///     or sweeps the cached session_id.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
-    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, context: ModelContext? = nil) async {
+    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
@@ -222,11 +229,13 @@ final class AnalysisViewModel {
 
         let ingestResponse: IngestResponse
         do {
-            ingestResponse = try await apiClient.ingest(
+            ingestResponse = try await Self.ingestWithSessionRecovery(
                 jpegData: uploadData,
                 binId: binId,
                 deviceMetadata: metadataString,
-                sessionId: sessionId
+                sessionId: sessionId,
+                sessionManager: sessionManager,
+                apiClient: apiClient
             )
         } catch {
             phase = .failed(error.localizedDescription)
@@ -300,7 +309,7 @@ final class AnalysisViewModel {
     ///   - binId: The bin identifier to associate the photo with.
     ///   - apiClient: The `APIClient` instance to use for network calls.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
-    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, context: ModelContext? = nil) async {
+    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
         // after tapping "Upload Anyway".
@@ -343,11 +352,13 @@ final class AnalysisViewModel {
 
         let ingestResponse: IngestResponse
         do {
-            ingestResponse = try await apiClient.ingest(
+            ingestResponse = try await Self.ingestWithSessionRecovery(
                 jpegData: uploadData,
                 binId: binId,
                 deviceMetadata: metadataString,
-                sessionId: sessionId
+                sessionId: sessionId,
+                sessionManager: sessionManager,
+                apiClient: apiClient
             )
         } catch {
             phase = .failed(error.localizedDescription)
@@ -427,5 +438,47 @@ final class AnalysisViewModel {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastUploadedPhotoData = nil
+    }
+
+    // MARK: - Session recovery (Swift2_019b / SEC-24-1)
+
+    /// Posts `/ingest` and, on server `invalid_session`, invalidates the
+    /// cached `SessionManager` session, auto-begins a fresh one, and
+    /// retries exactly once. If the retry fails (any error), that error
+    /// propagates — the caller surfaces it normally and we never loop.
+    ///
+    /// Exposed as `static` so the logic is pure and testable from both
+    /// `run(...)` and `overrideQualityGate(...)` without duplicating the
+    /// try/catch ladder.
+    static func ingestWithSessionRecovery(
+        jpegData: Data,
+        binId: String,
+        deviceMetadata: String?,
+        sessionId: UUID?,
+        sessionManager: SessionManager?,
+        apiClient: APIClient
+    ) async throws -> IngestResponse {
+        do {
+            return try await apiClient.ingest(
+                jpegData: jpegData,
+                binId: binId,
+                deviceMetadata: deviceMetadata,
+                sessionId: sessionId
+            )
+        } catch let apiError as APIError where apiError.error.code == "invalid_session" {
+            // Server invalidated our cached session. Drop it locally, get
+            // a fresh one, and retry exactly once. If sessionManager is
+            // nil (legacy callers without session wiring), the original
+            // error propagates — no silent retry.
+            guard let sessionManager else { throw apiError }
+            sessionManager.invalidateCurrentSession()
+            let freshId = try await sessionManager.activeSessionId(apiClient: apiClient)
+            return try await apiClient.ingest(
+                jpegData: jpegData,
+                binId: binId,
+                deviceMetadata: deviceMetadata,
+                sessionId: freshId
+            )
+        }
     }
 }

@@ -238,12 +238,15 @@ struct BinDetailView: View {
                             // shutter" flow still works. SessionManager
                             // caches the id for subsequent captures and
                             // auto-closes after 30 min of inactivity.
+                            // Swift2_019b — pass the manager so AnalysisViewModel
+                            // can invalidate + retry on 400 invalid_session.
                             let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                             await analysisViewModel.run(
                                 jpegData: rawData,
                                 binId: binId,
                                 apiClient: apiClient,
                                 sessionId: sessionId,
+                                sessionManager: sessionManager,
                                 context: modelContext
                             )
                         }
@@ -328,6 +331,7 @@ struct BinDetailView: View {
                         binId: binId,
                         apiClient: apiClient,
                         sessionId: sessionId,
+                        sessionManager: sessionManager,
                         context: modelContext
                     )
                 }

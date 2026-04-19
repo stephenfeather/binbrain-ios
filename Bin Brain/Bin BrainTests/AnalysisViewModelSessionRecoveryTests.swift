@@ -1,0 +1,250 @@
+// AnalysisViewModelSessionRecoveryTests.swift
+// Bin BrainTests
+//
+// Swift2_019b — F-1 / SEC-24-1. When the server returns
+// 400 invalid_session on /ingest, AnalysisViewModel must:
+//   1. Invalidate the stale cached Session on the SessionManager.
+//   2. Ask the SessionManager for a fresh session (auto-begin).
+//   3. Retry /ingest once with the new session id.
+// Without the fix, the cached session stays populated and every
+// subsequent ingest loops on 400s until the 30-min idle timer or an
+// app restart.
+
+import XCTest
+@testable import Bin_Brain
+
+// MARK: - URLProtocol (distinct per suite)
+
+final class SessionRecoveryMockURLProtocol: URLProtocol {
+    private static let handlerLock = NSLock()
+    nonisolated(unsafe) private static var _handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    static func setHandler(_ handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?) {
+        handlerLock.lock(); defer { handlerLock.unlock() }
+        _handler = handler
+    }
+
+    static func currentHandler() -> ((URLRequest) throws -> (HTTPURLResponse, Data))? {
+        handlerLock.lock(); defer { handlerLock.unlock() }
+        return _handler
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.currentHandler() else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+@MainActor
+final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
+
+    var sut: AnalysisViewModel!
+    var sessionManager: SessionManager!
+    var runner: RecordingBackgroundTaskRunner!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        runner = RecordingBackgroundTaskRunner()
+        sut = AnalysisViewModel(backgroundTask: runner)
+        sessionManager = SessionManager()
+    }
+
+    override func tearDown() async throws {
+        SessionRecoveryMockURLProtocol.setHandler(nil)
+        sessionManager.cancelIdleTimer()
+        sessionManager = nil
+        sut = nil
+        runner = nil
+        try await super.tearDown()
+    }
+
+    // MARK: - Helpers
+
+    private func makeClient(
+        handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+    ) -> APIClient {
+        SessionRecoveryMockURLProtocol.setHandler(handler)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SessionRecoveryMockURLProtocol.self]
+        return APIClient(
+            session: URLSession(configuration: config),
+            keychain: InMemoryKeychainHelper(seeded: ["apiKey": "test-key"])
+        )
+    }
+
+    private func response(_ code: Int, for request: URLRequest) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: request.url ?? URL(string: "http://mock")!,
+            statusCode: code,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+    }
+
+    private func sessionJSON(_ id: UUID) -> Data {
+        Data("""
+        {"session_id":"\(id.uuidString.lowercased())",
+         "started_at":"2026-04-19T12:00:00Z","ended_at":null,
+         "label":null,"photo_count":0}
+        """.utf8)
+    }
+
+    private let invalidSessionErrorJSON = Data("""
+    {"version":"1","error":{"code":"invalid_session",
+     "message":"Session not found, not yours, or already closed"}}
+    """.utf8)
+
+    private let ingestSuccessJSON = Data("""
+    {"version":"1","bin_id":"BIN-0001","photos":[{"photo_id":42,"url":"/photos/42/file"}]}
+    """.utf8)
+
+    private let suggestSuccessJSON = Data("""
+    {"version":"1","photo_id":42,"model":"test-model","vision_elapsed_ms":50,
+     "suggestions":[{"item_id":null,"name":"Widget","category":"Hardware","confidence":0.9,"bins":["BIN-0001"]}]}
+    """.utf8)
+
+    // MARK: - Recovery path
+
+    /// The server rotates/restarts/idles-away the cached session. Next
+    /// ingest gets 400 `invalid_session`. The VM must invalidate, auto-begin
+    /// a fresh session, and retry once — transparently to the user.
+    func testRunInvalidSessionResponseInvalidatesAndRetriesOnceWithFreshSession() async throws {
+        let staleId = UUID()
+        let freshId = UUID()
+
+        // Phase 1 — seed the SessionManager with a stale session. Install
+        // the seed handler FIRST and tear it down before the scenario
+        // handler is installed. The URL protocol has a single static
+        // handler slot; installing a new one replaces the last.
+        sessionManager = SessionManager()
+        let seedClient = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                return (response(201, for: request), sessionJSON(staleId))
+            }
+            return (response(500, for: request), Data())
+        }
+        _ = try await sessionManager.beginSession(apiClient: seedClient)
+        XCTAssertEqual(sessionManager.current?.id, staleId, "precondition: stale session cached")
+
+        // Phase 2 — install the scenario handler AFTER the seed completes.
+        var ingestCount = 0
+        let client = makeClient { [self] request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/sessions" {
+                return (response(201, for: request), sessionJSON(freshId))
+            }
+            if path == "/ingest" {
+                ingestCount += 1
+                if ingestCount == 1 {
+                    return (response(400, for: request), invalidSessionErrorJSON)
+                }
+                return (response(200, for: request), ingestSuccessJSON)
+            }
+            if path.hasSuffix("/suggest") {
+                return (response(200, for: request), suggestSuccessJSON)
+            }
+            return (response(500, for: request), Data())
+        }
+
+        await sut.run(
+            jpegData: Data("fake-jpeg".utf8),
+            binId: "BIN-0001",
+            apiClient: client,
+            sessionId: staleId,
+            sessionManager: sessionManager
+        )
+
+        XCTAssertEqual(ingestCount, 2,
+                       "VM must retry /ingest exactly once after invalid_session")
+        XCTAssertNotNil(sessionManager.current,
+                        "Fresh session must be auto-begun after invalidation")
+        XCTAssertEqual(sessionManager.current?.id, freshId,
+                       "Retry must use the freshly-minted session, not the stale one")
+        XCTAssertEqual(sut.phase, .complete,
+                       "After successful retry, phase must land on .complete")
+    }
+
+    /// If the retry also fails (e.g. server 500), surface the error
+    /// normally. The VM must not loop indefinitely.
+    func testRunInvalidSessionRetryFailureSurfacesError() async throws {
+        let staleId = UUID()
+        let freshId = UUID()
+
+        // Seed first, install scenario handler second (per the ordering
+        // bug fixed above — the URL protocol has only one handler slot).
+        let seedClient = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                return (response(201, for: request), sessionJSON(staleId))
+            }
+            return (response(500, for: request), Data())
+        }
+        _ = try await sessionManager.beginSession(apiClient: seedClient)
+
+        var ingestCount = 0
+        let client = makeClient { [self] request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/sessions" {
+                return (response(201, for: request), sessionJSON(freshId))
+            }
+            if path == "/ingest" {
+                ingestCount += 1
+                if ingestCount == 1 {
+                    return (response(400, for: request), invalidSessionErrorJSON)
+                }
+                // Second attempt also fails — different error so the VM
+                // cannot loop on the invalidate-then-retry branch.
+                return (response(500, for: request), Data())
+            }
+            return (response(500, for: request), Data())
+        }
+
+        await sut.run(
+            jpegData: Data("fake-jpeg".utf8),
+            binId: "BIN-0001",
+            apiClient: client,
+            sessionId: staleId,
+            sessionManager: sessionManager
+        )
+
+        XCTAssertEqual(ingestCount, 2, "Must retry exactly once — no infinite loop")
+        if case .failed = sut.phase {
+            // expected
+        } else {
+            XCTFail("Retry failure must surface as .failed, got \(sut.phase)")
+        }
+    }
+}
+
+// MARK: - URLRequest body helper (file-private)
+
+private extension URLRequest {
+    var bodyData: Data? {
+        if let data = httpBody { return data }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            guard read > 0 else { break }
+            data.append(contentsOf: buffer.prefix(read))
+        }
+        return data
+    }
+}

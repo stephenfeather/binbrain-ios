@@ -45,6 +45,14 @@ final class SessionManager {
     /// the existing task and schedules a fresh one.
     private var idleTask: Task<Void, Never>?
 
+    /// In-flight `beginSession` memoization (Swift2_019b / SEC-24-2).
+    /// Concurrent `activeSessionId` callers see this value and await the
+    /// same Task instead of each firing their own `POST /sessions`.
+    /// Main-actor isolation guarantees the `beginTask = task` assignment
+    /// and the first-reader `if let beginTask` check serialize correctly
+    /// — no lock needed.
+    private var beginTask: Task<Session, Error>?
+
     // MARK: - Init
 
     init(idleTimeout: TimeInterval = 30 * 60) {
@@ -99,12 +107,26 @@ final class SessionManager {
     /// Returns the active session id, opening a fresh session if there
     /// isn't one yet. Use at every ingest call site so the "first photo
     /// after app launch" path doesn't require the user to tap anything.
+    ///
+    /// Swift2_019b / SEC-24-2 — concurrent callers hitting this while
+    /// `current == nil` previously raced: both passed the gate, both
+    /// awaited `beginSession`, both POSTed `/sessions` — orphaning
+    /// sessions against the server's 20-open cap. Now each concurrent
+    /// caller awaits the same memoized `beginTask`.
     func activeSessionId(apiClient: APIClient) async throws -> UUID {
         if let existing = current {
             return existing.id
         }
-        let session = try await beginSession(apiClient: apiClient)
-        return session.id
+        if let inflight = beginTask {
+            return try await inflight.value.id
+        }
+        let task = Task<Session, Error> { [weak self] in
+            guard let self else { throw CancellationError() }
+            return try await self.beginSession(apiClient: apiClient)
+        }
+        beginTask = task
+        defer { beginTask = nil }
+        return try await task.value.id
     }
 
     // MARK: - Idle timer
