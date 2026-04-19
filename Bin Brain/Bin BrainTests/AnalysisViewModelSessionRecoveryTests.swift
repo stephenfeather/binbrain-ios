@@ -143,6 +143,9 @@ final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
 
         // Phase 2 — install the scenario handler AFTER the seed completes.
         var ingestCount = 0
+        var firstAttemptRetryHeader: String?
+        var retryAttemptRetryHeader: String?
+        var retrySessionField: String?
         let client = makeClient { [self] request in
             let path = request.url?.path ?? ""
             if request.httpMethod == "POST", path == "/sessions" {
@@ -151,7 +154,16 @@ final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
             if path == "/ingest" {
                 ingestCount += 1
                 if ingestCount == 1 {
+                    firstAttemptRetryHeader = request.value(forHTTPHeaderField: "X-Client-Retry-Count")
                     return (response(400, for: request), invalidSessionErrorJSON)
+                }
+                retryAttemptRetryHeader = request.value(forHTTPHeaderField: "X-Client-Retry-Count")
+                if let body = request.bodyData,
+                   let s = String(data: body, encoding: .utf8) {
+                    // Multipart field; substring match is fine since the
+                    // body was constructed by our own APIClient.
+                    retrySessionField = s.components(separatedBy: "session_id\"\r\n\r\n")
+                        .dropFirst().first?.prefix(36).description
                 }
                 return (response(200, for: request), ingestSuccessJSON)
             }
@@ -177,6 +189,24 @@ final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
                        "Retry must use the freshly-minted session, not the stale one")
         XCTAssertEqual(sut.phase, .complete,
                        "After successful retry, phase must land on .complete")
+
+        // Swift2_019c G-2 / SEC-25-3 — assert the retry body actually
+        // carries freshId, not staleId. Activates the previously-unused
+        // bodyData helper. A typo regression like `sessionId: staleId`
+        // would leave this assertion failing even though the mock-200
+        // round-trip would otherwise pass.
+        XCTAssertEqual(retrySessionField, freshId.uuidString.lowercased(),
+                       "Retry /ingest must carry the freshly-minted session_id, not the stale one")
+        XCTAssertNotEqual(retrySessionField, staleId.uuidString.lowercased(),
+                          "Retry /ingest must NOT reuse the stale session_id")
+
+        // Swift2_019c SEC-25-4 — header is observational only but the
+        // first attempt MUST NOT carry it (so server telemetry can
+        // distinguish "user's first try" from "client-driven recovery").
+        XCTAssertNil(firstAttemptRetryHeader,
+                     "X-Client-Retry-Count must be absent on the first attempt")
+        XCTAssertEqual(retryAttemptRetryHeader, "1",
+                       "X-Client-Retry-Count: 1 must be stamped on the recovery retry")
     }
 
     /// Swift2_019b G-1 (PR #25 QA). A delayed `invalid_session` 400 for
@@ -278,6 +308,109 @@ final class AnalysisViewModelSessionRecoveryTests: XCTestCase {
         } else {
             XCTFail("Retry failure must surface as .failed, got \(sut.phase)")
         }
+    }
+
+    // MARK: - Swift2_019c G-3 — retry-also-invalid_session must not loop
+
+    /// Pin the single-retry bound when the retry itself also returns
+    /// 400 `invalid_session`. The catch clause is not re-entrant, but a
+    /// future regression that wrapped the retry in another do/catch could
+    /// re-enter the recovery branch — this test would catch it.
+    func testRunInvalidSessionRetryAlsoInvalidSessionDoesNotLoop() async throws {
+        let staleId = UUID()
+        let freshId = UUID()
+
+        let seedClient = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                return (response(201, for: request), sessionJSON(staleId))
+            }
+            return (response(500, for: request), Data())
+        }
+        _ = try await sessionManager.beginSession(apiClient: seedClient)
+
+        var ingestCount = 0
+        let client = makeClient { [self] request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/sessions" {
+                return (response(201, for: request), sessionJSON(freshId))
+            }
+            if path == "/ingest" {
+                ingestCount += 1
+                return (response(400, for: request), invalidSessionErrorJSON)
+            }
+            return (response(500, for: request), Data())
+        }
+
+        await sut.run(
+            jpegData: Data("fake".utf8),
+            binId: "BIN-0001",
+            apiClient: client,
+            sessionId: staleId,
+            sessionManager: sessionManager
+        )
+
+        XCTAssertEqual(ingestCount, 2,
+                       "Single-retry bound must hold even when the retry itself is also invalid_session")
+        if case .failed = sut.phase { /* ok */ } else {
+            XCTFail("Retry-with-same-error must surface as .failed, got \(sut.phase)")
+        }
+    }
+
+    // MARK: - Swift2_019c G-4 — overrideQualityGate recovery path
+
+    /// Near-clone of testRunInvalidSessionResponse... but driving through
+    /// `overrideQualityGate(...)` instead of `run(...)`. The recovery
+    /// helper is shared/static, but the wiring from `overrideQualityGate`
+    /// is independent of `run` and can regress on its own.
+    func testOverrideQualityGateInvalidSessionResponseInvalidatesAndRetriesOnce() async throws {
+        let staleId = UUID()
+        let freshId = UUID()
+
+        // Phase 1 — seed the SessionManager with a stale session.
+        sessionManager = SessionManager()
+        let seedClient = makeClient { [self] request in
+            if request.httpMethod == "POST", request.url?.path == "/sessions" {
+                return (response(201, for: request), sessionJSON(staleId))
+            }
+            return (response(500, for: request), Data())
+        }
+        _ = try await sessionManager.beginSession(apiClient: seedClient)
+        XCTAssertEqual(sessionManager.current?.id, staleId, "precondition: stale session cached")
+
+        // Phase 2 — install scenario handler.
+        var ingestCount = 0
+        let client = makeClient { [self] request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/sessions" {
+                return (response(201, for: request), sessionJSON(freshId))
+            }
+            if path == "/ingest" {
+                ingestCount += 1
+                if ingestCount == 1 {
+                    return (response(400, for: request), invalidSessionErrorJSON)
+                }
+                return (response(200, for: request), ingestSuccessJSON)
+            }
+            if path.hasSuffix("/suggest") {
+                return (response(200, for: request), suggestSuccessJSON)
+            }
+            return (response(500, for: request), Data())
+        }
+
+        await sut.overrideQualityGate(
+            jpegData: Data("fake-jpeg".utf8),
+            binId: "BIN-0001",
+            apiClient: client,
+            sessionId: staleId,
+            sessionManager: sessionManager
+        )
+
+        XCTAssertEqual(ingestCount, 2,
+                       "overrideQualityGate must also retry /ingest exactly once after invalid_session")
+        XCTAssertEqual(sessionManager.current?.id, freshId,
+                       "Override path must use the freshly-minted session, not the stale one")
+        XCTAssertEqual(sut.phase, .complete,
+                       "After successful retry via override path, phase must land on .complete")
     }
 }
 
