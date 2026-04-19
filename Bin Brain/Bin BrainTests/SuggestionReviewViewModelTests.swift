@@ -75,6 +75,11 @@ final class SuggestionReviewViewModelTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         sut = SuggestionReviewViewModel()
+        // Legacy default-on UX is the rollback target for Swift2_020. These
+        // pre-existing tests assert the legacy semantics (rows arrive
+        // included == true). Three-state behavior is covered separately in
+        // SuggestionReviewThreeStateTests.swift.
+        sut.threeStateEnabled = false
     }
 
     override func tearDown() async throws {

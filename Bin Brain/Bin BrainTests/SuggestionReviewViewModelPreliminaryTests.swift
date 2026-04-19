@@ -17,6 +17,10 @@ final class SuggestionReviewViewModelPreliminaryTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         sut = SuggestionReviewViewModel()
+        // Preliminary tests pre-date Swift2_020 and assert legacy default-on
+        // semantics (preliminaries arrive included == true). The three-state
+        // behavior is covered in SuggestionReviewThreeStateTests.swift.
+        sut.threeStateEnabled = false
     }
 
     override func tearDown() async throws {
