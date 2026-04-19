@@ -510,15 +510,20 @@ final class SuggestionReviewViewModel {
         editableSuggestions[index].origin = .edited
     }
 
-    func markEditedIfPreliminary(id: Int) {
+    /// Single onChange entry point for any editable field on a row.
+    ///
+    /// Two responsibilities (was named `markEditedIfPreliminary(id:)` before
+    /// Swift2_020; renamed because it now carries a second concern):
+    /// 1. Promote a `.preliminary` chip to `.edited` so the merge rules in
+    ///    `merge(preliminary:server:threeStateEnabled:)` keep it.
+    /// 2. Under three-state, flip an `.ignored` row to `.accepted` (editing
+    ///    implies endorsement). `.rejected` rows do NOT auto-resurrect —
+    ///    that requires an explicit chip tap.
+    func noteUserEdit(id: Int) {
         guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
         if editableSuggestions[idx].origin == .preliminary {
             editableSuggestions[idx].origin = .edited
         }
-        // Swift2_020 — editing implies endorsement: an .ignored row that the
-        // user starts modifying flips to .accepted so the upsert pipeline
-        // picks it up. .rejected rows stay rejected (require explicit
-        // re-tap to revive).
         if threeStateEnabled, editableSuggestions[idx].outcomeState == .ignored {
             editableSuggestions[idx].outcomeState = .accepted
             editableSuggestions[idx].included = true

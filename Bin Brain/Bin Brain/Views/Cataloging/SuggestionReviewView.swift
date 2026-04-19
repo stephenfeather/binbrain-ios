@@ -300,20 +300,20 @@ struct SuggestionReviewView: View {
             TextField("Name", text: suggestion.editedName)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: s.editedName) { _, _ in
-                    viewModel.markEditedIfPreliminary(id: s.id)
+                    viewModel.noteUserEdit(id: s.id)
                 }
 
             TextField("Category", text: suggestion.editedCategory)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: s.editedCategory) { _, _ in
-                    viewModel.markEditedIfPreliminary(id: s.id)
+                    viewModel.noteUserEdit(id: s.id)
                 }
 
             TextField("Quantity", text: suggestion.editedQuantity)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.decimalPad)
                 .onChange(of: s.editedQuantity) { _, _ in
-                    viewModel.markEditedIfPreliminary(id: s.id)
+                    viewModel.noteUserEdit(id: s.id)
                 }
 
             Toggle(isOn: suggestion.teach) {
@@ -342,9 +342,11 @@ struct SuggestionReviewView: View {
     ///
     /// Don't-rely-on-color: renders a distinct SF Symbol per state on top of
     /// the color fill so users without color perception still read the state
-    /// from the icon shape. A short fade cross-dissolves the chip when the
-    /// state changes; no spring, no bounce (HIG: respect reduced-motion; the
-    /// fade is brief enough that it renders as a state swap, not animation).
+    /// from the icon shape. A brief `.easeInOut(0.15)` envelope wraps
+    /// `cycleOutcome` and `.contentTransition(.symbolEffect(.replace))`
+    /// swaps the glyph with the system's SF-Symbol replace effect — no
+    /// spring, no bounce, quick enough to read as a state swap rather than
+    /// an animation.
     private func outcomeChip(for suggestion: EditableSuggestion) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {

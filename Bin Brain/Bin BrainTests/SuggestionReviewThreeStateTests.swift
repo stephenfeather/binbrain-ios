@@ -132,7 +132,7 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
         XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .ignored, "precondition: ignored")
 
         sut.editableSuggestions[0].editedName = "Widget XL"
-        sut.markEditedIfPreliminary(id: id)
+        sut.noteUserEdit(id: id)
 
         XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .accepted,
                        "Editing an ignored row implies endorsement → state must auto-flip to .accepted")
@@ -146,7 +146,7 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
         sut.cycleOutcome(id: id) // → .accepted
 
         sut.editableSuggestions[0].editedName = "Widget XL"
-        sut.markEditedIfPreliminary(id: id)
+        sut.noteUserEdit(id: id)
 
         XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .accepted,
                        "Editing an already-accepted row must stay accepted")
@@ -159,7 +159,7 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
         sut.cycleOutcome(id: id) // .rejected
 
         sut.editableSuggestions[0].editedName = "Widget XL"
-        sut.markEditedIfPreliminary(id: id)
+        sut.noteUserEdit(id: id)
 
         XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .rejected,
                        "Editing a rejected row must NOT re-include it; user must explicitly tap to revive")
@@ -235,7 +235,7 @@ final class SuggestionReviewThreeStateTests: XCTestCase {
         }
 
         await sut.confirm(binId: "BIN-0001", apiClient: client)
-        // Outcomes are fire-and-forget; give the detached Task a chance to complete.
+        // Outcomes are fire-and-forget; give the spawned Task a chance to complete.
         await Task.yield()
         try await Task.sleep(nanoseconds: 50_000_000)
 
@@ -426,8 +426,9 @@ private extension URLRequest {
 
 /// Locked Data box so the URLProtocol callback (executed on a background
 /// queue) can hand a captured request body back to the test thread without
-/// triggering Swift 6 sendable warnings.
-final class OutcomesBodyCapture: @unchecked Sendable {
+/// triggering Swift 6 sendable warnings. File-private to avoid polluting
+/// the test target's symbol namespace (Copilot review feedback).
+private final class OutcomesBodyCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Data?
     func set(_ data: Data?) {
