@@ -368,6 +368,12 @@ struct SuggestionReviewView: View {
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
+        // SEC-22-2 (LOW from PR #22 SEC review): tapping the chip mid-confirm
+        // races with the in-flight upsert loop — the state mutation can slip
+        // between confirmed and un-confirmed reads. Disabling while
+        // `isConfirming` closes that window without blocking any legitimate
+        // pre-confirm interaction.
+        .disabled(viewModel.isConfirming)
         .accessibilityLabel(Self.chipAccessibilityLabel(
             name: suggestion.editedName,
             state: suggestion.outcomeState

@@ -19,6 +19,7 @@ struct Bin_BrainApp: App {
 
     @State private var apiClient = APIClient()
     @State private var uploadQueueManager = UploadQueueManager()
+    @State private var outcomeQueueManager = OutcomeQueueManager()
     @State private var serverMonitor = ServerMonitor()
 
     // MARK: - Initializer
@@ -46,6 +47,7 @@ struct Bin_BrainApp: App {
         let schema = Schema([
             PendingUpload.self,
             PendingAnalysis.self,
+            PendingOutcome.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
@@ -61,8 +63,18 @@ struct Bin_BrainApp: App {
         WindowGroup {
             RootView()
                 .task { await requestNotificationPermission() }
+                .task {
+                    // Swift2_018 — start NWPathMonitor + foreground observer
+                    // for the outcomes queue so retries fire automatically
+                    // on connectivity recovery. Idempotent.
+                    outcomeQueueManager.startMonitoring(
+                        context: sharedModelContainer.mainContext,
+                        apiClient: apiClient
+                    )
+                }
                 .environment(\.apiClient, apiClient)
                 .environment(\.uploadQueueManager, uploadQueueManager)
+                .environment(\.outcomeQueueManager, outcomeQueueManager)
                 .environment(\.serverMonitor, serverMonitor)
         }
         .modelContainer(sharedModelContainer)
@@ -73,6 +85,10 @@ struct Bin_BrainApp: App {
                 await uploadQueueManager.drain(
                     context: sharedModelContainer.mainContext,
                     using: apiClient
+                )
+                await outcomeQueueManager.drain(
+                    context: sharedModelContainer.mainContext,
+                    apiClient: apiClient
                 )
             }
         }

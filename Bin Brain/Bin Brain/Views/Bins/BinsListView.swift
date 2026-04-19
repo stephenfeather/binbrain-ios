@@ -46,6 +46,7 @@ struct BinsListView: View {
     @State private var viewModel = BinsListViewModel()
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.outcomeQueueManager) private var outcomeQueueManager
     @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
     // Cataloging flow
@@ -283,6 +284,13 @@ struct BinsListView: View {
                 escalateModelAndReSuggest()
             } : nil
         )
+        // Swift2_018 — inject the durable outcomes queue + context so
+        // confirm() persists each outcomes POST instead of firing it as a
+        // one-shot detached Task. Both must be set before confirm() runs.
+        .onAppear {
+            reviewViewModel.outcomeQueueManager = outcomeQueueManager
+            reviewViewModel.outcomeQueueContext = modelContext
+        }
         // AnalysisProgressView.onChange(of: phase) is unreliable when that view is
         // in the NavigationStack background (non-visible destination). Observe here
         // on the active visible view so server suggestions always land.

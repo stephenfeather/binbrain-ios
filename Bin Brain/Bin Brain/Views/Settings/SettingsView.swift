@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var viewModel = SettingsViewModel()
     @Environment(\.apiClient) private var apiClient
     @Environment(\.uploadQueueManager) private var uploadQueueManager
+    @Environment(\.outcomeQueueManager) private var outcomeQueueManager
     @Environment(\.modelContext) private var modelContext
     @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
@@ -55,6 +56,7 @@ struct SettingsView: View {
             searchSection
             catalogingSection
             uploadQueueSection
+            outcomeQueueSection
         }
         .navigationTitle("Settings")
         .task {
@@ -384,5 +386,88 @@ struct SettingsView: View {
                 uploadQueueManager.clearQueue(context: modelContext)
             }
         }
+    }
+
+    // MARK: - Outcome Queue (Swift2_018)
+
+    @ViewBuilder
+    private var outcomeQueueSection: some View {
+        Section("Pending Outcomes") {
+            Text("Pending: \(outcomeQueueManager.pendingCount)")
+            Text("Delivered: \(outcomeQueueManager.deliveredCount)")
+                .foregroundStyle(.secondary)
+            Text("Expired: \(outcomeQueueManager.expiredCount)")
+                .foregroundStyle(outcomeQueueManager.expiredCount > 0 ? .orange : .secondary)
+
+            NavigationLink("View expired outcomes") {
+                ExpiredOutcomesView()
+            }
+            .disabled(outcomeQueueManager.expiredCount == 0)
+
+            Button("Retry all") {
+                Task {
+                    await outcomeQueueManager.retryAll(
+                        context: modelContext,
+                        apiClient: apiClient
+                    )
+                }
+            }
+            .disabled(outcomeQueueManager.pendingCount == 0)
+        }
+        .task {
+            outcomeQueueManager.refreshCounts(context: modelContext)
+        }
+    }
+}
+
+// MARK: - ExpiredOutcomesView
+
+/// Detail screen for inspecting and dismissing `.expired` outcomes.
+///
+/// Reads rows directly via `@Query` so the list updates automatically when
+/// the queue manager flips a row to `.expired` or the user dismisses one.
+private struct ExpiredOutcomesView: View {
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.outcomeQueueManager) private var outcomeQueueManager
+    @Query(filter: #Predicate<PendingOutcome> { $0.status.rawValue == 3 },
+           sort: \PendingOutcome.queuedAt,
+           order: .reverse)
+    private var expired: [PendingOutcome]
+
+    var body: some View {
+        List {
+            if expired.isEmpty {
+                ContentUnavailableView(
+                    "No expired outcomes",
+                    systemImage: "checkmark.seal",
+                    description: Text("Outcomes that the server permanently rejected or that timed out after 7 days appear here.")
+                )
+            } else {
+                ForEach(expired) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Photo #\(row.photoId)")
+                            .font(.headline)
+                        Text("Queued: \(row.queuedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Retries: \(row.retryCount)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let code = row.lastErrorCode {
+                            Text("Last error code: \(code)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button("Dismiss", role: .destructive) {
+                            outcomeQueueManager.dismiss(row, context: modelContext)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Expired Outcomes")
     }
 }
