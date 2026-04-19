@@ -399,6 +399,133 @@ final class OutcomeQueueManagerTests: XCTestCase {
                        "Expired rows persist until the user dismisses them explicitly")
     }
 
+    // MARK: - F-1 / SEC-23-1 — crash-in-flight reclaim
+
+    /// Swift2_018b F-1. A row left `.sending` by a crashed-in-flight POST
+    /// must be reclaimed back to `.pending` on the next cold launch so
+    /// the training signal actually retries instead of leaking for 7 days
+    /// until `expireAged` sweeps it as `.expired` with zero attempts.
+    ///
+    /// Reclaim is explicit (`reclaimOrphanedSendingRows(context:)`) and
+    /// one-shot per process — Bin_BrainApp calls it at launch BEFORE the
+    /// first drain. Do NOT increment `retryCount` on reclaim: the server
+    /// might have received the payload before the crash; a duplicate
+    /// beats a loss (server is append-only / idempotent per F-6).
+    func testColdLaunchReclaimsSendingRowsAsPending() async throws {
+        let stuck = PendingOutcome(photoId: 7, payload: samplePayload)
+        stuck.status = .sending
+        stuck.retryCount = 2
+        stuck.nextRetryAt = Date().addingTimeInterval(-1)
+        context.insert(stuck)
+        try context.save()
+
+        var posts = 0
+        let client = makeMockAPIClient { [self] request in
+            posts += 1
+            return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        // Simulate the launch sequence: reclaim first, then drain.
+        sut.reclaimOrphanedSendingRows(context: context)
+        await sut.drain(context: context, apiClient: client)
+
+        XCTAssertEqual(posts, 1,
+                       "Cold-launch reclaim must return the row to .pending so drain retries it")
+        let refreshed = try XCTUnwrap(try context.fetch(FetchDescriptor<PendingOutcome>()).first)
+        XCTAssertEqual(refreshed.status, .delivered)
+        XCTAssertEqual(refreshed.retryCount, 2,
+                       "Reclaim must NOT increment retryCount — crash-in-flight ambiguity")
+    }
+
+    // MARK: - F-3 — CAS drain guard
+
+    /// Swift2_018b F-3. NWPathMonitor `.satisfied` + willEnterForeground
+    /// + scenePhase `.active` can all fire in the same few ms, scheduling
+    /// two concurrent `drain()` calls. Both fetch the same `.pending`
+    /// row; without a guard, both flip it to `.sending` and both POST.
+    /// The server (append-only today) then sees two identical outcome
+    /// rows — pure training-signal duplication.
+    ///
+    /// Guard: at the top of `attemptDelivery`, re-check `row.status ==
+    /// .pending` before the flip. Main-actor isolation guarantees the
+    /// check-flip-save runs atomically between awaits; the second drain
+    /// on resumption observes `.sending` and returns early.
+    func testConcurrentDrainsDoNotDoubleSendRow() async throws {
+        let row = PendingOutcome(photoId: 1, payload: samplePayload)
+        row.retryCount = 0
+        row.nextRetryAt = Date().addingTimeInterval(-1)
+        context.insert(row)
+        try context.save()
+
+        var posts = 0
+        let client = makeMockAPIClient { [self] request in
+            posts += 1
+            // Slow response so the second drain starts before the first
+            // returns from the network call. Thread.sleep is legal here —
+            // the URL protocol's startLoading runs on a background queue.
+            Thread.sleep(forTimeInterval: 0.05)
+            return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        async let a: Void = sut.drain(context: context, apiClient: client)
+        async let b: Void = sut.drain(context: context, apiClient: client)
+        _ = await (a, b)
+
+        XCTAssertEqual(posts, 1,
+                       "Two concurrent drains must not double-send the same row — server append-only semantics mean duplicates become bad training signal")
+        let refreshed = try XCTUnwrap(try context.fetch(FetchDescriptor<PendingOutcome>()).first)
+        XCTAssertEqual(refreshed.status, .delivered)
+    }
+
+    // MARK: - F-6 — idempotency key header
+
+    /// Swift2_018b F-6 (client half). Every outcomes POST must carry
+    /// `Idempotency-Key: <PendingOutcome.id UUID>`. Header ships on the
+    /// first attempt; see the retry test for stability across retries.
+    ///
+    /// Server-side dedup is a SEPARATE PR (ApiDev); until it ships, the
+    /// header is a no-op, but we want the client plumbing live so flipping
+    /// the server switch doesn't require an iOS release.
+    func testOutcomePostSendsIdempotencyKeyHeader() async throws {
+        var capturedHeader: String?
+        let client = makeMockAPIClient { [self] request in
+            capturedHeader = request.value(forHTTPHeaderField: "Idempotency-Key")
+            return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        await sut.enqueue(photoId: 7, payload: samplePayload, context: context, apiClient: client)
+
+        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(capturedHeader, row.id.uuidString.lowercased(),
+                       "First POST must carry Idempotency-Key header equal to PendingOutcome.id")
+    }
+
+    /// F-6 retry stability: the second attempt for a row must reuse the
+    /// original UUID so the server can collapse the duplicate. A fresh
+    /// UUID per attempt would make the key useless for dedup.
+    func testOutcomeRetryReusesSameIdempotencyKey() async throws {
+        let row = PendingOutcome(photoId: 11, payload: samplePayload)
+        row.retryCount = 2
+        row.nextRetryAt = Date().addingTimeInterval(-1)
+        context.insert(row)
+        try context.save()
+
+        var seenHeaders: [String] = []
+        let client = makeMockAPIClient { [self] request in
+            if let h = request.value(forHTTPHeaderField: "Idempotency-Key") {
+                seenHeaders.append(h)
+            }
+            return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        await sut.drain(context: context, apiClient: client)
+
+        XCTAssertEqual(seenHeaders.count, 1, "precondition: one POST")
+        XCTAssertEqual(seenHeaders.first, row.id.uuidString.lowercased(),
+                       "Retry attempts must reuse PendingOutcome.id — otherwise server dedup is useless")
+    }
+
     // MARK: - Observable counts
 
     func testCountsReflectPersistedRows() async throws {
