@@ -263,11 +263,18 @@ final class APIClient {
     ///   - sessionId: Optional server-minted session UUID (`Swift2_019`).
     ///     Sent as a `session_id` multipart field. Server PR #35 rejects
     ///     any non-UUID value with 400 `invalid_session`.
+    ///   - retryCount: Defaults to 0 (first attempt). When > 0, stamps
+    ///     `X-Client-Retry-Count: <n>` on the request so server-side
+    ///     telemetry can correlate "this ingest is a session-recovery
+    ///     retry" vs an independent first attempt. Mirrors the pattern
+    ///     PR #23 set for `/outcomes`. Observational only — server has
+    ///     no behavior conditioned on the value (Swift2_019c / SEC-25-4).
     func ingest(
         jpegData: Data,
         binId: String,
         deviceMetadata: String? = nil,
-        sessionId: UUID? = nil
+        sessionId: UUID? = nil,
+        retryCount: Int = 0
     ) async throws -> IngestResponse {
         var fields = ["bin_id": binId]
         if let deviceMetadata {
@@ -282,12 +289,17 @@ final class APIClient {
             fileName: "photo.jpg",
             mimeType: "image/jpeg"
         )
+        var extraHeaders: [String: String] = [:]
+        if retryCount > 0 {
+            extraHeaders["X-Client-Retry-Count"] = "\(retryCount)"
+        }
         return try await request(
             path: "/ingest",
             method: "POST",
             body: body,
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 30
+            timeout: 30,
+            extraHeaders: extraHeaders
         )
     }
 
@@ -805,7 +817,8 @@ final class APIClient {
         contentType: String?,
         timeout: TimeInterval,
         requiresAuth: Bool = true,
-        probeWithCurrentKey: Bool = false
+        probeWithCurrentKey: Bool = false,
+        extraHeaders: [String: String] = [:]
     ) async throws -> T {
         if requiresAuth {
             guard hasAPIKey else {
@@ -829,6 +842,9 @@ final class APIClient {
         }
         if let apiKey, shouldAttachKey(requiresAuth: requiresAuth, probe: probeWithCurrentKey) {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+        for (name, value) in extraHeaders {
+            urlRequest.setValue(value, forHTTPHeaderField: name)
         }
 
         let bodySize = body.map { "\($0.count) bytes" } ?? "none"
