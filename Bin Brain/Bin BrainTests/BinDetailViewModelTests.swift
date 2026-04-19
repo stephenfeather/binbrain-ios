@@ -265,4 +265,18 @@ final class BinDetailViewModelTests: XCTestCase {
 
         XCTAssertNotNil(sut.error, "error should be set on failed updateItem")
     }
+
+    // MARK: - Swift2_022 G-1 — BinDetailView nav-title display mapping
+
+    /// Regression guard: `BinDetailView.swift:86` feeds `binId` through
+    /// `BinsListViewModel.displayName(for:)` so the nav-bar title renders
+    /// as "Binless" for the sentinel instead of the raw server id.
+    /// QA PR #27 caught this as a merge blocker — the nav-bar title is
+    /// the most prominent text on screen and was leaking "UNASSIGNED".
+    func testSentinelBinIdMapsToBinlessDisplayName() {
+        XCTAssertEqual(BinsListViewModel.displayName(for: "UNASSIGNED"), "Binless",
+                       "Detail-view nav title must map UNASSIGNED → Binless (QA G-1)")
+        XCTAssertEqual(BinsListViewModel.displayName(for: "kitchen-pantry-A"), "kitchen-pantry-A",
+                       "Non-sentinel ids pass through unchanged")
+    }
 }

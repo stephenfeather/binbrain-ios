@@ -369,13 +369,64 @@ struct BinsListView: View {
             Text("Scan your first bin to get started")
                 .foregroundStyle(.secondary)
         } else {
-            List(viewModel.bins, id: \.binId) { bin in
-                NavigationLink(destination: BinDetailView(binId: bin.binId)) {
-                    BinRowView(bin: bin)
+            List {
+                ForEach(viewModel.bins, id: \.binId) { bin in
+                    NavigationLink(destination: BinDetailView(binId: bin.binId)) {
+                        BinRowView(bin: bin)
+                    }
+                    // Swift2_022 — suppress swipe-to-delete on the reserved
+                    // sentinel row. Server would reject it with 400
+                    // cannot_delete_sentinel; the VM has a belt-and-braces
+                    // guard too.
+                    .deleteDisabled(BinsListViewModel.isSentinel(bin.binId))
+                }
+                .onDelete { offsets in
+                    guard let index = offsets.first else { return }
+                    let bin = viewModel.bins[index]
+                    guard !BinsListViewModel.isSentinel(bin.binId) else { return }
+                    binToDelete = bin
+                }
+            }
+            .alert(
+                "Delete Bin",
+                isPresented: Binding(
+                    get: { binToDelete != nil },
+                    set: { if !$0 { binToDelete = nil } }
+                ),
+                presenting: binToDelete
+            ) { bin in
+                Button("Delete", role: .destructive) {
+                    Task {
+                        await viewModel.deleteBin(binId: bin.binId, apiClient: apiClient)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { bin in
+                Text("Delete \"\(bin.binId)\"? Items in this bin will become binless.")
+            }
+            .overlay(alignment: .bottom) {
+                if let toast = viewModel.toastMessage {
+                    Text(toast)
+                        .font(.footnote)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .task(id: toast) {
+                            try? await Task.sleep(nanoseconds: 3_000_000_000)
+                            if viewModel.toastMessage == toast {
+                                viewModel.toastMessage = nil
+                            }
+                        }
                 }
             }
         }
     }
+
+    // MARK: - Delete confirmation state
+
+    @State private var binToDelete: BinSummary?
 }
 
 // MARK: - BinRowView
@@ -383,19 +434,38 @@ struct BinsListView: View {
 private struct BinRowView: View {
     let bin: BinSummary
 
+    private var isSentinel: Bool { BinsListViewModel.isSentinel(bin.binId) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(bin.binId).font(.headline)
-            Text("\(bin.itemCount) items").font(.subheadline).foregroundStyle(.secondary)
-            if let locationName = bin.locationName {
-                Text(locationName).font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            if isSentinel {
+                Image(systemName: "tray.2")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
-            HStack(spacing: 4) {
-                Text("Last updated:")
-                Text(bin.lastUpdated, style: .date)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(BinsListViewModel.displayName(for: bin.binId))
+                    .font(.headline)
+                    .foregroundStyle(isSentinel ? Color.secondary : Color.primary)
+                if isSentinel {
+                    Text(bin.itemCount == 0 ? "No binless items" : "\(bin.itemCount) items")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(bin.itemCount) items")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if let locationName = bin.locationName {
+                        Text(locationName).font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 4) {
+                        Text("Last updated:")
+                        Text(bin.lastUpdated, style: .date)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 }

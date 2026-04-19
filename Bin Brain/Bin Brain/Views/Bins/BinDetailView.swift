@@ -83,7 +83,10 @@ struct BinDetailView: View {
     var body: some View {
         let _ = print("[BIND] body binId=\(binId)")
         content
-            .navigationTitle(binId)
+            // Swift2_022 G-1 — route the nav-bar title through the display-
+            // name mapping so the reserved sentinel renders as "Binless"
+            // instead of the raw server id "UNASSIGNED".
+            .navigationTitle(BinsListViewModel.displayName(for: binId))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     // Finding #17 — the + now offers both entry points. Take Photo

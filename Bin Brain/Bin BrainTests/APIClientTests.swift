@@ -875,6 +875,67 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(decoded["item_id"] as? Int, 42,
                        "item_id is required — must still be present")
     }
+
+    // MARK: - Swift2_022: deleteBin
+
+    /// Server contract per `docs/openapi.yaml:1222-1290` — 200 response carries
+    /// `moved_item_count`; the method issues a `DELETE /bins/{id}` request.
+    func testDeleteBinReturnsDecodedResponseOnSuccess() async throws {
+        var captured: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            captured = request
+            let json = Data("""
+            {
+                "status": "deleted",
+                "bin_id": "BIN-0042",
+                "moved_item_count": 3,
+                "deleted_at": "2026-04-19T22:30:00Z"
+            }
+            """.utf8)
+            return (makeResponse(statusCode: 200), json)
+        }
+
+        let result = try await sut.deleteBin(binId: "BIN-0042")
+
+        XCTAssertNotNil(result, "200 must decode a non-nil response")
+        XCTAssertEqual(result?.movedItemCount, 3)
+        XCTAssertEqual(result?.binId, "BIN-0042")
+        XCTAssertEqual(captured?.httpMethod, "DELETE")
+        XCTAssertEqual(captured?.url?.path, "/bins/BIN-0042")
+    }
+
+    /// 404 (bin not found / already soft-deleted) is idempotent success — the
+    /// method returns nil so callers can refresh without surfacing a crash.
+    func testDeleteBinReturnsNilOn404AlreadyGone() async throws {
+        MockURLProtocol.requestHandler = { _ in
+            let json = Data("""
+            {"version":"1","error":{"code":"not_found","message":"Bin not found"}}
+            """.utf8)
+            return (makeResponse(statusCode: 404), json)
+        }
+
+        let result = try await sut.deleteBin(binId: "BIN-GONE")
+
+        XCTAssertNil(result, "404 is treated as idempotent success — nil return, no throw")
+    }
+
+    /// 400 `cannot_delete_sentinel` must surface the typed error so the UI
+    /// can log a warning (we have a latent UI bug if this ever reaches us).
+    func testDeleteBinThrowsAPIErrorOn400CannotDeleteSentinel() async throws {
+        MockURLProtocol.requestHandler = { _ in
+            let json = Data("""
+            {"version":"1","error":{"code":"cannot_delete_sentinel","message":"The UNASSIGNED bin cannot be deleted."}}
+            """.utf8)
+            return (makeResponse(statusCode: 400), json)
+        }
+
+        do {
+            _ = try await sut.deleteBin(binId: "UNASSIGNED")
+            XCTFail("Expected APIError to be thrown")
+        } catch let error as APIError {
+            XCTAssertEqual(error.error.code, "cannot_delete_sentinel")
+        }
+    }
 }
 
 // MARK: - Host binding gate tests (#13)

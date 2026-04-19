@@ -206,6 +206,50 @@ final class APIClient {
         )
     }
 
+    /// Soft-deletes a bin and reattributes its items to the reserved
+    /// `UNASSIGNED` sentinel in the same transaction (Swift2_022).
+    ///
+    /// 404 is treated as idempotent success (bin already gone) — the method
+    /// returns `nil` so callers can refresh without a throw / catch dance,
+    /// mirroring `endSession(id:)`.
+    ///
+    /// - Parameter binId: The bin to soft-delete. Callers must guard against
+    ///   passing the reserved `UNASSIGNED` sentinel at the UI layer — the
+    ///   server will reject it with `400 cannot_delete_sentinel`.
+    /// - Returns: The decoded response on 200, `nil` on 404.
+    /// - Throws: `APIError` on 400/5xx (including `cannot_delete_sentinel`),
+    ///   `APIClientError.missingAPIKey` / `.invalidURL` /
+    ///   `.unexpectedStatusCode`, or any underlying `URLError`.
+    @discardableResult
+    func deleteBin(binId: String) async throws -> DeleteBinResponse? {
+        guard hasAPIKey else { throw APIClientError.missingAPIKey }
+        let path = "/bins/\(binId.urlPathComponentEncoded)"
+        let urlString = baseURL + path
+        guard let url = URL(string: urlString) else {
+            throw APIClientError.invalidURL(urlString)
+        }
+        var urlRequest = URLRequest(url: url, timeoutInterval: 10)
+        urlRequest.httpMethod = "DELETE"
+        if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.unexpectedStatusCode(-1)
+        }
+        if (200...299).contains(http.statusCode) {
+            return try JSONDecoder.binBrain.decode(DeleteBinResponse.self, from: data)
+        }
+        if http.statusCode == 404 {
+            return nil
+        }
+        if let apiError = try? JSONDecoder.binBrain.decode(APIError.self, from: data) {
+            throw apiError
+        }
+        throw APIClientError.unexpectedStatusCode(http.statusCode)
+    }
+
     /// Uploads a JPEG photo and associates it with the given bin.
     ///
     /// The bin is created automatically on the backend if it does not yet exist.

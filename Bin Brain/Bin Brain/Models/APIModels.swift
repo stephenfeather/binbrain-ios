@@ -167,6 +167,25 @@ struct ListBinsResponse: Decodable {
     let bins: [BinSummary]
 }
 
+/// The response returned by `DELETE /bins/{bin_id}`.
+///
+/// Soft-deletes the bin and reparents its items to the reserved `UNASSIGNED`
+/// sentinel. `movedItemCount` is the count of `bin_items` rows the delete
+/// consumed (moved + dropped-via-conflict) — surfaced in the client toast.
+struct DeleteBinResponse: Decodable {
+    let status: String
+    let binId: String
+    let movedItemCount: Int
+    let deletedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case binId = "bin_id"
+        case movedItemCount = "moved_item_count"
+        case deletedAt = "deleted_at"
+    }
+}
+
 /// A record representing an item associated with a bin.
 struct BinItemRecord: Decodable {
     let itemId: Int
