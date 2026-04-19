@@ -359,6 +359,14 @@ struct BinDetailView: View {
             viewModel: reviewViewModel,
             apiClient: apiClient,
             onDone: {
+                // Swift2_027 — pop the inner NavigationStack FIRST so the
+                // .analysis/.review pushes unwind before the fullScreenCover
+                // tears down. resetCataloging() (cover's onDismiss) also
+                // clears the path, but it runs *after* the cover has finished
+                // dismissing — too late to prevent SwiftUI rendering a blank
+                // intermediate frame with just the parent's back arrow when
+                // the user taps Dismiss on a preliminary-only result.
+                catalogingPath = []
                 showCamera = false
                 Task { await viewModel.load(binId: binId, apiClient: apiClient) }
             },
