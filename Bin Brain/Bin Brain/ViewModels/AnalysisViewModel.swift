@@ -465,6 +465,19 @@ final class AnalysisViewModel {
                 deviceMetadata: deviceMetadata,
                 sessionId: sessionId
             )
+        } catch let apiError as APIError where apiError.error.code == "reserved_bin_name" {
+            // Swift2_023 — pre-flight (ScannerViewModel + any future create
+            // form) should have rejected this before we got here. If the
+            // server still rejects, remap the message to the same friendly
+            // copy the pre-flight uses so the user sees one consistent
+            // explanation regardless of which validator caught it.
+            throw APIError(
+                version: apiError.version,
+                error: APIError.ErrorDetail(
+                    code: apiError.error.code,
+                    message: BinNameValidator.friendlyMessage(for: binId)
+                )
+            )
         } catch let apiError as APIError where apiError.error.code == "invalid_session" {
             // Server invalidated our cached session. Drop it locally, get
             // a fresh one, and retry exactly once. If sessionManager is

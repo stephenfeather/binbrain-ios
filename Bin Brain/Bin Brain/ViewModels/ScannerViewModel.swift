@@ -103,6 +103,16 @@ final class ScannerViewModel {
             scanError = "QR payload doesn't match expected bin-id format"
             return
         }
+        // Swift2_023 — reject reserved bin names (UNASSIGNED, Binless) before
+        // they ever reach the scan HUD or the /ingest call. Server (ApiDev_011)
+        // is authoritative; this client check is pre-flight UX so the user
+        // doesn't see the raw token flash on screen and so we never round-trip
+        // a guaranteed-failure name. Closes QA PR #27 observation O-1.
+        guard !BinNameValidator.isReserved(trimmed) else {
+            logger.warning("Rejected QR payload: reserved bin name")
+            scanError = "This QR encodes a reserved bin name and was ignored."
+            return
+        }
         scanError = nil
         scannedBinId = trimmed
         phase = .awaitingPhoto
