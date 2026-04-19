@@ -19,6 +19,7 @@ struct SettingsView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.uploadQueueManager) private var uploadQueueManager
     @Environment(\.outcomeQueueManager) private var outcomeQueueManager
+    @Environment(\.sessionManager) private var sessionManager
     @Environment(\.modelContext) private var modelContext
     @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
@@ -55,6 +56,7 @@ struct SettingsView: View {
             imageSizeSection
             searchSection
             catalogingSection
+            sessionSection
             uploadQueueSection
             outcomeQueueSection
         }
@@ -384,6 +386,35 @@ struct SettingsView: View {
 
             Button("Clear Queue", role: .destructive) {
                 uploadQueueManager.clearQueue(context: modelContext)
+            }
+        }
+    }
+
+    // MARK: - Session (Swift2_019)
+
+    @ViewBuilder
+    private var sessionSection: some View {
+        Section("Cataloging Session") {
+            if let session = sessionManager.current {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.label ?? "Active session")
+                        .font(.headline)
+                    Text("Started \(session.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Photos: \(session.photoCount)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("End session now", role: .destructive) {
+                    Task { await sessionManager.endSession(apiClient: apiClient) }
+                }
+            } else {
+                Text("No active session")
+                    .foregroundStyle(.secondary)
+                Text("Opens automatically on your next photo.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

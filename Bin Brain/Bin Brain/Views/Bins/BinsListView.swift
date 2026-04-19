@@ -47,6 +47,7 @@ struct BinsListView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.modelContext) private var modelContext
     @Environment(\.outcomeQueueManager) private var outcomeQueueManager
+    @Environment(\.sessionManager) private var sessionManager
     @Environment(\.embeddedInSplitView) private var embeddedInSplitView
 
     // Cataloging flow
@@ -143,10 +144,14 @@ struct BinsListView: View {
                         // Launch analysis in an unstructured Task so SwiftUI
                         // re-renders cannot cancel the in-flight network call.
                         Task {
+                            // Swift2_019 — transparently open a server
+                            // session so /ingest passes the new validator.
+                            let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                             await analysisViewModel.run(
                                 jpegData: rawData,
                                 binId: binId,
                                 apiClient: apiClient,
+                                sessionId: sessionId,
                                 context: modelContext
                             )
                         }
@@ -250,10 +255,12 @@ struct BinsListView: View {
                     guard let data = capturedPhotoData,
                           let binId = capturedBinId else { return }
                     navigatedOnPreliminary = false
+                    let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
                     await analysisViewModel.overrideQualityGate(
                         jpegData: data,
                         binId: binId,
                         apiClient: apiClient,
+                        sessionId: sessionId,
                         context: modelContext
                     )
                 }

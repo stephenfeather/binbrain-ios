@@ -35,6 +35,23 @@ extension EnvironmentValues {
     }
 }
 
+// MARK: - SessionManager
+
+struct SessionManagerKey: EnvironmentKey {
+    @MainActor
+    static let defaultValue = SessionManager()
+}
+
+extension EnvironmentValues {
+    /// The shared `SessionManager` for the cataloging-session lifecycle
+    /// (Swift2_019). Every `/ingest` must carry the session_id this
+    /// manager tracks.
+    var sessionManager: SessionManager {
+        get { self[SessionManagerKey.self] }
+        set { self[SessionManagerKey.self] = newValue }
+    }
+}
+
 // MARK: - OutcomeQueueManager
 
 struct OutcomeQueueManagerKey: EnvironmentKey {

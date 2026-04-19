@@ -125,8 +125,13 @@ final class AnalysisViewModel {
     ///   - jpegData: Raw JPEG bytes to upload (compressed before sending).
     ///   - binId: The bin identifier to associate the photo with.
     ///   - apiClient: The `APIClient` instance to use for network calls.
+    ///   - sessionId: Server-minted session UUID (`Swift2_019`). When
+    ///     present, forwarded to `/ingest` as the `session_id` multipart
+    ///     field. Callers typically obtain this by awaiting
+    ///     `SessionManager.activeSessionId(apiClient:)` so the first
+    ///     photo after launch opens a session transparently.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
-    func run(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
+    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, context: ModelContext? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
@@ -220,7 +225,8 @@ final class AnalysisViewModel {
             ingestResponse = try await apiClient.ingest(
                 jpegData: uploadData,
                 binId: binId,
-                deviceMetadata: metadataString
+                deviceMetadata: metadataString,
+                sessionId: sessionId
             )
         } catch {
             phase = .failed(error.localizedDescription)
@@ -294,7 +300,7 @@ final class AnalysisViewModel {
     ///   - binId: The bin identifier to associate the photo with.
     ///   - apiClient: The `APIClient` instance to use for network calls.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
-    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, context: ModelContext? = nil) async {
+    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, context: ModelContext? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
         // after tapping "Upload Anyway".
@@ -340,7 +346,8 @@ final class AnalysisViewModel {
             ingestResponse = try await apiClient.ingest(
                 jpegData: uploadData,
                 binId: binId,
-                deviceMetadata: metadataString
+                deviceMetadata: metadataString,
+                sessionId: sessionId
             )
         } catch {
             phase = .failed(error.localizedDescription)
