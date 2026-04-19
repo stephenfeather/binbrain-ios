@@ -403,15 +403,16 @@ nonisolated struct QualityGates: Sendable {
                     return
                 }
 
-                // Compute total coverage as union of all salient bounding boxes (simplified)
-                // Use the largest bounding box as the primary region
-                let largestObject = salientObjects.max(by: {
-                    $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height
-                })!
-
-                let coverage = Double(largestObject.boundingBox.width * largestObject.boundingBox.height)
-
-                continuation.resume(returning: (coverage, largestObject.boundingBox, nil))
+                // Swift2_024 — union of every salient object's bbox, not just
+                // the largest. The previous "pick largest" pruned the upload
+                // crop to a single subject; a screwdriver next to two NFC tags
+                // had the screwdriver stripped before /ingest because the
+                // higher-contrast tags were the largest single object.
+                // TODO(Swift2_024-followup): expose a margin / crop-disable
+                // toggle if union proves insufficient in the wild.
+                let unionBox = Self.unionBoundingBox(of: salientObjects.map { $0.boundingBox })!
+                let coverage = Double(unionBox.width * unionBox.height)
+                continuation.resume(returning: (coverage, unionBox, nil))
             }
         }
     }
@@ -425,6 +426,22 @@ nonisolated struct QualityGates: Sendable {
     func checkSaliencyOnly(_ cgImage: CGImage) async throws -> CGRect? {
         let result = try await checkSaliency(cgImage)
         return result.boundingBox
+    }
+
+    /// Pure reduction over a list of normalized salient bounding boxes.
+    ///
+    /// Returns the smallest rectangle that fully contains every input bbox
+    /// (`CGRect.union` over all elements), or `nil` for an empty input.
+    /// Extracted so the multi-object union logic in `checkSaliency` can be
+    /// unit-tested without a Vision dependency (`Swift2_024`).
+    ///
+    /// - Parameter bboxes: Normalized 0...1 bounding boxes from
+    ///   `VNRectangleObservation` (or any geometric source — the function is
+    ///   agnostic).
+    /// - Returns: The union rectangle, or `nil` if `bboxes` is empty.
+    static func unionBoundingBox(of bboxes: [CGRect]) -> CGRect? {
+        guard let first = bboxes.first else { return nil }
+        return bboxes.dropFirst().reduce(first) { $0.union($1) }
     }
 
     // MARK: - Helpers

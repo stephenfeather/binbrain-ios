@@ -339,4 +339,55 @@ final class QualityGatesTests: XCTestCase {
         XCTAssertEqual(result.scores.exposureMean, 0, "Exposure should not be computed when resolution fails")
         XCTAssertEqual(result.scores.saliencyCoverage, 0, "Saliency should not be computed when resolution fails")
     }
+
+    // MARK: - Swift2_024 — saliency union-bbox helper
+
+    /// Empty input → nil. Preserves the existing "no salient objects" path
+    /// in `checkSaliency` (no crop applied, full frame uploaded).
+    func testUnionBoundingBoxReturnsNilForEmptyInput() {
+        XCTAssertNil(QualityGates.unionBoundingBox(of: []))
+    }
+
+    /// Single object → that object's bbox unchanged. Verifies the new union
+    /// path doesn't regress single-subject captures (the common case).
+    func testUnionBoundingBoxReturnsSingleBboxUnchanged() {
+        let only = CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.5)
+        XCTAssertEqual(QualityGates.unionBoundingBox(of: [only]), only)
+    }
+
+    /// Two non-overlapping objects (top-half + bottom-half of frame) → union
+    /// must contain both. This is the regression bug Stephen reproduced
+    /// (screwdriver + two NFC tags) — the older "pick largest" path would
+    /// have returned only the bigger of the two boxes, stripping the other
+    /// from the upload crop.
+    func testUnionBoundingBoxFullyContainsAllNonOverlappingBoxes() {
+        let topBox = CGRect(x: 0.1, y: 0.6, width: 0.2, height: 0.2)
+        let bottomBox = CGRect(x: 0.7, y: 0.1, width: 0.2, height: 0.2)
+
+        let union = QualityGates.unionBoundingBox(of: [topBox, bottomBox])
+
+        XCTAssertEqual(union, topBox.union(bottomBox))
+        XCTAssertTrue(union?.contains(topBox) ?? false,
+                      "Union must fully contain the first object's bbox")
+        XCTAssertTrue(union?.contains(bottomBox) ?? false,
+                      "Union must fully contain the second object's bbox — this is the screwdriver-stripping regression")
+    }
+
+    /// Three objects, two overlapping. CGRect.union handles overlap via the
+    /// minimum-enclosing-rect rule, so no double-counting occurs and the
+    /// result still contains every input.
+    func testUnionBoundingBoxMergesOverlappingBoxesWithoutDoubleCounting() {
+        let a = CGRect(x: 0.10, y: 0.10, width: 0.30, height: 0.30) // 0.10–0.40
+        let b = CGRect(x: 0.30, y: 0.30, width: 0.30, height: 0.30) // 0.30–0.60 (overlaps a)
+        let c = CGRect(x: 0.70, y: 0.70, width: 0.10, height: 0.10) // 0.70–0.80 (separate)
+
+        let union = QualityGates.unionBoundingBox(of: [a, b, c])
+
+        let expected = a.union(b).union(c)
+        XCTAssertEqual(union, expected)
+        XCTAssertEqual(union?.minX ?? 0, 0.10, accuracy: 1e-9)
+        XCTAssertEqual(union?.minY ?? 0, 0.10, accuracy: 1e-9)
+        XCTAssertEqual(union?.maxX ?? 0, 0.80, accuracy: 1e-9)
+        XCTAssertEqual(union?.maxY ?? 0, 0.80, accuracy: 1e-9)
+    }
 }
