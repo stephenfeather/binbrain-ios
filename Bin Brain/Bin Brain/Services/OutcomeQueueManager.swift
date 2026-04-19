@@ -77,28 +77,62 @@ final class OutcomeQueueManager {
 
     // MARK: - Public API
 
-    /// Inserts a new `.pending` row and attempts an immediate delivery.
+    /// Synchronously writes a `.pending` row and returns it.
     ///
-    /// Mirrors the old fire-and-forget latency: the SwiftData write is
-    /// effectively free and the POST runs `async` so the caller returns
-    /// as soon as the row is durable.
+    /// Split out from `enqueue` per QA finding F-2 (PR #23): the previous
+    /// single async method let `confirm()` return before the underlying
+    /// `Task` that wrapped `enqueue` had been scheduled, so an app-kill
+    /// between `confirm()` returning and the Task running would lose
+    /// the outcome entirely. Callers now `persist` synchronously from
+    /// the confirm-path, then fire `deliver` in a detached Task.
     ///
     /// - Parameters:
     ///   - photoId: Server photo ID the outcomes belong to.
     ///   - payload: Already-encoded outcomes JSON body.
     ///   - context: Main-thread SwiftData context.
-    ///   - apiClient: Client used to issue the POST.
+    /// - Returns: The persisted row, ready to hand to `deliver`.
+    @discardableResult
+    func persist(
+        photoId: Int,
+        payload: Data,
+        context: ModelContext
+    ) -> PendingOutcome {
+        let row = PendingOutcome(photoId: photoId, payload: payload)
+        context.insert(row)
+        save(context)
+        refreshCounts(context: context)
+        return row
+    }
+
+    /// Attempts immediate delivery of a previously-persisted row. Safe
+    /// to run fire-and-forget: exceptions are caught, status transitions
+    /// happen against the persisted row, and the counts refresh after.
+    ///
+    /// Exposed so the confirm-path can separate the durable write
+    /// (`persist`) from the network attempt, but still available as a
+    /// single-step convenience via `enqueue`.
+    func deliver(
+        _ row: PendingOutcome,
+        context: ModelContext,
+        apiClient: APIClient
+    ) async {
+        await attemptDelivery(row, context: context, apiClient: apiClient)
+    }
+
+    /// Convenience wrapper that persists and attempts delivery in one call.
+    ///
+    /// Preserved so existing tests (and non-confirm callers that don't
+    /// need the split) keep a single entry point. F-2's invariant —
+    /// "row durable before confirm returns" — is upheld at the VM level
+    /// by calling `persist` directly and spawning `deliver` in a Task.
     func enqueue(
         photoId: Int,
         payload: Data,
         context: ModelContext,
         apiClient: APIClient
     ) async {
-        let row = PendingOutcome(photoId: photoId, payload: payload)
-        context.insert(row)
-        save(context)
-        refreshCounts(context: context)
-        await deliver(row, context: context, apiClient: apiClient)
+        let row = persist(photoId: photoId, payload: payload, context: context)
+        await attemptDelivery(row, context: context, apiClient: apiClient)
     }
 
     /// Processes every row whose `nextRetryAt <= now`, then sweeps TTL.
@@ -245,7 +279,7 @@ final class OutcomeQueueManager {
 
     // MARK: - Delivery
 
-    private func deliver(
+    private func attemptDelivery(
         _ row: PendingOutcome,
         context: ModelContext,
         apiClient: APIClient
@@ -315,9 +349,25 @@ final class OutcomeQueueManager {
             return
         }
         var touched = false
-        for row in all where row.queuedAt < cutoff && row.status != .expired && row.status != .delivered {
-            row.status = .expired
-            touched = true
+        for row in all where row.queuedAt < cutoff {
+            switch row.status {
+            case .pending, .sending:
+                // Surface the row in the Settings dead-letter so users
+                // can see what failed. Leaves `.expired` rows alone —
+                // dismissal is an explicit user action.
+                row.status = .expired
+                touched = true
+            case .delivered:
+                // F-4 (QA PR #23): delivered rows were retained forever.
+                // Delete them after the 7-day TTL so the store stays
+                // bounded. The user-visible "Delivered (last 7 days)"
+                // count in Settings is now accurate by construction.
+                context.delete(row)
+                touched = true
+            case .expired:
+                // Keep — user will dismiss explicitly.
+                break
+            }
         }
         if touched {
             save(context)

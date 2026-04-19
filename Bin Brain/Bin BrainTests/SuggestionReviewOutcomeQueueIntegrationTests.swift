@@ -99,11 +99,11 @@ final class SuggestionReviewOutcomeQueueIntegrationTests: XCTestCase {
                             visionModel: "vision-test",
                             promptVersion: nil)
 
-        var outcomesHits = 0
+        let outcomesHit = expectation(description: "/outcomes POST reached the mock")
         let client = makeMockAPIClient { [self] request in
             let path = request.url?.path ?? ""
             if path.contains("/outcomes") {
-                outcomesHits += 1
+                outcomesHit.fulfill()
                 return (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
             }
             if path.contains("/classes/confirm") {
@@ -116,17 +116,24 @@ final class SuggestionReviewOutcomeQueueIntegrationTests: XCTestCase {
         }
 
         await sut.confirm(binId: "BIN-0001", apiClient: client)
-        // The enqueue runs in a detached Task; wait for it to settle.
-        try await Task.sleep(nanoseconds: 100_000_000)
 
-        XCTAssertEqual(outcomesHits, 1,
-                       "Queue-injected VM must still emit exactly one /outcomes POST via enqueue")
-        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
-        XCTAssertEqual(rows.count, 1,
-                       "Enqueue must persist exactly one PendingOutcome row")
-        XCTAssertEqual(rows.first?.status, .delivered,
+        // F-2 durability guarantee: the row MUST be in the store by the
+        // time confirm() returns, with no async settling. An app-kill at
+        // this moment must not drop the outcome.
+        let rowsAtReturn = try context.fetch(FetchDescriptor<PendingOutcome>())
+        XCTAssertEqual(rowsAtReturn.count, 1,
+                       "F-2: the PendingOutcome row must be durable the instant confirm() returns — no Task.sleep papering over races")
+        XCTAssertEqual(rowsAtReturn.first?.photoId, 42)
+
+        // Delivery itself is async; wait for the POST to land.
+        await fulfillment(of: [outcomesHit], timeout: 2.0)
+
+        // Give the delivery-branch `save` a chance to run, then re-fetch.
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let rowsAfter = try context.fetch(FetchDescriptor<PendingOutcome>())
+        XCTAssertEqual(rowsAfter.first?.status, .delivered,
                        "2xx response must flip the persisted row to .delivered")
-        XCTAssertEqual(rows.first?.photoId, 42)
     }
 
     // MARK: - Failure path persists a .pending row for retry
@@ -152,7 +159,15 @@ final class SuggestionReviewOutcomeQueueIntegrationTests: XCTestCase {
         }
 
         await sut.confirm(binId: "BIN-0001", apiClient: client)
-        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // F-2: row durable synchronously.
+        let rowsImmediate = try context.fetch(FetchDescriptor<PendingOutcome>())
+        XCTAssertEqual(rowsImmediate.count, 1,
+                       "F-2: row must be durable at confirm() return even on the failure path")
+
+        // Give the classify-and-save path a tick to land the 500 verdict.
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 50_000_000)
 
         let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
         let row = try XCTUnwrap(rows.first)

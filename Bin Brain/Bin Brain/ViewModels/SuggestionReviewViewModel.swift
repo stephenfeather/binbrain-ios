@@ -797,16 +797,19 @@ final class SuggestionReviewViewModel {
         // Swift2_018 — preferred path. The queue persists the payload so
         // network or 5xx failures retry on backoff, NWPathMonitor, and
         // foreground transitions instead of being silently dropped.
+        //
+        // F-2 (QA PR #23 review): write the row synchronously BEFORE
+        // spawning the POST task. Wrapping the whole enqueue in a `Task`
+        // let confirm() return before the SwiftData insert ran, so an
+        // app-kill between return and the Task running would drop the
+        // outcome. `persist` is synchronous (<1ms) so confirm() is still
+        // effectively fire-and-forget from the user's perspective.
         if let queue = outcomeQueueManager, let context = outcomeQueueContext {
             do {
                 let body = try JSONEncoder.binBrain.encode(request)
+                let row = queue.persist(photoId: pid, payload: body, context: context)
                 Task { @MainActor in
-                    await queue.enqueue(
-                        photoId: pid,
-                        payload: body,
-                        context: context,
-                        apiClient: apiClient
-                    )
+                    await queue.deliver(row, context: context, apiClient: apiClient)
                 }
             } catch {
                 logger.error("[OUTCOMES] payload encode failed (queue path): \(error.localizedDescription, privacy: .private)")

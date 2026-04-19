@@ -329,6 +329,76 @@ final class OutcomeQueueManagerTests: XCTestCase {
         XCTAssertTrue(rows.isEmpty, "Dismiss must remove the expired row from storage")
     }
 
+    // MARK: - F-2: persist is synchronous
+
+    /// F-2 (QA PR #23): `persist(...)` writes the row to SwiftData
+    /// synchronously — no await, no Task scheduling. This is what lets
+    /// `SuggestionReviewViewModel.confirm()` return with the row durable
+    /// so an app-kill cannot drop the outcome.
+    func testPersistIsSynchronousAndRowIsImmediatelyQueryable() throws {
+        let row = sut.persist(photoId: 99, payload: samplePayload, context: context)
+
+        // Same tick: fetch and find it.
+        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+        XCTAssertEqual(rows.count, 1,
+                       "persist must synchronously commit the row — no awaits in the write path")
+        XCTAssertEqual(rows.first?.id, row.id)
+        XCTAssertEqual(rows.first?.photoId, 99)
+        XCTAssertEqual(rows.first?.status, .pending)
+    }
+
+    // MARK: - F-4: delivered-row TTL sweep
+
+    /// F-4 (QA PR #23): delivered rows used to accumulate forever
+    /// because `expireAged` excluded `.delivered`. The TTL sweep now
+    /// deletes delivered rows past the 7-day cutoff so the store stays
+    /// bounded without a separate janitor.
+    func testExpirationSweepDeletesDeliveredRowsPastTTL() async throws {
+        let eightDaysAgo = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let freshDelivered = PendingOutcome(photoId: 1, payload: samplePayload)
+        freshDelivered.status = .delivered
+        let staleDelivered = PendingOutcome(photoId: 2, payload: samplePayload)
+        staleDelivered.status = .delivered
+        staleDelivered.queuedAt = eightDaysAgo
+        context.insert(freshDelivered)
+        context.insert(staleDelivered)
+        try context.save()
+
+        let client = makeMockAPIClient { [self] request in
+            (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        await sut.drain(context: context, apiClient: client)
+
+        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+        let ids = Set(rows.map(\.photoId))
+        XCTAssertTrue(ids.contains(1),
+                      "Fresh delivered row (< 7 days) must be retained")
+        XCTAssertFalse(ids.contains(2),
+                       "Stale delivered row (> 7 days) must be deleted, not merely flipped to .expired")
+    }
+
+    /// Expired rows stay put — dismissal is an explicit user action,
+    /// not a TTL behaviour.
+    func testExpirationSweepLeavesExpiredRowsAlone() async throws {
+        let eightDaysAgo = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let staleExpired = PendingOutcome(photoId: 3, payload: samplePayload)
+        staleExpired.status = .expired
+        staleExpired.queuedAt = eightDaysAgo
+        context.insert(staleExpired)
+        try context.save()
+
+        let client = makeMockAPIClient { [self] request in
+            (mockResponse(statusCode: 200, for: request), Data("{}".utf8))
+        }
+
+        await sut.drain(context: context, apiClient: client)
+
+        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+        XCTAssertEqual(rows.first?.status, .expired,
+                       "Expired rows persist until the user dismisses them explicitly")
+    }
+
     // MARK: - Observable counts
 
     func testCountsReflectPersistedRows() async throws {
