@@ -284,6 +284,45 @@ final class APIClient {
         )
     }
 
+    /// Raw variant of `postPhotoSuggestionOutcomes` used by the
+    /// `OutcomeQueueManager` (Swift2_018). Returns the HTTP status code
+    /// directly so the queue can classify retry behaviour without trying
+    /// to decode a response body that may be empty on 4xx/5xx. Throws
+    /// `URLError` on transport failure; never throws for HTTP-layer
+    /// statuses.
+    ///
+    /// - Parameters:
+    ///   - photoId: Server-side photo ID.
+    ///   - body: Already-serialized JSON payload (frozen at enqueue time).
+    ///   - clientRetryCount: Value forwarded as `X-Client-Retry-Count` so
+    ///     the server can log the number of attempts it took to deliver.
+    /// - Returns: The HTTP status code returned by the server.
+    func postPhotoSuggestionOutcomesRaw(
+        photoId: Int,
+        body: Data,
+        clientRetryCount: Int
+    ) async throws -> Int {
+        guard hasAPIKey else { throw APIClientError.missingAPIKey }
+        let urlString = baseURL + "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes"
+        guard let url = URL(string: urlString) else {
+            throw APIClientError.invalidURL(urlString)
+        }
+        var urlRequest = URLRequest(url: url, timeoutInterval: 10)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("\(max(clientRetryCount, 0))", forHTTPHeaderField: "X-Client-Retry-Count")
+        if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+
+        let (_, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.unexpectedStatusCode(-1)
+        }
+        return http.statusCode
+    }
+
     /// Creates or upserts an item in the catalogue, optionally linking it to a bin.
     ///
     /// Fields with `nil` values are omitted from the multipart request body.
