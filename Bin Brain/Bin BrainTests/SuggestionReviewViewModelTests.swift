@@ -1208,4 +1208,121 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                      "successful confirm must not leave a stale error message")
         XCTAssertTrue(sut.failedIndices.isEmpty, "no failures expected on happy path")
     }
+
+    // MARK: - Swift2_029 — duplicate-association feedback toast
+
+    /// Server PR #41 shape: every `/associate` returns `inserted:true`.
+    /// Asserts the regression — when nothing is a duplicate, no info
+    /// toast fires and the duplicate counter stays at zero.
+    private var associateInsertedTrueJSON: Data {
+        Data("""
+        {"ok":true,"bin_id":"BIN-0001","item_id":101,"inserted":true}
+        """.utf8)
+    }
+
+    /// Server PR #41 shape for an already-existing `(bin, item)` row.
+    /// `inserted:false` means the server did NOT merge quantity/confidence.
+    private var associateInsertedFalseJSON: Data {
+        Data("""
+        {"ok":true,"bin_id":"BIN-0001","item_id":101,"inserted":false}
+        """.utf8)
+    }
+
+    /// Two suggestions, both /associate responses inserted:true. No
+    /// duplicate-info toast must fire and the counter must remain zero.
+    /// Pins the existing-behavior contract under the new field.
+    func testConfirmAllInsertedTrueLeavesInfoMessageNil() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateInsertedTrueJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.duplicateAssociationCount, 0,
+                       "all inserted:true responses must leave duplicate count at zero")
+        XCTAssertNil(sut.confirmationInfoMessage,
+                     "no info toast should fire when nothing is a duplicate")
+        XCTAssertNil(sut.confirmationErrorMessage,
+                     "happy path must not set the error message either")
+    }
+
+    /// Two suggestions: first inserted:true, second inserted:false. The
+    /// duplicate-info toast must surface "1 of 2" in the copy so the user
+    /// sees that one of their edited quantities was discarded.
+    func testConfirmInsertedFalseSurfacesDuplicateInfoToast() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        var associateCount = 0
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                associateCount += 1
+                let body = associateCount == 1
+                    ? associateInsertedTrueJSON
+                    : associateInsertedFalseJSON
+                return (mockResponse(statusCode: 200, for: request), body)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.duplicateAssociationCount, 1,
+                       "exactly one inserted:false must increment the counter once")
+        let message = try XCTUnwrap(sut.confirmationInfoMessage,
+                                    "an inserted:false response must publish an info toast")
+        // Substring assertion — copy may evolve. Exact-string match would
+        // make this brittle for a UX-text change.
+        XCTAssertTrue(message.contains("1 of 2"),
+                      "info toast must read 'N of M' with N=1, M=2 — got: \(message)")
+        XCTAssertNil(sut.confirmationErrorMessage,
+                     "duplicate-no-op is informational, not an error")
+        XCTAssertTrue(sut.failedIndices.isEmpty,
+                      "duplicate-no-op must not be classified as a failure")
+    }
+
+    /// Backward-compat: a pre-PR-#41 server omits the `inserted` key. The
+    /// decoder must fall back to `inserted = true` so the old
+    /// "association succeeded; nothing to surface" contract still holds.
+    /// Reuses the historic `associateSuccessJSON` fixture (no `inserted`
+    /// key) — the absence is the test.
+    func testConfirmTreatsMissingInsertedKeyAsTrue() async throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path.contains("/classes/confirm") {
+                return (mockResponse(statusCode: 200, for: request), confirmClassSuccessJSON)
+            }
+            if path.hasSuffix("/associate") {
+                // Omits "inserted" entirely — mirrors a pre-PR-#41 server.
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        XCTAssertEqual(sut.duplicateAssociationCount, 0,
+                       "absent inserted key must default to true (no false-positive duplicates)")
+        XCTAssertNil(sut.confirmationInfoMessage,
+                     "back-compat path must not surface a duplicate toast")
+        XCTAssertNil(sut.confirmationErrorMessage,
+                     "back-compat decode must not surface an error either")
+    }
 }
