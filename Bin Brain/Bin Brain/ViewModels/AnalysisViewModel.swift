@@ -479,6 +479,11 @@ final class AnalysisViewModel {
                 )
             )
         } catch let apiError as APIError where apiError.error.code == "invalid_session" {
+            // Swift2_019c / SEC-25-5 — intentionally tight-keyed to
+            // `invalid_session` only. Adjacent codes (`session_expired`,
+            // `session_closed`, `session_owner_mismatch`) are NOT caught
+            // by design; any server-side addition to the recovery-eligible
+            // set requires a matched iOS release that updates this clause.
             // Server invalidated our cached session. Drop it locally, get
             // a fresh one, and retry exactly once. If sessionManager is
             // nil (legacy callers without session wiring), the original
@@ -491,11 +496,15 @@ final class AnalysisViewModel {
             logger.info("[SESSION] server returned invalid_session for \(sessionId?.uuidString ?? "nil", privacy: .private) — invalidating and retrying with fresh session")
             sessionManager.invalidateCurrentSession(ifCurrentIs: sessionId)
             let freshId = try await sessionManager.activeSessionId(apiClient: apiClient)
+            // Swift2_019c / SEC-25-4 — stamp the retry so server-side
+            // telemetry can distinguish a session-recovery retry from an
+            // independent first attempt. Mirrors the /outcomes pattern.
             return try await apiClient.ingest(
                 jpegData: jpegData,
                 binId: binId,
                 deviceMetadata: deviceMetadata,
-                sessionId: freshId
+                sessionId: freshId,
+                retryCount: 1
             )
         }
     }

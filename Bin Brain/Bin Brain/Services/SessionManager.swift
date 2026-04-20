@@ -51,6 +51,16 @@ final class SessionManager {
     /// Main-actor isolation guarantees the `beginTask = task` assignment
     /// and the first-reader `if let beginTask` check serialize correctly
     /// — no lock needed.
+    ///
+    /// Swift2_019c / SEC-25-1 — the in-flight Task closes over the *first*
+    /// caller's `apiClient`. All concurrent `activeSessionId` callers
+    /// today MUST share one `APIClient` instance (same api-key /
+    /// base-URL); BinsListView, BinDetailView, and SettingsView all use
+    /// the `@Environment`-injected client, so this holds. If the app ever
+    /// grows a per-feature `APIClient` (e.g. a background uploader with
+    /// a different keychain), this memoization will silently cross-wire
+    /// session ownership — that's the rebuild trigger, not a bug to fix
+    /// pre-emptively.
     private var beginTask: Task<Session, Error>?
 
     // MARK: - Init
