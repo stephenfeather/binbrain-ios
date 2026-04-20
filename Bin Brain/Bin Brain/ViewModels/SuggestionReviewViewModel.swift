@@ -352,7 +352,15 @@ final class SuggestionReviewViewModel {
         let initialState: OutcomeState = threeStateEnabled ? .ignored : .accepted
         let initialIncluded = (initialState == .accepted)
         editableSuggestions = suggestions.enumerated().map { idx, item in
-            let name = item.match?.name ?? item.name
+            // Vision label is the authoritative default. A DB match that
+            // passed the similarity threshold can still be semantically wrong
+            // (screw box 95% vs. unrelated catalogue item, BME688 87% vs.
+            // random part); letting match.name win silently poisoned the
+            // catalogue + YOLO-World training when the user tapped Confirm
+            // without editing. The match is still surfaced via the
+            // "also in catalog" disclosure line in the row view, and the
+            // user can one-tap adopt it there if they actually want it.
+            let name = item.name
             let category = item.match?.category ?? item.category ?? ""
             return EditableSuggestion(
                 id: idx,
@@ -580,6 +588,21 @@ final class SuggestionReviewViewModel {
         }
     }
 
+    /// Replaces `editedName` / `editedCategory` with the catalogue match's
+    /// values. No-op when the row has no match. Invoked by the row-view's
+    /// "also in catalog: ..." disclosure button — the one-tap adopt path.
+    /// Counts as a user edit, so `noteUserEdit` is chained to preserve the
+    /// merge + outcome-classification rules that fire off it.
+    func adoptMatchName(id: Int) {
+        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        guard let match = editableSuggestions[idx].match else { return }
+        editableSuggestions[idx].editedName = match.name
+        if let category = match.category, !category.isEmpty {
+            editableSuggestions[idx].editedCategory = category
+        }
+        noteUserEdit(id: id)
+    }
+
     /// Reconciles the current preliminary chips with the server's suggestions.
     ///
     /// Behavior (from the merge-UX spike §2a):
@@ -671,7 +694,11 @@ final class SuggestionReviewViewModel {
         for item in server {
             let key = Self.normalize(item.name)
             if editedNames.contains(key) { continue }
-            let name = item.match?.name ?? item.name
+            // Swift_match_name_display_fix — Vision label is authoritative.
+            // Mirror the `loadSuggestions` prefill so merge-path chips carry
+            // the same default as direct-load chips. The disclosure tap in
+            // the row view adopts match.name when the user wants it.
+            let name = item.name
             let category = item.match?.category ?? item.category ?? ""
             result.append(
                 EditableSuggestion(
@@ -739,12 +766,15 @@ final class SuggestionReviewViewModel {
             let finalLabel = item.editedName.trimmingCharacters(in: .whitespacesAndNewlines)
             let originalLabel = item.visionName
             // Edit-detection baseline is the value `editedName` was PREFILLED
-            // with — which is `match.name` when a catalogue match exists,
-            // NOT `visionName`. Comparing against `visionName` alone would
-            // false-flag every catalogue-matched but untouched confirmation
-            // as `.edited` (poisoning the training signal Swift2_014 exists
-            // to collect — see ultrareview bug_001).
-            let prefilledLabel = item.match?.name ?? item.visionName
+            // with — which is `visionName` in every case since the
+            // Swift_match_name_display_fix change. An earlier contract
+            // prefilled from `match.name` when a catalogue match existed,
+            // but that let bogus matches poison the training signal on
+            // Confirm, so the prefill is now always Vision. The user can
+            // still one-tap adopt `match.name` via the row's match-disclosure
+            // line — that flow is a genuine edit and correctly emits
+            // `.edited` under this baseline.
+            let prefilledLabel = item.visionName
             let labelChanged = !finalLabel.isEmpty && finalLabel != prefilledLabel
 
             let decision: PhotoSuggestionOutcome.Decision

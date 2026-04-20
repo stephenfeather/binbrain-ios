@@ -409,9 +409,17 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         )
     }
 
-    // MARK: - Test 9: loadSuggestions prefers match name/category
+    // MARK: - Test 9: loadSuggestions defaults editedName to Vision label
+    //
+    // Swift_match_name_display_fix (2026-04-20) — previously this test
+    // asserted that `match.name` won the prefill race. That contract was
+    // poisoning the catalogue on Confirm when the similarity match was
+    // semantically bogus (screw box 95% vs. unrelated item, BME688 87%).
+    // The new contract: `editedName` is prefilled from the raw Vision label
+    // regardless of match presence; match is surfaced for display only and
+    // can be one-tap adopted via `adoptMatchName(id:)`.
 
-    func testLoadSuggestionsUsesMatchNameWhenAvailable() throws {
+    func testLoadSuggestionsDefaultsEditedNameToVisionLabelEvenWhenMatched() throws {
         let json = Data("""
         [
             {
@@ -442,8 +450,12 @@ final class SuggestionReviewViewModelTests: XCTestCase {
 
         sut.loadSuggestions(suggestions)
 
-        // First: matched — should use catalogue name/category
-        XCTAssertEqual(sut.editableSuggestions[0].editedName, "Hex Nut M3")
+        // First: matched — editedName MUST be Vision label, NOT match.name.
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "hex nut",
+                       "editedName must default to Vision label, not match.name — match.name wins was the data-poisoning bug Swift_match_name_display_fix addressed")
+        // Category still preferentially uses the catalogue match's category
+        // since that's lower-risk than a free-text name override and the
+        // Vision category is often missing. Intentional.
         XCTAssertEqual(sut.editableSuggestions[0].editedCategory, "Fasteners")
         XCTAssertEqual(sut.editableSuggestions[0].visionName, "hex nut")
         XCTAssertTrue(sut.editableSuggestions[0].isMatched)
@@ -456,6 +468,120 @@ final class SuggestionReviewViewModelTests: XCTestCase {
         XCTAssertEqual(sut.editableSuggestions[1].visionName, "mystery part")
         XCTAssertFalse(sut.editableSuggestions[1].isMatched)
         XCTAssertNil(sut.editableSuggestions[1].match)
+    }
+
+    func testLoadSuggestionsDefaultsToVisionNameAcrossMatchScores() throws {
+        // Vision wins regardless of match confidence — the core invariant
+        // of Swift_match_name_display_fix. Even a 0.99 match (the kind that
+        // looks like a legit hit) must not override the Vision label.
+        for score in [0.51, 0.75, 0.87, 0.95, 0.99] {
+            sut = SuggestionReviewViewModel()
+            sut.threeStateEnabled = false
+            let json = Data("""
+            [{
+                "item_id": null,
+                "name": "screw box",
+                "category": null,
+                "confidence": 0.9,
+                "bins": [],
+                "match": {
+                    "item_id": 1,
+                    "name": "Arduino Uno Rev3",
+                    "category": "Electronics",
+                    "score": \(score),
+                    "bins": ["A-1"]
+                }
+            }]
+            """.utf8)
+            let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+            sut.loadSuggestions(suggestions)
+            XCTAssertEqual(sut.editableSuggestions[0].editedName, "screw box",
+                           "Vision label must survive as the prefilled editedName even at match score \(score)")
+        }
+    }
+
+    func testAdoptMatchNameReplacesEditedNameWithCatalogueMatch() throws {
+        let json = Data("""
+        [{
+            "item_id": null,
+            "name": "hex nut",
+            "category": "hardware",
+            "confidence": 0.7,
+            "bins": [],
+            "match": {
+                "item_id": 42,
+                "name": "Hex Nut M3",
+                "category": "Fasteners",
+                "score": 0.9,
+                "bins": []
+            }
+        }]
+        """.utf8)
+        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+        sut.loadSuggestions(suggestions)
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "hex nut")
+
+        sut.adoptMatchName(id: 0)
+
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "Hex Nut M3",
+                       "adoptMatchName must replace editedName with the catalogue match's name")
+        XCTAssertEqual(sut.editableSuggestions[0].editedCategory, "Fasteners")
+    }
+
+    func testAdoptMatchNameIsNoOpWhenMatchAbsent() throws {
+        let suggestions = try makeSuggestions()
+        sut.loadSuggestions(suggestions)
+        let before = sut.editableSuggestions[0].editedName
+
+        sut.adoptMatchName(id: 0)
+
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, before,
+                       "adoptMatchName must be a no-op on rows with no match")
+    }
+
+    func testConfirmSendsVisionNameWhenMatchedRowIsUntouched() async throws {
+        // The bug this test guards against: on Confirm with an untouched row
+        // that carries a (possibly bogus) catalogue match, the server used
+        // to receive match.name in the upsert body. After
+        // Swift_match_name_display_fix, the Vision label must go through.
+        let json = Data("""
+        [{
+            "item_id": null,
+            "name": "screw box",
+            "category": null,
+            "confidence": 0.9,
+            "bins": [],
+            "match": {
+                "item_id": 77,
+                "name": "Arduino Uno Rev3",
+                "category": "Electronics",
+                "score": 0.95,
+                "bins": []
+            }
+        }]
+        """.utf8)
+        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+        sut.loadSuggestions(suggestions)
+
+        var capturedItemsBody: String?
+        let client = makeMockAPIClient { [self] request in
+            let path = request.url?.path ?? ""
+            if path == "/items", let data = request.bodyData {
+                capturedItemsBody = String(data: data, encoding: .utf8)
+            }
+            if path.hasSuffix("/associate") {
+                return (mockResponse(statusCode: 200, for: request), associateSuccessJSON)
+            }
+            return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
+        }
+
+        await sut.confirm(binId: "BIN-0001", apiClient: client)
+
+        let bodyString = try XCTUnwrap(capturedItemsBody)
+        XCTAssertTrue(bodyString.contains("screw box"),
+                      "upsert body must carry the Vision label 'screw box', not the bogus match 'Arduino Uno Rev3'. Body was: \(bodyString)")
+        XCTAssertFalse(bodyString.contains("Arduino Uno Rev3"),
+                       "upsert body must NOT carry match.name when the user did not adopt the match")
     }
 
     // MARK: - Test 10: loadSuggestions without match preserves vision data

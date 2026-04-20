@@ -286,25 +286,32 @@ struct SuggestionReviewView: View {
                 }
             }
 
-            if s.isMatched {
-                HStack(spacing: 4) {
-                    Image(systemName: "link")
-                        .font(.caption2)
-                        .accessibilityHidden(true)
-                    Text("Matched to catalogue")
-                        .font(.caption)
-                    if s.visionName != s.editedName {
-                        Text("(vision: \(s.visionName))")
+            if let match = s.match {
+                // Swift_match_name_display_fix — the primary title (Text at
+                // top of the row) now shows the Vision label. The catalogue
+                // match is surfaced here as a disclosure line so the user
+                // can see it exists without it silently overriding the name
+                // they're about to confirm. Tapping the line adopts the
+                // match — one-tap path for users who actually want it.
+                Button {
+                    viewModel.adoptMatchName(id: s.id)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link")
+                            .font(.caption2)
+                            .accessibilityHidden(true)
+                        Text("also in catalog: \(match.name)")
                             .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    if let score = s.match?.score {
                         Spacer()
-                        Text(String(format: "%.0f%% similar", score * 100))
+                        Text(String(format: "%.0f%%", match.score * 100))
                             .font(.caption)
                     }
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Adopt catalogue match \(match.name), \(Int(match.score * 100)) percent similar")
+                .accessibilityHint("Replaces the name with the catalogue match")
             }
 
             TextField("Name", text: suggestion.editedName)
