@@ -373,24 +373,31 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
         XCTAssertTrue(outcomes.isEmpty, "no presented suggestions → no decisions")
     }
 
-    // MARK: - 10. Regression — catalogue-matched untouched → .accepted (ultrareview bug_001)
+    // MARK: - 10. Regression — catalogue-matched untouched → .accepted
+    //
+    // History:
+    // - ultrareview bug_001 (pre-fix): `loadSuggestions` prefilled
+    //   `editedName` from `match.name`, so naïve `editedName != visionName`
+    //   edit-detection false-flagged every untouched match as `.edited`.
+    //   Fix was to baseline against `match.name ?? visionName`.
+    // - Swift_match_name_display_fix (2026-04-20): `loadSuggestions` now
+    //   prefills from `visionName` regardless of match (bogus matches were
+    //   poisoning the catalogue on Confirm). Baseline correspondingly
+    //   simplified to `visionName`. The "untouched → .accepted" invariant
+    //   must still hold under both contracts.
 
-    /// When a server suggestion carries a `SuggestionMatch`, `loadSuggestions`
-    /// pre-fills `editedName` from `match.name` (not `visionName`). A naïve
-    /// `editedName != visionName` edit-detection would false-flag every
-    /// matched-but-untouched confirmation as `.edited`, poisoning the training
-    /// signal. `buildOutcomes` must compare against the pre-fill baseline
-    /// (`match.name ?? visionName`) so untouched matched items stay `.accepted`.
+    /// Untouched matched row — `editedName` is the Vision label (the new
+    /// prefill) — must classify as `.accepted`.
     func testBuildOutcomes_catalogueMatchedUntouchedItemClassifiedAsAccepted() {
         let match = SuggestionMatchFixture.hexNutM3
         let matched = EditableSuggestion(
             id: 0,
             included: true,
-            editedName: match.name,       // pre-filled from match.name by loadSuggestions
+            editedName: "hex nut",         // pre-filled from visionName per Swift_match_name_display_fix
             editedCategory: match.category ?? "",
             editedQuantity: "",
             confidence: 0.9,
-            visionName: "hex nut",         // raw VLM label — diverges from editedName at load time
+            visionName: "hex nut",
             match: match,
             bbox: nil,
             teach: true,
@@ -404,20 +411,19 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
         )
         XCTAssertEqual(outcomes.count, 1)
         XCTAssertEqual(outcomes[0].decision, .accepted,
-                       "matched, user-untouched item must be .accepted — comparing editedName to visionName alone would wrongly emit .edited")
+                       "matched, user-untouched item must be .accepted when editedName == visionName")
         XCTAssertNil(outcomes[0].editedToLabel)
         XCTAssertEqual(outcomes[0].label, "hex nut",
-                       "label must be the raw VLM signal (visionName), not the catalogue match name")
+                       "label must be the raw VLM signal (visionName)")
     }
 
-    /// And confirm the real-edit path still fires when the user overrides a
-    /// matched pre-fill — the baseline shift must not suppress genuine edits.
+    /// Real-edit path: user typed a distinct name. Must classify as `.edited`.
     func testBuildOutcomes_catalogueMatchedThenUserEditedStillEmitsEdited() {
         let match = SuggestionMatchFixture.hexNutM3
         let edited = EditableSuggestion(
             id: 0,
             included: true,
-            editedName: "M3 stainless nut", // user overrode the match prefill
+            editedName: "M3 stainless nut", // user typed a new name
             editedCategory: "fastener",
             editedQuantity: "",
             confidence: 0.9,
@@ -436,6 +442,37 @@ final class PhotoSuggestionOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes[0].decision, .edited)
         XCTAssertEqual(outcomes[0].label, "hex nut")
         XCTAssertEqual(outcomes[0].editedToLabel, "M3 stainless nut")
+    }
+
+    /// Swift_match_name_display_fix adopt-match path: user tapped the
+    /// "also in catalog" disclosure, replacing `editedName` with `match.name`.
+    /// That is a genuine user edit and must emit `.edited` with the match
+    /// name as `editedToLabel`.
+    func testBuildOutcomes_userAdoptedCatalogueMatchEmitsEdited() {
+        let match = SuggestionMatchFixture.hexNutM3
+        let adopted = EditableSuggestion(
+            id: 0,
+            included: true,
+            editedName: match.name, // user tapped disclosure → adopted match.name
+            editedCategory: match.category ?? "",
+            editedQuantity: "",
+            confidence: 0.9,
+            visionName: "hex nut",
+            match: match,
+            bbox: nil,
+            teach: true,
+            origin: .edited,
+            originalCategory: "fastener"
+        )
+        let outcomes = SuggestionReviewViewModel.buildOutcomes(
+            shownAt: fixedShownAt,
+            editable: [adopted],
+            confirmedIds: [0]
+        )
+        XCTAssertEqual(outcomes[0].decision, .edited,
+                       "adopting the catalogue match via the disclosure tap is a genuine edit")
+        XCTAssertEqual(outcomes[0].label, "hex nut")
+        XCTAssertEqual(outcomes[0].editedToLabel, match.name)
     }
 
     // MARK: - 11. Regression — shownAt restamps on fresh session (ultrareview bug_003)
