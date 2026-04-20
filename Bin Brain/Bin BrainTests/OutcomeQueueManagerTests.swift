@@ -501,10 +501,11 @@ final class OutcomeQueueManagerTests: XCTestCase {
                        "First POST must carry Idempotency-Key header equal to PendingOutcome.id")
     }
 
-    /// F-6 retry stability: the second attempt for a row must reuse the
-    /// original UUID so the server can collapse the duplicate. A fresh
-    /// UUID per attempt would make the key useless for dedup.
-    func testOutcomeRetryReusesSameIdempotencyKey() async throws {
+    /// F-6 retry stability — single-POST smoke test for the simple case
+    /// where one drain produces one POST. The cross-drain stability
+    /// contract (key identical across multiple POSTs for the same row)
+    /// is in `testOutcomeRetryKeyIsStableAcrossMultiplePosts` below.
+    func testOutcomePostHeaderEqualsRowIdForRetriedRow() async throws {
         let row = PendingOutcome(photoId: 11, payload: samplePayload)
         row.retryCount = 2
         row.nextRetryAt = Date().addingTimeInterval(-1)
@@ -524,6 +525,112 @@ final class OutcomeQueueManagerTests: XCTestCase {
         XCTAssertEqual(seenHeaders.count, 1, "precondition: one POST")
         XCTAssertEqual(seenHeaders.first, row.id.uuidString.lowercased(),
                        "Retry attempts must reuse PendingOutcome.id — otherwise server dedup is useless")
+    }
+
+    /// Swift2_018c G-3 — F-6 cross-drain stability. Drives TWO POSTs
+    /// for the same row (first 500 → row stays `.pending` with bumped
+    /// retryCount; force-reset `nextRetryAt` so the second drain re-
+    /// fires; second 200 → row delivered). Both `Idempotency-Key`
+    /// headers MUST be byte-identical to `row.id.uuidString.lowercased()`
+    /// — otherwise server dedup is useless on the very retry path the
+    /// header was added to support.
+    func testOutcomeRetryKeyIsStableAcrossMultiplePosts() async throws {
+        let row = PendingOutcome(photoId: 13, payload: samplePayload)
+        row.nextRetryAt = Date().addingTimeInterval(-1)
+        context.insert(row)
+        try context.save()
+        let originalId = row.id
+
+        var postCount = 0
+        var seenHeaders: [String] = []
+        let client = makeMockAPIClient { [self] request in
+            postCount += 1
+            if let h = request.value(forHTTPHeaderField: "Idempotency-Key") {
+                seenHeaders.append(h)
+            }
+            // First POST 500 (retryable), second POST 200 (delivered).
+            let code = postCount == 1 ? 500 : 200
+            return (mockResponse(statusCode: code, for: request), Data("{}".utf8))
+        }
+
+        await sut.drain(context: context, apiClient: client)
+
+        // After first drain the row should be back to .pending with
+        // retryCount = 1 and nextRetryAt in the future. Reset it to
+        // the past so the second drain re-fires the same row.
+        let refreshed = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<PendingOutcome>()).first
+        )
+        XCTAssertEqual(refreshed.status, .pending,
+                       "precondition: 5xx must leave row pending for retry")
+        XCTAssertEqual(refreshed.retryCount, 1,
+                       "precondition: retryCount must bump on 5xx")
+        XCTAssertEqual(refreshed.id, originalId,
+                       "precondition: row id MUST NOT change on retry — that's the whole F-6 contract")
+        refreshed.nextRetryAt = Date().addingTimeInterval(-1)
+        try context.save()
+
+        await sut.drain(context: context, apiClient: client)
+
+        XCTAssertEqual(postCount, 2, "Two POSTs expected — one per drain")
+        XCTAssertEqual(seenHeaders.count, 2,
+                       "Both POSTs must carry an Idempotency-Key header")
+        XCTAssertEqual(seenHeaders[0], originalId.uuidString.lowercased(),
+                       "First POST header must equal refreshed.id.uuidString.lowercased()")
+        XCTAssertEqual(seenHeaders[1], originalId.uuidString.lowercased(),
+                       "Second POST header must equal refreshed.id.uuidString.lowercased() — server dedup pivots on this")
+        XCTAssertEqual(seenHeaders[0], seenHeaders[1],
+                       "Both retry headers MUST be byte-identical")
+    }
+
+    // MARK: - Swift2_018c SEC-26-2 — bounded reclaim per launch
+
+    /// Reclaim must not re-fire an unbounded number of orphaned `.sending`
+    /// rows in one launch — a crash loop would otherwise turn recovery
+    /// into a self-DoS. Cap at `maxReclaimPerLaunch` (100) and surface
+    /// the cap-hit via `lastReclaimCapHit` for telemetry.
+    func testReclaimCapsAtMaxReclaimPerLaunch() throws {
+        // Seed 150 .sending rows.
+        for i in 0..<150 {
+            let row = PendingOutcome(photoId: i, payload: samplePayload)
+            row.status = .sending
+            context.insert(row)
+        }
+        try context.save()
+
+        sut.reclaimOrphanedSendingRows(context: context)
+
+        let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+        let pendingCount = rows.filter { $0.status == .pending }.count
+        let sendingCount = rows.filter { $0.status == .sending }.count
+
+        XCTAssertEqual(pendingCount, OutcomeQueueManager.maxReclaimPerLaunch,
+                       "Exactly maxReclaimPerLaunch rows must be flipped to .pending")
+        XCTAssertEqual(sendingCount, 150 - OutcomeQueueManager.maxReclaimPerLaunch,
+                       "Remaining .sending rows must wait for the next launch")
+        XCTAssertTrue(sut.lastReclaimCapHit,
+                      "Cap-hit flag must be true so production observers see the warning condition")
+        XCTAssertEqual(sut.lastReclaimCount, OutcomeQueueManager.maxReclaimPerLaunch,
+                       "lastReclaimCount must equal the cap when the cap was hit")
+    }
+
+    /// Sanity check: under the cap, reclaim must NOT trip the warning
+    /// flag. Pins the contract so a future regression that always-trips
+    /// the flag would surface here.
+    func testReclaimUnderCapDoesNotTripWarning() throws {
+        for i in 0..<5 {
+            let row = PendingOutcome(photoId: i, payload: samplePayload)
+            row.status = .sending
+            context.insert(row)
+        }
+        try context.save()
+
+        sut.reclaimOrphanedSendingRows(context: context)
+
+        XCTAssertFalse(sut.lastReclaimCapHit,
+                       "Reclaiming 5 << cap must NOT trip the warning flag")
+        XCTAssertEqual(sut.lastReclaimCount, 5,
+                       "lastReclaimCount must reflect actual reclaim count when under cap")
     }
 
     // MARK: - Observable counts
