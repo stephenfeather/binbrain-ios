@@ -166,4 +166,135 @@ final class PendingOutcomeTests: XCTestCase {
         XCTAssertEqual(rows.first?.status, .pending,
                        "Int raw value of the status enum must round-trip — frozen values per PendingOutcome doc")
     }
+
+    // MARK: - Swift2_018c G-2 — expanded on-disk round-trip
+
+    /// Helper: opens a file-backed container, runs `seed`, tears it down,
+    /// reopens, and returns the rebuilt rows. `seed` runs against a fresh
+    /// `ModelContext` paired with the launch-1 container.
+    private func roundTripOnDisk<R>(
+        seed: (ModelContext) throws -> R,
+        verify: (ModelContext) throws -> Void
+    ) throws -> R {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingoutcome-rt-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: tempURL)
+            try? FileManager.default.removeItem(at: tempURL.appendingPathExtension("wal"))
+            try? FileManager.default.removeItem(at: tempURL.appendingPathExtension("shm"))
+        }
+        let result: R
+        do {
+            let schema = Schema([PendingOutcome.self])
+            let config = ModelConfiguration(schema: schema, url: tempURL)
+            let container1 = try ModelContainer(for: schema, configurations: config)
+            let ctx1 = ModelContext(container1)
+            result = try seed(ctx1)
+            try ctx1.save()
+        }
+        let schema = Schema([PendingOutcome.self])
+        let config = ModelConfiguration(schema: schema, url: tempURL)
+        let container2 = try ModelContainer(for: schema, configurations: config)
+        let ctx2 = ModelContext(container2)
+        try verify(ctx2)
+        return result
+    }
+
+    /// QA PR #26 §178–190 — payload Data must survive the SQLite write
+    /// path byte-for-byte, including arbitrary binary content.
+    func testPayloadRoundTripsByteForByte() throws {
+        let payload = Data((0...255).map { UInt8($0) })  // every possible byte
+        try roundTripOnDisk(
+            seed: { ctx in
+                let row = PendingOutcome(photoId: 1, payload: payload)
+                ctx.insert(row)
+            },
+            verify: { ctx in
+                let rows = try ctx.fetch(FetchDescriptor<PendingOutcome>())
+                XCTAssertEqual(rows.count, 1)
+                XCTAssertEqual(rows.first?.payload, payload,
+                               "payload Data must round-trip every byte 0x00-0xFF")
+            }
+        )
+    }
+
+    /// QA PR #26 §178–190 — queuedAt and nextRetryAt timestamps must
+    /// round-trip without drifting (small tolerance for SwiftData's
+    /// Date precision).
+    func testDatesRoundTripThroughStore() throws {
+        let queuedAt = Date(timeIntervalSince1970: 1_700_000_000.123)
+        let nextRetryAt = queuedAt.addingTimeInterval(3600)
+        try roundTripOnDisk(
+            seed: { ctx in
+                let row = PendingOutcome(photoId: 1, payload: Data())
+                row.queuedAt = queuedAt
+                row.nextRetryAt = nextRetryAt
+                ctx.insert(row)
+            },
+            verify: { ctx in
+                let rows = try ctx.fetch(FetchDescriptor<PendingOutcome>())
+                let row = try XCTUnwrap(rows.first)
+                XCTAssertEqual(row.queuedAt.timeIntervalSinceReferenceDate,
+                               queuedAt.timeIntervalSinceReferenceDate,
+                               accuracy: 0.001,
+                               "queuedAt must round-trip within sub-millisecond tolerance")
+                XCTAssertEqual(row.nextRetryAt.timeIntervalSinceReferenceDate,
+                               nextRetryAt.timeIntervalSinceReferenceDate,
+                               accuracy: 0.001,
+                               "nextRetryAt must round-trip within sub-millisecond tolerance")
+            }
+        )
+    }
+
+    /// QA PR #26 §178–190 — `lastErrorCode` is `Int?` and the nil case
+    /// is the most common (default on every fresh row). Both nil and
+    /// a non-nil value must round-trip.
+    func testLastErrorCodeNilRoundTrips() throws {
+        try roundTripOnDisk(
+            seed: { ctx in
+                let row = PendingOutcome(photoId: 1, payload: Data())
+                row.lastErrorCode = nil
+                ctx.insert(row)
+            },
+            verify: { ctx in
+                let rows = try ctx.fetch(FetchDescriptor<PendingOutcome>())
+                XCTAssertNil(rows.first?.lastErrorCode,
+                             "lastErrorCode nil must persist as nil — Optional<Int> column must not coerce to 0")
+            }
+        )
+    }
+
+    func testLastErrorCodeNonNilRoundTrips() throws {
+        try roundTripOnDisk(
+            seed: { ctx in
+                let row = PendingOutcome(photoId: 1, payload: Data())
+                row.lastErrorCode = 500
+                ctx.insert(row)
+            },
+            verify: { ctx in
+                let rows = try ctx.fetch(FetchDescriptor<PendingOutcome>())
+                XCTAssertEqual(rows.first?.lastErrorCode, 500,
+                               "non-nil lastErrorCode must round-trip exactly")
+            }
+        )
+    }
+
+    /// QA PR #26 §192–200 — every OutcomeQueueStatus raw value must
+    /// round-trip. Frozen-int contract per the model's doc comment.
+    func testAllStatusRawValuesRoundTrip() throws {
+        for status in [OutcomeQueueStatus.pending, .sending, .delivered, .expired] {
+            try roundTripOnDisk(
+                seed: { ctx in
+                    let row = PendingOutcome(photoId: status.rawValue, payload: Data())
+                    row.status = status
+                    ctx.insert(row)
+                },
+                verify: { ctx in
+                    let rows = try ctx.fetch(FetchDescriptor<PendingOutcome>())
+                    XCTAssertEqual(rows.first?.status, status,
+                                   "OutcomeQueueStatus.\(status) raw value (\(status.rawValue)) must round-trip exactly")
+                }
+            )
+        }
+    }
 }
