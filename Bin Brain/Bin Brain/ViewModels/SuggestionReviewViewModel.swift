@@ -137,6 +137,21 @@ final class SuggestionReviewViewModel {
     /// partial-failure summary. Never silently swallowed. (Swift2_013)
     var confirmationErrorMessage: String?
 
+    /// User-facing **informational** post-confirm message — distinct from
+    /// `confirmationErrorMessage` so that "this worked, here's some
+    /// context" copy doesn't ride on the error channel. Currently only set
+    /// by the duplicate-association toast (Swift2_029): when the server
+    /// returns `inserted:false` on one or more `/associate` responses, the
+    /// `(bin_id, item_id)` row already existed and the user's edited
+    /// quantity was NOT applied. The view observes this with `onChange`
+    /// and surfaces it via the same toast environment as the error field.
+    var confirmationInfoMessage: String?
+
+    /// Count of `/associate` responses in the most recent `confirm()` that
+    /// returned `inserted:false`. Reset at the top of every `confirm()`.
+    /// Drives `confirmationInfoMessage` after the loop completes.
+    private(set) var duplicateAssociationCount: Int = 0
+
     /// Snapshot of the on-device top-K classifications captured at
     /// `loadPreliminaryClassifications(_:topK:)` time. Used by the `#if DEBUG`
     /// logger in `confirm(...)` to emit (top-K vs. confirmed label) pairs.
@@ -382,7 +397,9 @@ final class SuggestionReviewViewModel {
         isConfirming = true
         failedIndices = []
         teachFailureCount = 0
+        duplicateAssociationCount = 0
         confirmationErrorMessage = nil
+        confirmationInfoMessage = nil
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
         logger.debug("confirm: \(self.editableSuggestions.count, privacy: .public) total, \(includedIndices.count, privacy: .public) included")
         for idx in includedIndices {
@@ -400,12 +417,19 @@ final class SuggestionReviewViewModel {
                     confidence: confidence,
                     binId: binId
                 )
-                _ = try await apiClient.associateItem(
+                let associateResponse = try await apiClient.associateItem(
                     binId: binId,
                     itemId: upsert.itemId,
                     confidence: confidence,
                     quantity: quantity
                 )
+                // Swift2_029 — server PR #41 reports inserted:false when
+                // the (bin, item) row pre-existed and quantity/confidence
+                // were intentionally NOT merged. Count for the post-loop
+                // info toast so the user knows their edit was discarded.
+                if !associateResponse.inserted {
+                    duplicateAssociationCount += 1
+                }
             } catch {
                 let remaining = includedIndices.filter { $0 >= idx }
                 failedIndices = remaining
@@ -450,6 +474,15 @@ final class SuggestionReviewViewModel {
                 logger.error("confirmClass failed for '\(s.editedName, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 teachFailureCount += 1
             }
+        }
+
+        // Swift2_029 — surface the duplicate-association count as an info
+        // toast. Server explicitly did NOT merge quantity/confidence on
+        // the pre-existing rows; this tells the user "your edit was
+        // discarded" so a silent server no-op stops being silent.
+        if duplicateAssociationCount > 0 {
+            confirmationInfoMessage =
+                "\(duplicateAssociationCount) of \(includedIndices.count) items were already in this bin — their quantities were not changed."
         }
 
         // Swift2_014 — telemetry fires only on confirm-success; failures here
