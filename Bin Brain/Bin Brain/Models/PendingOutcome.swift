@@ -23,7 +23,10 @@ enum OutcomeQueueStatus: Int, Codable, Sendable {
     /// can re-queue stuck rows on relaunch.
     case sending = 1
     /// Server accepted the POST (2xx). Retained for Settings visibility
-    /// for 7 days, then swept like any other row past TTL.
+    /// for 7 days, then deleted (NOT marked `.expired`) by
+    /// `OutcomeQueueManager.expireAged` — delivered rows have no further
+    /// use once aged out, so the cleaner contract is removal. (Swift2_018c
+    /// F-4 doc fix; behavior was already in place from PR #26.)
     case delivered = 2
     /// Permanent failure — either a non-retryable 4xx, 20 retry attempts
     /// exhausted, or age > 7 days. Surfaced in Settings "Pending Outcomes"

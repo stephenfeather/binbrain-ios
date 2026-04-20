@@ -48,11 +48,35 @@ final class OutcomeQueueManager {
     /// TTL beyond which a row is expired regardless of status. 7 days.
     static let maxAge: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Swift2_018c / SEC-26-2 — upper bound on rows reclaimed in a single
+    /// `reclaimOrphanedSendingRows()` call. If a crash-loop somehow
+    /// produced thousands of orphaned `.sending` rows, an unbounded
+    /// reclaim would re-fire every one of them through the network at
+    /// launch — turning a one-shot recovery into a denial of service
+    /// against the user's own server. 100 rows is enough to recover
+    /// from any plausible burst of in-flight outcomes (cataloging
+    /// produces << 100 outcomes/min); the rest wait for the next launch
+    /// (bounded forward progress).
+    static let maxReclaimPerLaunch: Int = 100
+
     // MARK: - Observable counts (for Settings)
 
     private(set) var pendingCount: Int = 0
     private(set) var deliveredCount: Int = 0
     private(set) var expiredCount: Int = 0
+
+    /// Swift2_018c / SEC-26-2 — true when the most recent
+    /// `reclaimOrphanedSendingRows()` call hit `maxReclaimPerLaunch`
+    /// and stopped early. Tested in `OutcomeQueueManagerTests` and
+    /// surfaced as a `logger.warning` in production. Reset to `false`
+    /// at the top of every reclaim call.
+    private(set) var lastReclaimCapHit: Bool = false
+
+    /// Swift2_018c / SEC-26-2 — number of `.sending` rows actually
+    /// flipped to `.pending` by the most recent
+    /// `reclaimOrphanedSendingRows()` call. Capped at
+    /// `maxReclaimPerLaunch`. Useful for tests and (future) telemetry.
+    private(set) var lastReclaimCount: Int = 0
 
     // MARK: - Test seams
 
@@ -202,6 +226,8 @@ final class OutcomeQueueManager {
     /// `retryCount` on reclaim: callers can distinguish "crashed mid
     /// first attempt" from "retried normally" via the count.
     func reclaimOrphanedSendingRows(context: ModelContext) {
+        lastReclaimCapHit = false
+        lastReclaimCount = 0
         let all: [PendingOutcome]
         do {
             all = try context.fetch(FetchDescriptor<PendingOutcome>())
@@ -209,12 +235,22 @@ final class OutcomeQueueManager {
             logger.error("[OUTCOMES] reclaim fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
-        var touched = false
+        var reclaimed = 0
         for row in all where row.status == .sending {
+            // Swift2_018c / SEC-26-2 — bounded reclaim per launch.
+            // Stops a runaway crash-loop from re-firing every orphaned
+            // row through the network at relaunch. Remaining rows wait
+            // for the NEXT launch.
+            if reclaimed >= Self.maxReclaimPerLaunch {
+                lastReclaimCapHit = true
+                logger.warning("[OUTCOMES] reclaim cap hit — \(reclaimed, privacy: .public) rows reclaimed in one launch; possible crash loop")
+                break
+            }
             row.status = .pending
-            touched = true
+            reclaimed += 1
         }
-        if touched {
+        lastReclaimCount = reclaimed
+        if reclaimed > 0 {
             save(context)
             refreshCounts(context: context)
         }
@@ -314,13 +350,28 @@ final class OutcomeQueueManager {
         context: ModelContext,
         apiClient: APIClient
     ) async {
-        // Swift2_018b F-3 — CAS guard. Concurrent drain triggers
-        // (NWPathMonitor `.satisfied` + willEnterForeground +
-        // scenePhase `.active`) can schedule two `attemptDelivery`
-        // Tasks for the same row. Main-actor isolation guarantees the
-        // check-flip-save below runs to completion between awaits, so
-        // the second task on resumption sees `.sending` and returns
-        // early — only one POST fires.
+        // Swift2_018b F-3 / Swift2_018c G-1 + SEC-26-1 — CAS guard.
+        //
+        // Concurrent drain triggers (NWPathMonitor `.satisfied` +
+        // willEnterForeground + scenePhase `.active`) can schedule two
+        // `attemptDelivery` Tasks for the same row. The check-flip-save
+        // below relies on running to completion between awaits so the
+        // second Task sees `.sending` and returns early — only one POST
+        // fires.
+        //
+        // *De-facto* MainActor isolation, NOT annotation-enforced:
+        // `OutcomeQueueManager` is intentionally NOT `@MainActor` (the
+        // SwiftData `ModelContext` is a main-thread context but the
+        // class proper is non-isolated to keep `enqueue`/`drain`/
+        // `retryAll` callable from arbitrary contexts). Every production
+        // caller — `SuggestionReviewViewModel.fireOutcomesIfReady`,
+        // `runMonitoredDrain`, the scenePhase observer in `Bin_BrainApp`
+        // — routes through MainActor before invoking us, and that's
+        // what makes the CAS atomic in practice. If a future caller
+        // ever invokes `attemptDelivery` from a non-MainActor context,
+        // it MUST add explicit serialization (actor, lock, or
+        // MainActor.run wrapper) before the call, OR this guard must
+        // be hardened with a real CAS primitive.
         guard row.status == .pending else { return }
         row.status = .sending
         save(context)
