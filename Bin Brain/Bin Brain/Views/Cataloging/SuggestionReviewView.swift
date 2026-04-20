@@ -100,6 +100,16 @@ struct SuggestionReviewView: View {
             toast.show(message, duration: 4.0)
             viewModel.confirmationErrorMessage = nil
         }
+        .onChange(of: viewModel.confirmationInfoMessage) { _, newValue in
+            // Swift2_029 — informational post-confirm copy (currently the
+            // duplicate-association notice). Same toast channel, same
+            // clear-after-show pattern as the error field; kept on a
+            // distinct VM property so future info copy doesn't ride on
+            // the error channel.
+            guard let message = newValue else { return }
+            toast.show(message, duration: 4.0)
+            viewModel.confirmationInfoMessage = nil
+        }
     }
 
     // MARK: - Pinned Photo with Bbox Overlay
