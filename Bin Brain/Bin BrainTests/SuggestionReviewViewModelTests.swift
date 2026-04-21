@@ -1421,6 +1421,160 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                       "duplicate-no-op must not be classified as a failure")
     }
 
+    // MARK: - Swift2_018 §3: adoptCatalogMatch
+
+    /// Builds a SuggestionItem that includes a catalogue match.
+    /// visionName and match.name are intentionally different so tests cover
+    /// the realistic adoption scenario (user picks a better name from the catalogue).
+    private func makeMatchedSuggestion(
+        visionName: String = "screw",
+        matchName: String = "M3x8 Hex Socket Screw",
+        matchCategory: String? = "Fasteners",
+        matchScore: Double = 0.87
+    ) throws -> SuggestionItem {
+        let json = Data("""
+        {
+            "item_id": null,
+            "name": "\(visionName)",
+            "category": null,
+            "confidence": 0.82,
+            "bins": [],
+            "match": {
+                "item_id": 42,
+                "name": "\(matchName)",
+                "category": \(matchCategory.map { "\"\($0)\"" } ?? "null"),
+                "score": \(matchScore),
+                "bins": ["BIN-0001"]
+            }
+        }
+        """.utf8)
+        return try JSONDecoder.binBrain.decode(SuggestionItem.self, from: json)
+    }
+
+    func testAdoptCatalogMatch_swapsFieldsAndMarksEdited() throws {
+        let item = try makeMatchedSuggestion()
+        sut.loadSuggestions([item])
+
+        sut.adoptCatalogMatch(id: 0)
+
+        let s = try XCTUnwrap(sut.editableSuggestions.first)
+        XCTAssertEqual(s.editedName, "M3x8 Hex Socket Screw",
+                       "editedName must be replaced by match.name")
+        XCTAssertEqual(s.editedCategory, "Fasteners",
+                       "editedCategory must be replaced by match.category")
+        XCTAssertEqual(s.origin, .edited,
+                       "origin must flip to .edited after adoption")
+        XCTAssertEqual(s.visionName, "screw",
+                       "visionName must remain unchanged (read-only baseline)")
+    }
+
+    func testAdoptCatalogMatch_idempotent_noOp_whenNoMatch() throws {
+        // A suggestion with no match — adoptCatalogMatch must be a no-op.
+        let json = Data("""
+        [{"item_id": null, "name": "screw", "category": null, "confidence": 0.8, "bins": []}]
+        """.utf8)
+        let items = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
+        sut.loadSuggestions(items)
+
+        let nameBefore = sut.editableSuggestions[0].editedName
+        sut.adoptCatalogMatch(id: 0)
+
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, nameBefore,
+                       "adoptCatalogMatch must be a no-op when no match exists")
+    }
+
+    func testAdoptCatalogMatch_underThreeState_promotesIgnoredToAccepted() throws {
+        sut.threeStateEnabled = true
+        let item = try makeMatchedSuggestion()
+        sut.loadSuggestions([item])
+        // Under three-state, new rows arrive .ignored.
+        XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .ignored, "Precondition: .ignored")
+
+        sut.adoptCatalogMatch(id: 0)
+
+        XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .accepted,
+                       "Adopting a match implies endorsement; .ignored must promote to .accepted")
+        XCTAssertTrue(sut.editableSuggestions[0].included,
+                      "Promoted row must be included for upsert")
+    }
+
+    func testAdoptCatalogMatch_underThreeState_doesNotResurrectRejected() throws {
+        sut.threeStateEnabled = true
+        let item = try makeMatchedSuggestion()
+        sut.loadSuggestions([item])
+        // Manually force the row to .rejected (simulating a prior explicit tap-to-reject).
+        sut.editableSuggestions[0].outcomeState = .rejected
+        sut.editableSuggestions[0].included = false
+
+        sut.adoptCatalogMatch(id: 0)
+
+        XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .rejected,
+                       ".rejected must NOT be resurrected by adoptCatalogMatch")
+        XCTAssertFalse(sut.editableSuggestions[0].included,
+                       "A rejected row must remain excluded after adoption")
+    }
+
+    /// Full round-trip through buildOutcomes after adoptCatalogMatch.
+    ///
+    /// Current `buildOutcomes` uses `visionName` as the edit-detection baseline
+    /// (the `Swift_match_name_display_fix` change). Because `match.name` typically
+    /// differs from `visionName`, adopting the match IS classified as `.edited`.
+    /// This is the correct signal per the comment at buildOutcomes line 844-850:
+    /// "that flow is a genuine edit and correctly emits `.edited` under this baseline."
+    ///
+    /// Note: the plan's test was named `emitsAcceptedNotEdited` based on an older
+    /// code baseline (`match.name ?? visionName`). The current implementation
+    /// intentionally emits `.edited` — do NOT change buildOutcomes to match the
+    /// old plan table.
+    func testAdoptCatalogMatch_buildOutcomes_emitsEdited() throws {
+        sut.threeStateEnabled = true
+        let item = try makeMatchedSuggestion(visionName: "screw", matchName: "M3x8 Hex Socket Screw")
+        sut.loadSuggestions([item])
+        sut.adoptCatalogMatch(id: 0)
+        // Outcome state after adoption should be .accepted (promoted from .ignored).
+        XCTAssertEqual(sut.editableSuggestions[0].outcomeState, .accepted, "Precondition")
+
+        let shownAt = Date()
+        let outcomes = SuggestionReviewViewModel.buildOutcomes(
+            shownAt: shownAt,
+            editable: sut.editableSuggestions,
+            confirmedIds: [0],
+            threeStateEnabled: true
+        )
+
+        XCTAssertEqual(outcomes.count, 1)
+        let outcome = try XCTUnwrap(outcomes.first)
+        // Current buildOutcomes baseline = visionName. Since match.name ≠ visionName,
+        // labelChanged = true → decision = .edited.
+        XCTAssertEqual(outcome.decision, .edited,
+                       "Adopting a match name (which differs from visionName) must emit .edited")
+        XCTAssertEqual(outcome.editedToLabel, "M3x8 Hex Socket Screw",
+                       "editedToLabel must carry the adopted match name")
+    }
+
+    func testAdoptCatalogMatch_thenEdit_buildOutcomes_emitsEdited() throws {
+        sut.threeStateEnabled = true
+        let item = try makeMatchedSuggestion(visionName: "screw", matchName: "M3x8 Hex Socket Screw")
+        sut.loadSuggestions([item])
+        sut.adoptCatalogMatch(id: 0)
+        // User further edits the name after adoption.
+        sut.editableSuggestions[0].editedName = "M3 Phillips Screw"
+        sut.noteUserEdit(id: 0)
+
+        let outcomes = SuggestionReviewViewModel.buildOutcomes(
+            shownAt: Date(),
+            editable: sut.editableSuggestions,
+            confirmedIds: [0],
+            threeStateEnabled: true
+        )
+
+        let outcome = try XCTUnwrap(outcomes.first)
+        XCTAssertEqual(outcome.decision, .edited,
+                       "Editing the name after adoption must still emit .edited")
+        XCTAssertEqual(outcome.editedToLabel, "M3 Phillips Screw",
+                       "editedToLabel must carry the final user-typed name, not the adopted match name")
+    }
+
     /// Backward-compat: a pre-PR-#41 server omits the `inserted` key. The
     /// decoder must fall back to `inserted = true` so the old
     /// "association succeeded; nothing to surface" contract still holds.
