@@ -145,6 +145,44 @@ final class MetadataExtractorsTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
     }
 
+    // MARK: - Swift2_018 Blocklist Tests
+
+    /// Verifies that blocklisted identifiers are dropped and non-blocklisted
+    /// identifiers survive. Uses the internal `identifiersAndConfidences:` overload
+    /// because `VNClassificationObservation` cannot be directly constructed in unit
+    /// tests (as documented in the existing threshold test above).
+    func testFilterClassifications_dropsBlocklistedLabels() {
+        let result = MetadataExtractors.filterClassifications(identifiersAndConfidences: [
+            (identifier: "box", confidence: 0.8),
+            (identifier: "phillips_screwdriver", confidence: 0.7)
+        ])
+
+        XCTAssertEqual(result.count, 1,
+                       "Blocklisted 'box' must be dropped; 'phillips_screwdriver' must survive")
+        XCTAssertEqual(result.first?.label, "phillips_screwdriver")
+    }
+
+    func testFilterClassifications_blocklistIsCaseInsensitive() {
+        let result = MetadataExtractors.filterClassifications(identifiersAndConfidences: [
+            (identifier: "Box", confidence: 0.8),
+            (identifier: "CONTAINER", confidence: 0.6)
+        ])
+
+        XCTAssertTrue(result.isEmpty,
+                      "Blocklist check must be case-insensitive; 'Box' and 'CONTAINER' should both be dropped")
+    }
+
+    func testFilterClassifications_confidenceAndBlocklistCombined() {
+        let result = MetadataExtractors.filterClassifications(identifiersAndConfidences: [
+            (identifier: "bolt", confidence: 0.05),               // below threshold → drop
+            (identifier: "box", confidence: 0.8),                  // above threshold + blocklisted → drop
+            (identifier: "phillips_screwdriver", confidence: 0.6)  // above threshold + not blocklisted → keep
+        ])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.label, "phillips_screwdriver")
+    }
+
     // MARK: - Integration: Extract Does Not Crash
 
     func testExtractFromLargerBlankImageDoesNotCrash() async throws {

@@ -71,6 +71,17 @@ nonisolated struct MetadataExtractors: Sendable {
     /// Maximum number of top classification results to keep.
     static let classificationMaxResults = 10
 
+    /// Generic whole-image nouns emitted by Apple's stock `VNClassifyImageRequest`
+    /// (an ~1,000-class ImageNet classifier) that are too broad for inventory
+    /// cataloging. Dropped AFTER the confidence-threshold filter.
+    ///
+    /// Seed set — expand from telemetry. Applied ONLY to this stock Vision
+    /// classifier path; do NOT re-use for any future custom CoreML model.
+    static let genericLabelBlocklist: Set<String> = [
+        "box", "package", "container", "carton", "plastic_bag", "paper_bag",
+        "envelope", "jar", "bottle", "can", "tin", "wrapper", "packaging"
+    ]
+
     /// Maps Vision OCR observations to `OCRResult` values, filtering low-confidence
     /// results and deduplicating near-identical strings.
     ///
@@ -134,13 +145,37 @@ nonisolated struct MetadataExtractors: Sendable {
         filterClassifications(observations)
     }
 
-    /// Filters classification observations by confidence threshold and returns the top N.
+    /// Filters classification observations by confidence threshold and blocklist,
+    /// returning the top N results.
+    ///
+    /// Maps to the internal `identifiersAndConfidences:` overload which holds the
+    /// testable pure logic. `VNClassificationObservation` cannot be directly
+    /// constructed in unit tests, so the pure overload is the test entry point.
     ///
     /// - Parameter observations: Raw classification observations (typically sorted by confidence descending).
-    /// - Returns: Up to `classificationMaxResults` entries above `classificationConfidenceThreshold`.
+    /// - Returns: Up to `classificationMaxResults` entries above `classificationConfidenceThreshold`
+    ///   and not in `genericLabelBlocklist`.
     static func filterClassifications(_ observations: [VNClassificationObservation]) -> [ClassificationResult] {
-        observations
+        filterClassifications(
+            identifiersAndConfidences: observations.lazy.map { ($0.identifier, $0.confidence) }
+        )
+    }
+
+    /// Pure filtering logic — confidence threshold then blocklist, top-N cap.
+    ///
+    /// Internal entry point for unit tests (Vision observations can't be constructed
+    /// directly in test targets). Production code goes through the
+    /// `VNClassificationObservation` overload above.
+    ///
+    /// - Parameter identifiersAndConfidences: A sequence of `(identifier, confidence)` pairs.
+    /// - Returns: Up to `classificationMaxResults` entries above `classificationConfidenceThreshold`
+    ///   whose lowercased identifier is NOT in `genericLabelBlocklist`.
+    static func filterClassifications(
+        identifiersAndConfidences: some Sequence<(identifier: String, confidence: Float)>
+    ) -> [ClassificationResult] {
+        identifiersAndConfidences
             .filter { $0.confidence >= classificationConfidenceThreshold }
+            .filter { !genericLabelBlocklist.contains($0.identifier.lowercased()) }
             .prefix(classificationMaxResults)
             .map { ClassificationResult(label: $0.identifier, confidence: $0.confidence) }
     }
