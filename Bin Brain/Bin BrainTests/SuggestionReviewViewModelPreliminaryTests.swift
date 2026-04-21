@@ -34,6 +34,10 @@ final class SuggestionReviewViewModelPreliminaryTests: XCTestCase {
         pairs.map { ClassificationResult(label: $0.0, confidence: $0.1) }
     }
 
+    private func ocrResults(_ pairs: [(String, Float)]) -> [OCRResult] {
+        pairs.map { OCRResult(text: $0.0, confidence: $0.1) }
+    }
+
     private func serverItems(_ names: [String]) throws -> [SuggestionItem] {
         let items = names.map { name in
             """
@@ -151,6 +155,135 @@ final class SuggestionReviewViewModelPreliminaryTests: XCTestCase {
         XCTAssertEqual(sut.editableSuggestions[0].origin, .edited)
         XCTAssertEqual(sut.editableSuggestions[1].editedName, "screw")
         XCTAssertEqual(sut.editableSuggestions[1].origin, .server)
+    }
+
+    // MARK: - Swift_prong1_ocr_preliminary — OCR chips as first-class preliminaries
+
+    func testLoadPreliminaryFromOnDeviceEmitsOCRChipWhenHighConfidence() {
+        let cls = classifications([("screw", 0.91)])
+        let ocr = ocrResults([("Elegoo Multicolored Ribbon Cables Kit", 1.0)])
+
+        sut.loadPreliminaryFromOnDevice(classifications: cls, ocr: ocr, topK: 3)
+
+        XCTAssertEqual(sut.editableSuggestions.count, 2,
+                       "Classifier + qualifying OCR entry should produce two chips")
+        XCTAssertEqual(sut.editableSuggestions.last?.editedName, "Elegoo Multicolored Ribbon Cables Kit")
+        XCTAssertEqual(sut.editableSuggestions.last?.origin, .ocr,
+                       "OCR chip must carry .ocr origin so merge() keeps it")
+    }
+
+    func testLoadPreliminaryFromOnDeviceSkipsOCRBelowConfidenceThreshold() {
+        let ocr = ocrResults([("Genuine Product Label", 0.85)])
+
+        sut.loadPreliminaryFromOnDevice(
+            classifications: [],
+            ocr: ocr,
+            topK: 3,
+            minOCRConfidence: 0.9
+        )
+
+        XCTAssertTrue(sut.editableSuggestions.isEmpty,
+                      "OCR below confidence threshold must not produce a chip")
+    }
+
+    func testLoadPreliminaryFromOnDeviceSkipsOCRBelowMinLength() {
+        let ocr = ocrResults([("New", 1.0), ("Hi", 1.0)])
+
+        sut.loadPreliminaryFromOnDevice(
+            classifications: [],
+            ocr: ocr,
+            topK: 3,
+            minOCRLength: 4
+        )
+
+        XCTAssertTrue(sut.editableSuggestions.isEmpty,
+                      "Short OCR strings must not produce a chip even at confidence 1.0")
+    }
+
+    func testLoadPreliminaryFromOnDeviceSelectsLongestQualifyingLine() {
+        let ocr = ocrResults([
+            ("Kit", 1.0),                                          // too short
+            ("Elegoo", 0.95),                                      // qualifies, short
+            ("Elegoo 120pcs Multicolored Ribbon Cables", 0.95),    // qualifies, longest
+            ("Elegoo Kit", 0.95)                                   // qualifies, middle
+        ])
+
+        sut.loadPreliminaryFromOnDevice(
+            classifications: [],
+            ocr: ocr,
+            topK: 3
+        )
+
+        XCTAssertEqual(sut.editableSuggestions.count, 1)
+        XCTAssertEqual(sut.editableSuggestions.first?.editedName,
+                       "Elegoo 120pcs Multicolored Ribbon Cables",
+                       "Among qualifying OCR entries, the longest text wins")
+    }
+
+    func testLoadPreliminaryFromOnDeviceTrimsWhitespaceBeforeLengthCheck() {
+        let ocr = ocrResults([("   Hi   ", 1.0)])
+
+        sut.loadPreliminaryFromOnDevice(
+            classifications: [],
+            ocr: ocr,
+            topK: 3,
+            minOCRLength: 4
+        )
+
+        XCTAssertTrue(sut.editableSuggestions.isEmpty,
+                      "Whitespace must be trimmed before the length check")
+    }
+
+    func testOCRPreliminarySurvivesServerEmpty() throws {
+        let ocr = ocrResults([("Elegoo 120pcs Multicolored Ribbon Cables", 1.0)])
+        sut.loadPreliminaryFromOnDevice(classifications: [], ocr: ocr, topK: 3)
+
+        sut.applyServerSuggestions([])
+
+        XCTAssertEqual(sut.editableSuggestions.count, 1,
+                       "OCR chip must survive an empty server response")
+        XCTAssertEqual(sut.editableSuggestions.first?.origin, .ocr)
+    }
+
+    func testOCRPreliminarySurvivesServerDisagrees() throws {
+        let ocr = ocrResults([("Elegoo 120pcs Multicolored Ribbon Cables", 1.0)])
+        sut.loadPreliminaryFromOnDevice(classifications: [], ocr: ocr, topK: 3)
+        let server = try serverItems(["label_packaging"])
+
+        sut.applyServerSuggestions(server)
+
+        XCTAssertEqual(sut.editableSuggestions.count, 2,
+                       "OCR chip survives; server chip is appended")
+        XCTAssertEqual(sut.editableSuggestions[0].origin, .ocr)
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "Elegoo 120pcs Multicolored Ribbon Cables")
+        XCTAssertEqual(sut.editableSuggestions[1].origin, .server)
+        XCTAssertEqual(sut.editableSuggestions[1].editedName, "label_packaging")
+    }
+
+    func testOCRPreliminaryDedupesAgainstServerName() throws {
+        let ocr = ocrResults([("bolt washer kit", 0.95)])
+        sut.loadPreliminaryFromOnDevice(classifications: [], ocr: ocr, topK: 3)
+        let server = try serverItems(["bolt washer kit", "screw"])
+
+        sut.applyServerSuggestions(server)
+
+        XCTAssertEqual(sut.editableSuggestions.count, 2,
+                       "Server entry overlapping an OCR chip must be deduped")
+        XCTAssertEqual(sut.editableSuggestions[0].editedName, "bolt washer kit")
+        XCTAssertEqual(sut.editableSuggestions[0].origin, .ocr,
+                       "OCR chip wins over the overlapping server entry")
+        XCTAssertEqual(sut.editableSuggestions[1].editedName, "screw")
+        XCTAssertEqual(sut.editableSuggestions[1].origin, .server)
+    }
+
+    func testLoadPreliminaryFromOnDeviceStillRendersClassifierChipsWhenNoOCRQualifies() {
+        let cls = classifications([("screw", 0.91), ("nail", 0.62)])
+        let ocr = ocrResults([("x", 0.5)])  // fails both bars
+
+        sut.loadPreliminaryFromOnDevice(classifications: cls, ocr: ocr, topK: 3)
+
+        XCTAssertEqual(sut.editableSuggestions.map(\.editedName), ["screw", "nail"])
+        XCTAssertTrue(sut.editableSuggestions.allSatisfy { $0.origin == .preliminary })
     }
 
     // MARK: - Pure merge function

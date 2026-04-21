@@ -59,6 +59,14 @@ final class AnalysisViewModel {
     /// `thoughts/shared/designs/coreml-mode-a-merge-ux.md`.
     private(set) var preliminaryClassifications: [ClassificationResult] = []
 
+    /// Swift_prong1_ocr_preliminary — on-device OCR results from the same
+    /// Stage 3 `MetadataExtractors.extract(from:)` call that produces
+    /// `preliminaryClassifications`. Published alongside classifications so
+    /// the preliminary-ready callback can thread them into
+    /// `SuggestionReviewViewModel.loadPreliminaryFromOnDevice(...)` where
+    /// the confidence + length bar decides whether an OCR chip lands.
+    private(set) var preliminaryOCR: [OCRResult] = []
+
     /// The photo ID from the last successful ingest; `nil` until ingest completes.
     private(set) var lastPhotoId: Int?
 
@@ -142,6 +150,7 @@ final class AnalysisViewModel {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
+        preliminaryOCR = []
 
         // Boxes allow mutation from the synchronously-called expiration handler.
         final class WorkTaskBox: @unchecked Sendable {
@@ -199,6 +208,7 @@ final class AnalysisViewModel {
             let result = try await pipeline.process(jpegData)
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
+            preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
             let jsonData = try JSONEncoder().encode(result.deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch let error as PipelineError {
@@ -329,6 +339,7 @@ final class AnalysisViewModel {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
+        preliminaryOCR = []
         phase = .processingImage
 
         var uploadData: Data
@@ -338,6 +349,7 @@ final class AnalysisViewModel {
             let result = try await pipeline.processSkippingQualityGates(jpegData)
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
+            preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
             let jsonData = try JSONEncoder().encode(result.deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch {
@@ -432,6 +444,7 @@ final class AnalysisViewModel {
         phase = .idle
         suggestions = []
         preliminaryClassifications = []
+        preliminaryOCR = []
         lastPhotoId = nil
         lastVisionModel = nil
         lastPromptVersion = nil
