@@ -417,7 +417,7 @@ final class SuggestionReviewViewModelTests: XCTestCase {
     // semantically bogus (screw box 95% vs. unrelated item, BME688 87%).
     // The new contract: `editedName` is prefilled from the raw Vision label
     // regardless of match presence; match is surfaced for display only and
-    // can be one-tap adopted via `adoptMatchName(id:)`.
+    // can be one-tap adopted via `adoptCatalogMatch(id:)`.
 
     func testLoadSuggestionsDefaultsEditedNameToVisionLabelEvenWhenMatched() throws {
         let json = Data("""
@@ -498,45 +498,6 @@ final class SuggestionReviewViewModelTests: XCTestCase {
             XCTAssertEqual(sut.editableSuggestions[0].editedName, "screw box",
                            "Vision label must survive as the prefilled editedName even at match score \(score)")
         }
-    }
-
-    func testAdoptMatchNameReplacesEditedNameWithCatalogueMatch() throws {
-        let json = Data("""
-        [{
-            "item_id": null,
-            "name": "hex nut",
-            "category": "hardware",
-            "confidence": 0.7,
-            "bins": [],
-            "match": {
-                "item_id": 42,
-                "name": "Hex Nut M3",
-                "category": "Fasteners",
-                "score": 0.9,
-                "bins": []
-            }
-        }]
-        """.utf8)
-        let suggestions = try JSONDecoder.binBrain.decode([SuggestionItem].self, from: json)
-        sut.loadSuggestions(suggestions)
-        XCTAssertEqual(sut.editableSuggestions[0].editedName, "hex nut")
-
-        sut.adoptMatchName(id: 0)
-
-        XCTAssertEqual(sut.editableSuggestions[0].editedName, "Hex Nut M3",
-                       "adoptMatchName must replace editedName with the catalogue match's name")
-        XCTAssertEqual(sut.editableSuggestions[0].editedCategory, "Fasteners")
-    }
-
-    func testAdoptMatchNameIsNoOpWhenMatchAbsent() throws {
-        let suggestions = try makeSuggestions()
-        sut.loadSuggestions(suggestions)
-        let before = sut.editableSuggestions[0].editedName
-
-        sut.adoptMatchName(id: 0)
-
-        XCTAssertEqual(sut.editableSuggestions[0].editedName, before,
-                       "adoptMatchName must be a no-op on rows with no match")
     }
 
     func testConfirmSendsVisionNameWhenMatchedRowIsUntouched() async throws {

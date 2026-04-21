@@ -674,21 +674,6 @@ final class SuggestionReviewViewModel {
         }
     }
 
-    /// Replaces `editedName` / `editedCategory` with the catalogue match's
-    /// values. No-op when the row has no match. Invoked by the row-view's
-    /// "also in catalog: ..." disclosure button — the one-tap adopt path.
-    /// Counts as a user edit, so `noteUserEdit` is chained to preserve the
-    /// merge + outcome-classification rules that fire off it.
-    func adoptMatchName(id: Int) {
-        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }) else { return }
-        guard let match = editableSuggestions[idx].match else { return }
-        editableSuggestions[idx].editedName = match.name
-        if let category = match.category, !category.isEmpty {
-            editableSuggestions[idx].editedCategory = category
-        }
-        noteUserEdit(id: id)
-    }
-
     /// Promotes the catalogue match's name and category into the editable
     /// chip fields. Idempotent; no-op when the row has no match.
     ///
