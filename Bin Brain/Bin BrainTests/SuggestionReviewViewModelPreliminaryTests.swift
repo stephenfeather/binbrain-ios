@@ -286,6 +286,60 @@ final class SuggestionReviewViewModelPreliminaryTests: XCTestCase {
         XCTAssertTrue(sut.editableSuggestions.allSatisfy { $0.origin == .preliminary })
     }
 
+    // MARK: - Swift2_018 isAwaitingServerResponse
+
+    func testLoadPreliminaryClassifications_setsIsAwaitingServerResponseTrue() {
+        XCTAssertFalse(sut.isAwaitingServerResponse,
+                       "Flag should be false on a fresh VM")
+
+        sut.loadPreliminaryClassifications(classifications([("screw", 0.8)]), topK: 3)
+
+        XCTAssertTrue(sut.isAwaitingServerResponse,
+                      "loadPreliminaryClassifications must set isAwaitingServerResponse = true")
+    }
+
+    func testLoadPreliminaryClassifications_emptyList_stillSetsIsAwaitingServerResponseTrue() {
+        // All chips may be filtered by the blocklist, leaving editableSuggestions
+        // empty. The flag must still be true so the "Working…" placeholder renders.
+        sut.loadPreliminaryClassifications([], topK: 3)
+
+        XCTAssertTrue(sut.isAwaitingServerResponse,
+                      "isAwaitingServerResponse must be true even when classified list is empty")
+    }
+
+    func testApplyServerSuggestions_nonEmpty_clearsIsAwaitingServerResponse() throws {
+        sut.loadPreliminaryClassifications(classifications([("screw", 0.8)]), topK: 3)
+        XCTAssertTrue(sut.isAwaitingServerResponse, "Precondition: flag is true after preliminary load")
+
+        let server = try serverItems(["screw"])
+        sut.applyServerSuggestions(server)
+
+        XCTAssertFalse(sut.isAwaitingServerResponse,
+                       "applyServerSuggestions must clear isAwaitingServerResponse on non-empty server response")
+    }
+
+    func testApplyServerSuggestions_empty_clearsIsAwaitingServerResponse() {
+        sut.loadPreliminaryClassifications(classifications([("screw", 0.8)]), topK: 3)
+        XCTAssertTrue(sut.isAwaitingServerResponse, "Precondition: flag is true after preliminary load")
+
+        sut.applyServerSuggestions([])
+
+        XCTAssertFalse(sut.isAwaitingServerResponse,
+                       "applyServerSuggestions must clear isAwaitingServerResponse on empty server response too")
+    }
+
+    func testResetOutcomesContext_clearsIsAwaitingServerResponse() {
+        // Trigger isAwaitingServerResponse = true via loadPreliminaryClassifications.
+        sut.loadPreliminaryClassifications(classifications([("screw", 0.8)]), topK: 3)
+        XCTAssertTrue(sut.isAwaitingServerResponse, "Precondition: flag is true after preliminary load")
+
+        // loadSuggestions calls resetOutcomesContext internally, which must clear the flag.
+        sut.loadSuggestions([])
+
+        XCTAssertFalse(sut.isAwaitingServerResponse,
+                       "resetOutcomesContext (called by loadSuggestions) must clear isAwaitingServerResponse")
+    }
+
     // MARK: - Pure merge function
 
     func testPureMergeFunctionIsDeterministic() throws {

@@ -63,7 +63,9 @@ struct SuggestionReviewView: View {
 
     var body: some View {
         ZStack {
-            if viewModel.editableSuggestions.isEmpty {
+            if viewModel.editableSuggestions.isEmpty && viewModel.isAwaitingServerResponse {
+                workingState
+            } else if viewModel.editableSuggestions.isEmpty {
                 emptyState
             } else {
                 suggestionList
@@ -144,6 +146,32 @@ struct SuggestionReviewView: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
                 .accessibilityLabel("Photo being classified")
+        }
+    }
+
+    // MARK: - Working State (server call in flight, no chips yet)
+
+    /// Shown when `editableSuggestions.isEmpty && viewModel.isAwaitingServerResponse`.
+    ///
+    /// Renders a single disabled chip-shaped row so the chip metaphor is visible
+    /// while the server's `/suggest` call is in flight, rather than dropping to
+    /// the empty-state screen prematurely. Replaced by the real chip list (or the
+    /// true empty state) when `applyServerSuggestions` runs.
+    private var workingState: some View {
+        VStack(spacing: 0) {
+            pinnedPhoto
+            List {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Working…")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Analyzing image, waiting for server response")
+            }
         }
     }
 
@@ -291,27 +319,29 @@ struct SuggestionReviewView: View {
                 // top of the row) now shows the Vision label. The catalogue
                 // match is surfaced here as a disclosure line so the user
                 // can see it exists without it silently overriding the name
-                // they're about to confirm. Tapping the line adopts the
-                // match — one-tap path for users who actually want it.
-                Button {
-                    viewModel.adoptMatchName(id: s.id)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "link")
+                // they're about to confirm. The "Use this" button (Swift2_018
+                // §3 tap-to-swap) lets the user one-tap promote the match name
+                // and category into the editable fields.
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                        .font(.caption2)
+                        .accessibilityHidden(true)
+                    Text("also in catalog: \(match.name)")
+                        .font(.caption)
+                    Spacer()
+                    Text(String(format: "%.0f%%", match.score * 100))
+                        .font(.caption)
+                    Button {
+                        viewModel.adoptCatalogMatch(id: s.id)
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right")
                             .font(.caption2)
-                            .accessibilityHidden(true)
-                        Text("also in catalog: \(match.name)")
-                            .font(.caption)
-                        Spacer()
-                        Text(String(format: "%.0f%%", match.score * 100))
-                            .font(.caption)
                     }
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Use catalogue name")
+                    .accessibilityHint("Replaces the name and category with the catalogue match")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Adopt catalogue match \(match.name), \(Int(match.score * 100)) percent similar")
-                .accessibilityHint("Replaces the name with the catalogue match")
+                .foregroundStyle(.secondary)
             }
 
             TextField("Name", text: suggestion.editedName)

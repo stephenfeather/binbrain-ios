@@ -112,6 +112,18 @@ final class SuggestionReviewViewModel {
     /// Whether a confirm or retry operation is currently in progress.
     private(set) var isConfirming: Bool = false
 
+    /// True while the server's `/suggest` call is in flight after preliminary
+    /// on-device chips have been loaded. Set by `loadPreliminaryClassifications`
+    /// (and therefore `loadPreliminaryFromOnDevice`); cleared by
+    /// `applyServerSuggestions` on both success and empty-server response, and
+    /// by `resetOutcomesContext` so a reused VM starts each session clean.
+    ///
+    /// When `editableSuggestions.isEmpty && isAwaitingServerResponse == true`,
+    /// `SuggestionReviewView` renders a single disabled "Working…" chip row
+    /// instead of the empty-state screen, keeping the chip metaphor alive
+    /// while the server call is in flight.
+    var isAwaitingServerResponse: Bool = false
+
     /// Whether the Confirm button should be enabled (Finding #16).
     ///
     /// `confirm(...)` with zero included suggestions flips `isConfirming` true → false in a
@@ -524,6 +536,10 @@ final class SuggestionReviewViewModel {
         // reused VM carries the prior session's photoId/visionModel forward
         // if the new applyServerSuggestions caller were to omit them.
         resetOutcomesContext()
+        // Flag the server call as in-flight BEFORE building the chip list so
+        // the "Working…" placeholder renders even when the blocklist filters
+        // all preliminary labels (leaving editableSuggestions empty).
+        isAwaitingServerResponse = true
         let limit = max(0, min(topK, classifications.count))
         originalPreliminaryTopK = Array(classifications.prefix(limit))
         // Swift2_020 — preliminary chips obey the same three-state initial
@@ -673,6 +689,39 @@ final class SuggestionReviewViewModel {
         noteUserEdit(id: id)
     }
 
+    /// Promotes the catalogue match's name and category into the editable
+    /// chip fields. Idempotent; no-op when the row has no match.
+    ///
+    /// Edit-detection in `buildOutcomes` (line ~850) compares `editedName`
+    /// against `item.visionName` (the `Swift_match_name_display_fix` baseline),
+    /// so adopting the match — when `match.name != visionName` — correctly
+    /// surfaces as `.edited` in the outcomes payload. That is the right signal
+    /// under the current code; see the `buildOutcomes` comment for rationale.
+    ///
+    /// Three-state: adoption implies endorsement, so an `.ignored` row is
+    /// promoted to `.accepted`. A `.rejected` row is NOT resurrected — the
+    /// user must explicitly tap the chip to un-reject.
+    func adoptCatalogMatch(id: Int) {
+        guard let idx = editableSuggestions.firstIndex(where: { $0.id == id }),
+              let match = editableSuggestions[idx].match else { return }
+
+        editableSuggestions[idx].editedName = match.name
+        editableSuggestions[idx].editedCategory = match.category ?? ""
+        editableSuggestions[idx].origin = .edited
+
+        // Same auto-promotion rule as `noteUserEdit`: adoption implies
+        // endorsement under three-state, but `.rejected` does NOT resurrect.
+        if threeStateEnabled, editableSuggestions[idx].outcomeState == .ignored {
+            editableSuggestions[idx].outcomeState = .accepted
+            editableSuggestions[idx].included = true
+        }
+
+        let fromName = editableSuggestions[idx].visionName
+        logger.debug(
+            "[OUTCOMES] catalog_match_adopted id=\(id) score=\(match.score, privacy: .public) from=\"\(fromName, privacy: .public)\" to=\"\(match.name, privacy: .public)\""
+        )
+    }
+
     /// Reconciles the current preliminary chips with the server's suggestions.
     ///
     /// Behavior (from the merge-UX spike §2a):
@@ -694,6 +743,11 @@ final class SuggestionReviewViewModel {
         visionModel: String? = nil,
         promptVersion: String? = nil
     ) {
+        // Server has responded — clear the "Working…" placeholder regardless of
+        // whether suggestions is empty or not. Both code paths (non-empty and
+        // empty-server) must clear so the placeholder never persists after
+        // the server call completes.
+        isAwaitingServerResponse = false
         editableSuggestions = Self.merge(
             preliminary: editableSuggestions,
             server: server,
@@ -716,6 +770,7 @@ final class SuggestionReviewViewModel {
         visionModel = nil
         promptVersion = nil
         shownAt = nil
+        isAwaitingServerResponse = false
     }
 
     /// Applies any supplied outcomes-telemetry context values and stamps
