@@ -25,6 +25,10 @@ enum ChipOrigin: Equatable {
     case server
     /// Modified by the user; survives any merge pass.
     case edited
+    /// On-device `VNRecognizeTextRequest` (OCR) result above the confidence
+    /// and length bar. Authoritative like `.edited` — survives merge so the
+    /// user never loses a high-confidence label the device already read.
+    case ocr
 }
 
 // MARK: - EditableSuggestion
@@ -547,6 +551,72 @@ final class SuggestionReviewViewModel {
         failedIndices = []
     }
 
+    /// Swift_prong1_ocr_preliminary — populates `editableSuggestions` from
+    /// on-device Vision results, combining `VNClassifyImageRequest`
+    /// classifications AND `VNRecognizeTextRequest` OCR findings.
+    ///
+    /// OCR selection rule (documented in the PR body): of the OCR entries
+    /// with `confidence >= minOCRConfidence` AND trimmed `text.count >=
+    /// minOCRLength`, the one with the longest text wins. No fallback to
+    /// sub-threshold entries — if nothing qualifies, no OCR chip is emitted
+    /// and the classifier chips stand alone. This keeps the bar high enough
+    /// that generic short words (e.g. "New" at 1.0) don't land as chips.
+    ///
+    /// OCR chips carry `origin = .ocr` so `merge(preliminary:server:)`
+    /// treats them like `.edited` chips — they survive the server response
+    /// and will dedupe against overlapping server names.
+    ///
+    /// - Parameters:
+    ///   - classifications: The on-device classification results from Stage 3.
+    ///   - ocr: The on-device OCR results from Stage 3.
+    ///   - topK: Maximum number of classifier chips. Same semantics as
+    ///     `loadPreliminaryClassifications`.
+    ///   - minOCRConfidence: Lower bound on OCR confidence (inclusive).
+    ///     Production default is `0.9`.
+    ///   - minOCRLength: Lower bound on trimmed text length (inclusive).
+    ///     Production default is `4` — avoids emitting trivial strings.
+    func loadPreliminaryFromOnDevice(
+        classifications: [ClassificationResult],
+        ocr: [OCRResult],
+        topK: Int,
+        minOCRConfidence: Float = 0.9,
+        minOCRLength: Int = 4
+    ) {
+        loadPreliminaryClassifications(classifications, topK: topK)
+
+        let qualifying = ocr.compactMap { result -> (text: String, confidence: Float)? in
+            let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard result.confidence >= minOCRConfidence, trimmed.count >= minOCRLength else {
+                return nil
+            }
+            return (trimmed, result.confidence)
+        }
+        guard let chosen = qualifying.max(by: { $0.text.count < $1.text.count }) else {
+            return
+        }
+
+        let initialState: OutcomeState = threeStateEnabled ? .ignored : .accepted
+        let initialIncluded = (initialState == .accepted)
+        let nextId = (editableSuggestions.map(\.id).max() ?? -1) + 1
+        editableSuggestions.append(
+            EditableSuggestion(
+                id: nextId,
+                included: initialIncluded,
+                editedName: chosen.text,
+                editedCategory: "",
+                editedQuantity: "",
+                confidence: Double(chosen.confidence),
+                visionName: chosen.text,
+                match: nil,
+                bbox: nil,
+                teach: true,
+                origin: .ocr,
+                originalCategory: nil,
+                outcomeState: initialState
+            )
+        )
+    }
+
     /// Marks the chip at `index` as user-edited so subsequent merges preserve it.
     ///
     /// Call from the view when the user modifies any editable field on a
@@ -680,10 +750,13 @@ final class SuggestionReviewViewModel {
         server: [SuggestionItem],
         threeStateEnabled: Bool = false
     ) -> [EditableSuggestion] {
-        let editedChips = preliminary.filter { $0.origin == .edited }
-        let editedNames = Set(editedChips.map { Self.normalize($0.editedName) })
+        // `.ocr` chips are treated like `.edited` for survival — they carry
+        // high-confidence on-device text that the user should never lose
+        // just because the server's VLM produced a generic label.
+        let survivorChips = preliminary.filter { $0.origin == .edited || $0.origin == .ocr }
+        let survivorNames = Set(survivorChips.map { Self.normalize($0.editedName) })
 
-        var result = editedChips
+        var result = survivorChips
         var nextId = (result.map(\.id).max() ?? -1) + 1
 
         // Server items added by merge follow the same three-state initial
@@ -693,7 +766,7 @@ final class SuggestionReviewViewModel {
         let initialIncluded = (initialState == .accepted)
         for item in server {
             let key = Self.normalize(item.name)
-            if editedNames.contains(key) { continue }
+            if survivorNames.contains(key) { continue }
             // Swift_match_name_display_fix — Vision label is authoritative.
             // Mirror the `loadSuggestions` prefill so merge-path chips carry
             // the same default as direct-load chips. The disclosure tap in

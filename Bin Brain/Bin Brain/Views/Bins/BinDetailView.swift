@@ -339,10 +339,11 @@ struct BinDetailView: View {
                     )
                 }
             },
-            onPreliminaryReady: { classifications in
+            onPreliminaryReady: { classifications, ocr in
                 reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-                reviewViewModel.loadPreliminaryClassifications(
-                    classifications,
+                reviewViewModel.loadPreliminaryFromOnDevice(
+                    classifications: classifications,
+                    ocr: ocr,
                     topK: Self.preliminaryTopK
                 )
                 navigatedOnPreliminary = true
