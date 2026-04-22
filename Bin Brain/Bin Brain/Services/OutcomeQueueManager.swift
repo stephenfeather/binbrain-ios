@@ -176,14 +176,22 @@ final class OutcomeQueueManager {
     ) async {
         let drainID = signposter.makeSignpostID()
         let drainInterval = signposter.beginInterval("drain", id: drainID)
+        defer { signposter.endInterval("drain", drainInterval) }
         expireAged(context: context)
         let nowDate = now()
         let ready: [PendingOutcome]
         do {
             let all = try fetchAllOutcomes(context: context)
+            let delivered = all.filter { $0.status == .delivered }.count
+            let expired = all.filter { $0.status == .expired }.count
             ready = all
                 .filter { $0.status == .pending && $0.nextRetryAt <= nowDate }
                 .sorted { $0.queuedAt < $1.queuedAt }
+            signposter.emitEvent(
+                "drain_counts",
+                id: drainID,
+                "readyToSend=\(ready.count, privacy: .public) delivered=\(delivered, privacy: .public) expired=\(expired, privacy: .public)"
+            )
         } catch {
             logger.error("[OUTCOMES] drain fetch failed: \(error.localizedDescription, privacy: .private)")
             return
@@ -191,7 +199,6 @@ final class OutcomeQueueManager {
         for row in ready {
             await deliver(row, context: context, apiClient: apiClient)
         }
-        signposter.endInterval("drain", drainInterval)
     }
 
     /// Forces every `.pending` row to attempt delivery NOW, ignoring
@@ -202,11 +209,19 @@ final class OutcomeQueueManager {
     ) async {
         let retryAllID = signposter.makeSignpostID()
         let retryAllInterval = signposter.beginInterval("retryAll", id: retryAllID)
+        defer { signposter.endInterval("retryAll", retryAllInterval) }
         expireAged(context: context)
         let rows: [PendingOutcome]
         do {
             let all = try fetchAllOutcomes(context: context)
+            let delivered = all.filter { $0.status == .delivered }.count
+            let expired = all.filter { $0.status == .expired }.count
             rows = all.filter { $0.status == .pending }.sorted { $0.queuedAt < $1.queuedAt }
+            signposter.emitEvent(
+                "retryAll_counts",
+                id: retryAllID,
+                "readyToSend=\(rows.count, privacy: .public) delivered=\(delivered, privacy: .public) expired=\(expired, privacy: .public)"
+            )
         } catch {
             logger.error("[OUTCOMES] retryAll fetch failed: \(error.localizedDescription, privacy: .private)")
             return
@@ -214,7 +229,6 @@ final class OutcomeQueueManager {
         for row in rows {
             await deliver(row, context: context, apiClient: apiClient)
         }
-        signposter.endInterval("retryAll", retryAllInterval)
     }
 
     /// Removes a single `.expired` row. Called from the Settings detail
@@ -241,6 +255,7 @@ final class OutcomeQueueManager {
         lastReclaimCount = 0
         let reclaimID = signposter.makeSignpostID()
         let reclaimInterval = signposter.beginInterval("reclaimOrphanedSendingRows", id: reclaimID)
+        defer { signposter.endInterval("reclaimOrphanedSendingRows", reclaimInterval) }
         let all: [PendingOutcome]
         do {
             all = try fetchAllOutcomes(context: context)
@@ -249,6 +264,7 @@ final class OutcomeQueueManager {
             return
         }
         var reclaimed = 0
+        let sendingRows = all.filter { $0.status == .sending }.count
         for row in all where row.status == .sending {
             // Swift2_018c / SEC-26-2 — bounded reclaim per launch.
             // Stops a runaway crash-loop from re-firing every orphaned
@@ -263,11 +279,15 @@ final class OutcomeQueueManager {
             reclaimed += 1
         }
         lastReclaimCount = reclaimed
+        signposter.emitEvent(
+            "reclaimOrphanedSendingRows_counts",
+            id: reclaimID,
+            "totalScanned=\(all.count, privacy: .public) sendingRows=\(sendingRows, privacy: .public) reclaimed=\(reclaimed, privacy: .public) capHit=\(self.lastReclaimCapHit, privacy: .public)"
+        )
         if reclaimed > 0 {
             save(context, changedCount: reclaimed, reason: "reclaimOrphanedSendingRows")
             refreshCounts(context: context)
         }
-        signposter.endInterval("reclaimOrphanedSendingRows", reclaimInterval)
     }
 
     /// Recomputes `pendingCount`, `deliveredCount`, and `expiredCount`
@@ -366,7 +386,7 @@ final class OutcomeQueueManager {
     ) async {
         let deliveryID = signposter.makeSignpostID()
         let deliveryInterval = signposter.beginInterval("attemptDelivery", id: deliveryID)
-        signposter.emitEvent("attemptDelivery_details", id: deliveryID, "photoId=\(row.photoId, privacy: .public) retryCount=\(row.retryCount, privacy: .public) status=\(row.status.rawValue, privacy: .public)")
+        signposter.emitEvent("attemptDelivery_details", id: deliveryID, "photoId=\(row.photoId, privacy: .public) retryCount=\(row.retryCount, privacy: .public) status=\(row.status.rawValue, privacy: .public) networkFailure=\(false, privacy: .public)")
         // Swift2_018b F-3 / Swift2_018c G-1 + SEC-26-1 — CAS guard.
         //
         // Concurrent drain triggers (NWPathMonitor `.satisfied` +
@@ -459,6 +479,7 @@ final class OutcomeQueueManager {
     private func expireAged(context: ModelContext) {
         let expireID = signposter.makeSignpostID()
         let expireInterval = signposter.beginInterval("expireAged", id: expireID)
+        defer { signposter.endInterval("expireAged", expireInterval) }
         let cutoff = now().addingTimeInterval(-Self.maxAge)
         let all: [PendingOutcome]
         do {
@@ -468,6 +489,8 @@ final class OutcomeQueueManager {
             return
         }
         var touchedCount = 0
+        var expiredRows = 0
+        var deletedDelivered = 0
         for row in all where row.queuedAt < cutoff {
             switch row.status {
             case .pending, .sending:
@@ -476,6 +499,7 @@ final class OutcomeQueueManager {
                 // dismissal is an explicit user action.
                 row.status = .expired
                 touchedCount += 1
+                expiredRows += 1
             case .delivered:
                 // F-4 (QA PR #23): delivered rows were retained forever.
                 // Delete them after the 7-day TTL so the store stays
@@ -483,16 +507,21 @@ final class OutcomeQueueManager {
                 // count in Settings is now accurate by construction.
                 context.delete(row)
                 touchedCount += 1
+                deletedDelivered += 1
             case .expired:
                 // Keep — user will dismiss explicitly.
                 break
             }
         }
+        signposter.emitEvent(
+            "expireAged_counts",
+            id: expireID,
+            "expired=\(expiredRows, privacy: .public) deletedDelivered=\(deletedDelivered, privacy: .public)"
+        )
         if touchedCount > 0 {
             save(context, changedCount: touchedCount, reason: "expireAged")
             refreshCounts(context: context)
         }
-        signposter.endInterval("expireAged", expireInterval)
     }
 
     private func fetchAllOutcomes(context: ModelContext) throws -> [PendingOutcome] {
