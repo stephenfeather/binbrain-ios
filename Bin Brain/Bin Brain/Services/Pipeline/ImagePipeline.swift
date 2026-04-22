@@ -11,6 +11,7 @@ import OSLog
 import UIKit
 
 private nonisolated let logger = Logger(subsystem: "com.binbrain.app", category: "ImagePipeline")
+private nonisolated let pipelineSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "ImagePipeline")
 
 // MARK: - Image Pipeline
 
@@ -64,38 +65,61 @@ actor ImagePipeline {
     /// - Throws: `PipelineError.qualityGateFailed` if a quality check fails,
     ///   or `PipelineError.invalidImageData` if the input cannot be decoded.
     func process(_ imageData: Data) async throws -> PipelineResult {
+        let processID = pipelineSignposter.makeSignpostID()
+        let processInterval = pipelineSignposter.beginInterval("image_pipeline_process", id: processID)
+        defer { pipelineSignposter.endInterval("image_pipeline_process", processInterval) }
+        pipelineSignposter.emitEvent(
+            "image_pipeline_process",
+            id: processID,
+            "bytesIn=\(imageData.count, privacy: .public)"
+        )
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        // Decode and cap input resolution
-        var cgImage = try decodeCGImage(from: imageData)
-        cgImage = capResolution(cgImage)
+        do {
+            // Decode and cap input resolution
+            var cgImage = try decodeCGImage(from: imageData)
+            cgImage = capResolution(cgImage)
 
-        // Stage 1: Quality gates
-        let validation = try await qualityGates.validate(cgImage)
-        if let failure = validation.failure {
-            throw PipelineError.qualityGateFailed(failure)
+            // Stage 1: Quality gates
+            let validation = try await qualityGates.validate(cgImage)
+            if let failure = validation.failure {
+                throw PipelineError.qualityGateFailed(failure)
+            }
+
+            // Stage 2: Optimize for upload
+            let optimized = optimizer.optimize(
+                cgImage,
+                saliencyBoundingBox: validation.saliencyBoundingBox,
+                context: context
+            )
+
+            // Stage 3: Extract metadata from original (pre-optimize) image
+            let extraction = try await extractors.extract(from: cgImage)
+
+            // Release the full-resolution image before building the result
+            let pipelineMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+
+            let result = buildResult(
+                optimizedData: optimized.jpegData,
+                cropInfo: optimized.cropInfo,
+                scores: validation.scores,
+                extraction: extraction,
+                pipelineMs: pipelineMs
+            )
+            pipelineSignposter.emitEvent(
+                "image_pipeline_process_done",
+                id: processID,
+                "bytesOut=\(result.optimizedImageData.count, privacy: .public) pipelineMs=\(pipelineMs, privacy: .public)"
+            )
+            return result
+        } catch {
+            pipelineSignposter.emitEvent(
+                "image_pipeline_process_failed",
+                id: processID,
+                "bytesIn=\(imageData.count, privacy: .public)"
+            )
+            throw error
         }
-
-        // Stage 2: Optimize for upload
-        let optimized = optimizer.optimize(
-            cgImage,
-            saliencyBoundingBox: validation.saliencyBoundingBox,
-            context: context
-        )
-
-        // Stage 3: Extract metadata from original (pre-optimize) image
-        let extraction = try await extractors.extract(from: cgImage)
-
-        // Release the full-resolution image before building the result
-        let pipelineMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-
-        return buildResult(
-            optimizedData: optimized.jpegData,
-            cropInfo: optimized.cropInfo,
-            scores: validation.scores,
-            extraction: extraction,
-            pipelineMs: pipelineMs
-        )
     }
 
     /// Runs the pipeline without quality gates. Used when the user taps "Upload Anyway."
@@ -104,48 +128,71 @@ actor ImagePipeline {
     /// - Returns: A `PipelineResult` with optimized image data and metadata.
     /// - Throws: `PipelineError.invalidImageData` if the input cannot be decoded.
     func processSkippingQualityGates(_ imageData: Data) async throws -> PipelineResult {
+        let processID = pipelineSignposter.makeSignpostID()
+        let processInterval = pipelineSignposter.beginInterval("image_pipeline_process_skip_quality", id: processID)
+        defer { pipelineSignposter.endInterval("image_pipeline_process_skip_quality", processInterval) }
+        pipelineSignposter.emitEvent(
+            "image_pipeline_process_skip_quality",
+            id: processID,
+            "bytesIn=\(imageData.count, privacy: .public)"
+        )
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        // Decode and cap input resolution
-        var cgImage = try decodeCGImage(from: imageData)
-        cgImage = capResolution(cgImage)
-
-        // Run saliency for smart crop (without the full gate validation)
-        let saliencyBox: CGRect?
         do {
-            saliencyBox = try await qualityGates.checkSaliencyOnly(cgImage)
+            // Decode and cap input resolution
+            var cgImage = try decodeCGImage(from: imageData)
+            cgImage = capResolution(cgImage)
+
+            // Run saliency for smart crop (without the full gate validation)
+            let saliencyBox: CGRect?
+            do {
+                saliencyBox = try await qualityGates.checkSaliencyOnly(cgImage)
+            } catch {
+                logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription, privacy: .private)")
+                saliencyBox = nil
+            }
+
+            // Stage 2: Optimize
+            let optimized = optimizer.optimize(
+                cgImage,
+                saliencyBoundingBox: saliencyBox,
+                context: context
+            )
+
+            // Stage 3: Extract metadata
+            let extraction = try await extractors.extract(from: cgImage)
+
+            let pipelineMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+
+            // Use zero scores since gates were skipped
+            let scores = QualityScores(
+                blurVariance: 0,
+                exposureMean: 0,
+                saliencyCoverage: 0,
+                shortestSide: min(cgImage.width, cgImage.height)
+            )
+
+            let result = buildResult(
+                optimizedData: optimized.jpegData,
+                cropInfo: optimized.cropInfo,
+                scores: scores,
+                extraction: extraction,
+                pipelineMs: pipelineMs
+            )
+            pipelineSignposter.emitEvent(
+                "image_pipeline_process_skip_quality_done",
+                id: processID,
+                "bytesOut=\(result.optimizedImageData.count, privacy: .public) pipelineMs=\(pipelineMs, privacy: .public)"
+            )
+            return result
         } catch {
-            logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription, privacy: .private)")
-            saliencyBox = nil
+            pipelineSignposter.emitEvent(
+                "image_pipeline_process_skip_quality_failed",
+                id: processID,
+                "bytesIn=\(imageData.count, privacy: .public)"
+            )
+            throw error
         }
-
-        // Stage 2: Optimize
-        let optimized = optimizer.optimize(
-            cgImage,
-            saliencyBoundingBox: saliencyBox,
-            context: context
-        )
-
-        // Stage 3: Extract metadata
-        let extraction = try await extractors.extract(from: cgImage)
-
-        let pipelineMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-
-        // Use zero scores since gates were skipped
-        let scores = QualityScores(
-            blurVariance: 0,
-            exposureMean: 0,
-            saliencyCoverage: 0,
-            shortestSide: min(cgImage.width, cgImage.height)
-        )
-
-        return buildResult(
-            optimizedData: optimized.jpegData,
-            cropInfo: optimized.cropInfo,
-            scores: scores,
-            extraction: extraction,
-            pipelineMs: pipelineMs
-        )
     }
 
     // MARK: - Private Helpers
@@ -163,7 +210,20 @@ actor ImagePipeline {
     ///
     /// `internal` (not `private`) so `ImagePipelineTests` can assert orientation-baking directly.
     func decodeCGImage(from data: Data) throws -> CGImage {
+        let transformID = pipelineSignposter.makeSignpostID()
+        let transformInterval = pipelineSignposter.beginInterval("media_transform", id: transformID)
+        pipelineSignposter.emitEvent(
+            "media_transform",
+            id: transformID,
+            "stage=\("decode_normalize", privacy: .public) bytesIn=\(data.count, privacy: .public) formatIn=\("jpeg", privacy: .public) formatOut=\("cgimage", privacy: .public)"
+        )
         guard let uiImage = UIImage(data: data) else {
+            pipelineSignposter.emitEvent(
+                "media_transform_failed",
+                id: transformID,
+                "stage=\("decode_normalize", privacy: .public)"
+            )
+            pipelineSignposter.endInterval("media_transform", transformInterval)
             throw PipelineError.invalidImageData
         }
         let normalized: UIImage
@@ -181,8 +241,20 @@ actor ImagePipeline {
             }
         }
         guard let cgImage = normalized.cgImage else {
+            pipelineSignposter.emitEvent(
+                "media_transform_failed",
+                id: transformID,
+                "stage=\("cgimage_extract", privacy: .public)"
+            )
+            pipelineSignposter.endInterval("media_transform", transformInterval)
             throw PipelineError.invalidImageData
         }
+        pipelineSignposter.emitEvent(
+            "media_transform_done",
+            id: transformID,
+            "stage=\("decode_normalize", privacy: .public) width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public) bytesOutApprox=\((cgImage.bytesPerRow * cgImage.height), privacy: .public)"
+        )
+        pipelineSignposter.endInterval("media_transform", transformInterval)
         return cgImage
     }
 

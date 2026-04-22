@@ -8,7 +8,10 @@
 
 import CoreGraphics
 import Foundation
+import OSLog
 import Vision
+
+private nonisolated let metadataSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "Vision")
 
 /// Extracts metadata (OCR text, barcodes, image classifications) from a CGImage
 /// using the Vision framework.
@@ -31,7 +34,19 @@ nonisolated struct MetadataExtractors: Sendable {
         barcodes: [BarcodeResult],
         classifications: [ClassificationResult]
     ) {
-        try await withCheckedThrowingContinuation { continuation in
+        let extractID = metadataSignposter.makeSignpostID()
+        let extractInterval = metadataSignposter.beginInterval("vision_extract", id: extractID)
+        metadataSignposter.emitEvent(
+            "vision_extract",
+            id: extractID,
+            "width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public) ocr=\(true, privacy: .public) barcode=\(true, privacy: .public) classify=\(true, privacy: .public)"
+        )
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(
+                ocr: [OCRResult],
+                barcodes: [BarcodeResult],
+                classifications: [ClassificationResult]
+            ), Error>) in
             visionQueue.async {
                 let ocrRequest = VNRecognizeTextRequest()
                 ocrRequest.recognitionLevel = .accurate
@@ -52,8 +67,21 @@ nonisolated struct MetadataExtractors: Sendable {
                     let barcodeResults = Self.mapBarcodeResults(barcodeRequest.results ?? [])
                     let classificationResults = Self.mapClassificationResults(classifyRequest.results ?? [])
 
+                    metadataSignposter.emitEvent(
+                        "vision_extract_results",
+                        id: extractID,
+                        "ocrCount=\(ocrResults.count, privacy: .public) barcodeCount=\(barcodeResults.count, privacy: .public) classificationCount=\(classificationResults.count, privacy: .public)"
+                    )
+                    metadataSignposter.endInterval("vision_extract", extractInterval)
+
                     continuation.resume(returning: (ocrResults, barcodeResults, classificationResults))
                 } catch {
+                    metadataSignposter.emitEvent(
+                        "vision_extract_failed",
+                        id: extractID,
+                        "width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public)"
+                    )
+                    metadataSignposter.endInterval("vision_extract", extractInterval)
                     continuation.resume(throwing: error)
                 }
             }

@@ -23,6 +23,7 @@ nonisolated private let blurGateLogger = Logger(subsystem: "com.binbrain.app", c
 /// union, coverage vs threshold, and the final pixel crop rect. Geometric
 /// data only — no PII — so values are logged with `privacy: .public`.
 nonisolated let cropDebugLogger = Logger(subsystem: "com.binbrain.app", category: "crop-debug")
+nonisolated private let qualitySignposter = OSSignposter(subsystem: "com.binbrain.app", category: "Vision")
 
 // MARK: - Thresholds
 
@@ -377,13 +378,27 @@ nonisolated struct QualityGates: Sendable {
     /// - Parameter cgImage: The image to check.
     /// - Returns: The saliency coverage, the bounding box of the most salient region, and an optional failure.
     func checkSaliency(_ cgImage: CGImage) async throws -> (coverage: Double, boundingBox: CGRect?, failure: QualityGateFailure?) {
-        try await withCheckedThrowingContinuation { continuation in
+        let saliencyID = qualitySignposter.makeSignpostID()
+        let saliencyInterval = qualitySignposter.beginInterval("vision_saliency", id: saliencyID)
+        qualitySignposter.emitEvent(
+            "vision_saliency",
+            id: saliencyID,
+            "width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public)"
+        )
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(coverage: Double, boundingBox: CGRect?, failure: QualityGateFailure?), Error>) in
             visionQueue.async {
                 let request = VNGenerateObjectnessBasedSaliencyImageRequest()
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
                 do {
                     try handler.perform([request])
                 } catch {
+                    qualitySignposter.emitEvent(
+                        "vision_saliency_failed",
+                        id: saliencyID,
+                        "width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public)"
+                    )
+                    qualitySignposter.endInterval("vision_saliency", saliencyInterval)
                     continuation.resume(throwing: error)
                     return
                 }
@@ -400,6 +415,12 @@ nonisolated struct QualityGates: Sendable {
                 )
 
                 guard let observation = request.results?.first else {
+                    qualitySignposter.emitEvent(
+                        "vision_saliency_results",
+                        id: saliencyID,
+                        "objects=\(0, privacy: .public) coverage=\(0.0, privacy: .public)"
+                    )
+                    qualitySignposter.endInterval("vision_saliency", saliencyInterval)
                     continuation.resume(returning: (0, nil, noObjectsFailure))
                     return
                 }
@@ -407,6 +428,12 @@ nonisolated struct QualityGates: Sendable {
                 let salientObjects = observation.salientObjects ?? []
                 if salientObjects.isEmpty {
                     cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=0 → no bbox, full frame uploaded")
+                    qualitySignposter.emitEvent(
+                        "vision_saliency_results",
+                        id: saliencyID,
+                        "objects=\(0, privacy: .public) coverage=\(0.0, privacy: .public)"
+                    )
+                    qualitySignposter.endInterval("vision_saliency", saliencyInterval)
                     continuation.resume(returning: (0, nil, noObjectsFailure))
                     return
                 }
@@ -429,6 +456,12 @@ nonisolated struct QualityGates: Sendable {
                 let unionBox = Self.unionBoundingBox(of: salientObjects.map { $0.boundingBox })!
                 let coverage = Double(unionBox.width * unionBox.height)
                 cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=\(salientObjects.count, privacy: .public) union=(x=\(unionBox.origin.x, privacy: .public), y=\(unionBox.origin.y, privacy: .public), w=\(unionBox.width, privacy: .public), h=\(unionBox.height, privacy: .public)) coverage=\(coverage, privacy: .public)")
+                qualitySignposter.emitEvent(
+                    "vision_saliency_results",
+                    id: saliencyID,
+                    "objects=\(salientObjects.count, privacy: .public) coverage=\(coverage, privacy: .public)"
+                )
+                qualitySignposter.endInterval("vision_saliency", saliencyInterval)
                 continuation.resume(returning: (coverage, unionBox, nil))
             }
         }

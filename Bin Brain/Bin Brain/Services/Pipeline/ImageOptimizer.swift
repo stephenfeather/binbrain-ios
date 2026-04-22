@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
 /// per-photo trace: salient objects → union → coverage check → final
 /// pixel crop rect → output dims.
 nonisolated private let optimizerCropLogger = Logger(subsystem: "com.binbrain.app", category: "crop-debug")
+nonisolated private let optimizerSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "MediaPipeline")
 
 // MARK: - Image Optimizer
 
@@ -61,8 +62,16 @@ nonisolated struct ImageOptimizer: Sendable {
         context: CIContext,
         autoEnhance: Bool = false
     ) -> (jpegData: Data, cropInfo: CropInfo?) {
+        let transformID = optimizerSignposter.makeSignpostID()
+        let transformInterval = optimizerSignposter.beginInterval("media_transform", id: transformID)
         let imageWidth = cgImage.width
         let imageHeight = cgImage.height
+        let bytesInApprox = cgImage.bytesPerRow * cgImage.height
+        optimizerSignposter.emitEvent(
+            "media_transform",
+            id: transformID,
+            "stage=\("optimize", privacy: .public) bytesInApprox=\(bytesInApprox, privacy: .public) formatIn=\("cgimage", privacy: .public) formatOut=\("jpeg", privacy: .public) widthIn=\(imageWidth, privacy: .public) heightIn=\(imageHeight, privacy: .public)"
+        )
         var currentImage = cgImage
         var cropInfo: CropInfo?
 
@@ -119,6 +128,12 @@ nonisolated struct ImageOptimizer: Sendable {
         let renderedImage = renderToCGImage(ciImage: ciImage, context: context) ?? currentImage
         let jpegData = encodeJPEG(renderedImage)
         optimizerCropLogger.notice("[optimize] out image=\(renderedImage.width, privacy: .public)x\(renderedImage.height, privacy: .public) jpeg=\(jpegData.count, privacy: .public)B")
+        optimizerSignposter.emitEvent(
+            "media_transform_done",
+            id: transformID,
+            "stage=\("optimize", privacy: .public) bytesOut=\(jpegData.count, privacy: .public) widthOut=\(renderedImage.width, privacy: .public) heightOut=\(renderedImage.height, privacy: .public) cropped=\((cropInfo != nil), privacy: .public) resized=\((longestSide > Self.maxLongestSide), privacy: .public)"
+        )
+        optimizerSignposter.endInterval("media_transform", transformInterval)
 
         return (jpegData: jpegData, cropInfo: cropInfo)
     }
