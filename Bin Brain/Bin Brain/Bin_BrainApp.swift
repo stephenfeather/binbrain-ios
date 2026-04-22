@@ -7,6 +7,7 @@ import SwiftData
 import UserNotifications
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "App")
+private let appSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "AppLifecycle")
 
 @main
 struct Bin_BrainApp: App {
@@ -26,20 +27,27 @@ struct Bin_BrainApp: App {
     // MARK: - Initializer
 
     init() {
+        let spid = appSignposter.makeSignpostID()
+        let startupInterval = appSignposter.beginInterval("app_startup", id: spid)
         // One-time migration of the API key out of UserDefaults into Keychain.
         // Idempotent — safe to run on every cold start.
         KeychainHelper.migrateAPIKeyFromUserDefaultsIfNeeded()
+        appSignposter.emitEvent("app_startup", id: spid, "keychain_migrated=\(true, privacy: .public)")
         // Back-fill apiKeyBoundHost for installs that predate host binding (#13).
         // Must run after the apiKey migration because it reads that entry.
         KeychainHelper.migrateAPIKeyBoundHostIfNeeded()
+        appSignposter.emitEvent("app_startup", id: spid, "bound_host_migrated=\(true, privacy: .public)")
         #if DEBUG
         // DEBUG-only DX: seed the API key from BuildConfig when the Keychain
         // is empty (fresh install / simulator reset). Compiled out of Release.
         KeychainHelper.seedDebugAPIKeyFromBuildConfigIfNeeded()
+        appSignposter.emitEvent("app_startup", id: spid, "debug_seeded=\(true, privacy: .public)")
         #endif
         // Apply complete file protection to the SwiftData store so queued
         // pending uploads are unreadable when the device is locked (#9, F-08).
         Self.applyFileProtection(to: sharedModelContainer)
+        appSignposter.emitEvent("app_startup", id: spid, "file_protection_applied=\(true, privacy: .public)")
+        appSignposter.endInterval("app_startup", startupInterval)
     }
 
     // MARK: - SwiftData
@@ -79,6 +87,10 @@ struct Bin_BrainApp: App {
                         context: sharedModelContainer.mainContext,
                         apiClient: apiClient
                     )
+                    do {
+                        let mid = appSignposter.makeSignpostID()
+                        appSignposter.emitEvent("monitors_started", id: mid, "outcome_queue=\(true, privacy: .public)")
+                    }
                 }
                 .environment(\.apiClient, apiClient)
                 .environment(\.uploadQueueManager, uploadQueueManager)
@@ -89,16 +101,26 @@ struct Bin_BrainApp: App {
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
+            let spid = appSignposter.makeSignpostID()
+            let activeInterval = appSignposter.beginInterval("scene_active", id: spid)
+            appSignposter.emitEvent("scene_active", id: spid, "launching_server_check=\(true, privacy: .public)")
             Task {
+                appSignposter.emitEvent("scene_active", id: spid, "server_check_start=\(true, privacy: .public)")
                 await serverMonitor.check(using: apiClient)
+                appSignposter.emitEvent("scene_active", id: spid, "server_check_done=\(true, privacy: .public)")
+                appSignposter.emitEvent("scene_active", id: spid, "upload_drain_start=\(true, privacy: .public)")
                 await uploadQueueManager.drain(
                     context: sharedModelContainer.mainContext,
                     using: apiClient
                 )
+                appSignposter.emitEvent("scene_active", id: spid, "upload_drain_done=\(true, privacy: .public)")
+                appSignposter.emitEvent("scene_active", id: spid, "outcome_drain_start=\(true, privacy: .public)")
                 await outcomeQueueManager.drain(
                     context: sharedModelContainer.mainContext,
                     apiClient: apiClient
                 )
+                appSignposter.emitEvent("scene_active", id: spid, "outcome_drain_done=\(true, privacy: .public)")
+                appSignposter.endInterval("scene_active", activeInterval)
             }
         }
     }
@@ -129,7 +151,11 @@ struct Bin_BrainApp: App {
     /// persisted and readable in tests. Failures log but do not crash, since
     /// the sidecar files may not exist on first launch.
     static func applyFileProtection(to container: ModelContainer) {
+        let spid = appSignposter.makeSignpostID()
+        let fpInterval = appSignposter.beginInterval("apply_file_protection", id: spid)
         guard let storeURL = container.configurations.first?.url else {
+            appSignposter.emitEvent("apply_file_protection", id: spid, "error=\("no_store_url", privacy: .public)")
+            appSignposter.endInterval("apply_file_protection", fpInterval)
             logger.error("[SwiftData] could not resolve store URL for file protection")
             return
         }
@@ -140,6 +166,8 @@ struct Bin_BrainApp: App {
             parent.appendingPathComponent("\(base)-wal"),
             parent.appendingPathComponent("\(base)-shm"),
         ]
+        let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }.map { $0.lastPathComponent }.joined(separator: ",")
+        appSignposter.emitEvent("apply_file_protection", id: spid, "existing=\(existing, privacy: .private)")
         let fileManager = FileManager.default
         for url in urls where fileManager.fileExists(atPath: url.path) {
             do {
@@ -147,9 +175,12 @@ struct Bin_BrainApp: App {
                     [.protectionKey: FileProtectionType.complete],
                     ofItemAtPath: url.path
                 )
+                appSignposter.emitEvent("apply_file_protection", id: spid, "protected=\(url.lastPathComponent, privacy: .private)")
             } catch {
                 logger.error("[SwiftData] failed to set file protection on \(url.lastPathComponent, privacy: .private): \(error.localizedDescription, privacy: .private)")
+                appSignposter.emitEvent("apply_file_protection", id: spid, "failed=\(url.lastPathComponent, privacy: .private)")
             }
         }
+        appSignposter.endInterval("apply_file_protection", fpInterval)
     }
 }
