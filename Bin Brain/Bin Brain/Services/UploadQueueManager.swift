@@ -10,6 +10,7 @@ import SwiftData
 import Observation
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "UploadQueueManager")
+private let uploadSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "UploadQueue")
 
 // MARK: - UploadQueueManager
 
@@ -59,6 +60,10 @@ final class UploadQueueManager {
     ///   - context: The SwiftData `ModelContext` used for reads and writes.
     ///   - apiClient: The `APIClient` used to perform the network upload.
     func drain(context: ModelContext, using apiClient: APIClient) async {
+        let drainID = uploadSignposter.makeSignpostID()
+        let drainInterval = uploadSignposter.beginInterval("upload_drain", id: drainID)
+        uploadSignposter.emitEvent("upload_drain", id: drainID, "start=\(true, privacy: .public)")
+
         // Prune expired entries before processing.
         pruneExpired(context: context)
 
@@ -70,19 +75,30 @@ final class UploadQueueManager {
                 .filter { $0.status == .pending }
                 .sorted { $0.queuedAt < $1.queuedAt }
         } catch {
+            uploadSignposter.emitEvent("upload_drain", id: drainID, "error=\("fetch_failed", privacy: .public)")
+            uploadSignposter.endInterval("upload_drain", drainInterval)
             logger.error("Failed to fetch pending uploads: \(error.localizedDescription, privacy: .private)")
             return
         }
 
+        uploadSignposter.emitEvent("upload_drain", id: drainID, "pending=\(uploads.count, privacy: .public)")
+
         for upload in uploads {
+            let attemptID = uploadSignposter.makeSignpostID()
+            let attemptInterval = uploadSignposter.beginInterval("upload_attempt", id: attemptID)
+            uploadSignposter.emitEvent("upload_attempt", id: attemptID, "binId=\(upload.binId, privacy: .private) retry=\(upload.retryCount, privacy: .public) size=\(upload.jpegData.count, privacy: .public)")
+
             // Apply exponential backoff delay based on retry count.
             if upload.retryCount > 0 {
                 let delayIndex = min(upload.retryCount - 1, Self.backoffDelays.count - 1)
-                let delay = Self.backoffDelays[delayIndex]
+                let chosenDelay = Self.backoffDelays[delayIndex]
+                uploadSignposter.emitEvent("upload_attempt", id: attemptID, "backoff=\(chosenDelay, privacy: .public)s")
                 do {
-                    try await sleepForInterval(delay)
+                    try await sleepForInterval(chosenDelay)
                 } catch {
                     // Task was cancelled — stop draining.
+                    uploadSignposter.emitEvent("upload_attempt", id: attemptID, "cancelled=\(true, privacy: .public)")
+                    uploadSignposter.endInterval("upload_attempt", attemptInterval)
                     return
                 }
             }
@@ -92,6 +108,7 @@ final class UploadQueueManager {
             do { try context.save() } catch {
                 logger.error("Save after marking .uploading failed: \(error.localizedDescription, privacy: .private)")
             }
+            uploadSignposter.emitEvent("upload_attempt", id: attemptID, "uploading=\(true, privacy: .public)")
 
             do {
                 _ = try await apiClient.ingest(
@@ -99,12 +116,14 @@ final class UploadQueueManager {
                     binId: upload.binId,
                     deviceMetadata: upload.deviceMetadataJSON
                 )
+                uploadSignposter.emitEvent("upload_attempt", id: attemptID, "result=\("success", privacy: .public)")
                 // Success: remove from queue.
                 context.delete(upload)
                 do { try context.save() } catch {
                     logger.error("Save after delete failed: \(error.localizedDescription, privacy: .private)")
                 }
             } catch {
+                uploadSignposter.emitEvent("upload_attempt", id: attemptID, "result=\("failure", privacy: .public) error=\(error.localizedDescription, privacy: .private)")
                 // Failure: increment retry count and keep pending for next drain cycle.
                 logger.error("Ingest failed for bin '\(upload.binId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 upload.retryCount += 1
@@ -115,7 +134,12 @@ final class UploadQueueManager {
             }
 
             refreshCount(context: context)
+
+            uploadSignposter.endInterval("upload_attempt", attemptInterval)
         }
+
+        uploadSignposter.emitEvent("upload_drain", id: drainID, "done=\(true, privacy: .public)")
+        uploadSignposter.endInterval("upload_drain", drainInterval)
     }
 
     /// Deletes all `PendingUpload` entries from the store regardless of status.
@@ -151,10 +175,17 @@ final class UploadQueueManager {
     /// - Parameter context: The SwiftData `ModelContext` used for reads and writes.
     func pruneExpired(context: ModelContext) {
         let cutoff = now().addingTimeInterval(-Self.maxAge)
+
+        let pruneID = uploadSignposter.makeSignpostID()
+        let pruneInterval = uploadSignposter.beginInterval("upload_prune", id: pruneID)
+        uploadSignposter.emitEvent("upload_prune", id: pruneID, "cutoff=\(cutoff.timeIntervalSince1970, privacy: .public)")
+
         let all: [PendingUpload]
         do {
             all = try context.fetch(FetchDescriptor<PendingUpload>())
         } catch {
+            uploadSignposter.emitEvent("upload_prune", id: pruneID, "error=\("fetch_failed", privacy: .public)")
+            uploadSignposter.endInterval("upload_prune", pruneInterval)
             logger.error("pruneExpired fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
@@ -169,8 +200,10 @@ final class UploadQueueManager {
             } catch {
                 logger.error("pruneExpired save failed: \(error.localizedDescription, privacy: .private)")
             }
+            uploadSignposter.emitEvent("upload_prune", id: pruneID, "pruned=\(all.filter { $0.queuedAt < cutoff }.count, privacy: .public)")
             refreshCount(context: context)
         }
+        uploadSignposter.endInterval("upload_prune", pruneInterval)
     }
 
     /// Updates `pendingCount` by querying the store for `.pending` and `.failed` rows.
@@ -190,3 +223,4 @@ final class UploadQueueManager {
         pendingCount = all.filter { $0.status == .pending || $0.status == .failed }.count
     }
 }
+
