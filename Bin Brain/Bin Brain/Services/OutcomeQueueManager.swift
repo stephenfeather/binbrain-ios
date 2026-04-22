@@ -127,7 +127,7 @@ final class OutcomeQueueManager {
         signposter.emitEvent("persist_details", id: spid, "photoId=\(photoId, privacy: .public)")
         let row = PendingOutcome(photoId: photoId, payload: payload)
         context.insert(row)
-        save(context)
+        save(context, changedCount: 1, reason: "persist")
         refreshCounts(context: context)
         signposter.endInterval("persist", persistInterval)
         return row
@@ -180,7 +180,7 @@ final class OutcomeQueueManager {
         let nowDate = now()
         let ready: [PendingOutcome]
         do {
-            let all = try context.fetch(FetchDescriptor<PendingOutcome>())
+            let all = try fetchAllOutcomes(context: context)
             ready = all
                 .filter { $0.status == .pending && $0.nextRetryAt <= nowDate }
                 .sorted { $0.queuedAt < $1.queuedAt }
@@ -205,7 +205,7 @@ final class OutcomeQueueManager {
         expireAged(context: context)
         let rows: [PendingOutcome]
         do {
-            let all = try context.fetch(FetchDescriptor<PendingOutcome>())
+            let all = try fetchAllOutcomes(context: context)
             rows = all.filter { $0.status == .pending }.sorted { $0.queuedAt < $1.queuedAt }
         } catch {
             logger.error("[OUTCOMES] retryAll fetch failed: \(error.localizedDescription, privacy: .private)")
@@ -221,7 +221,7 @@ final class OutcomeQueueManager {
     /// view's "Dismiss" action.
     func dismiss(_ outcome: PendingOutcome, context: ModelContext) {
         context.delete(outcome)
-        save(context)
+        save(context, changedCount: 1, reason: "dismiss")
         refreshCounts(context: context)
     }
 
@@ -243,7 +243,7 @@ final class OutcomeQueueManager {
         let reclaimInterval = signposter.beginInterval("reclaimOrphanedSendingRows", id: reclaimID)
         let all: [PendingOutcome]
         do {
-            all = try context.fetch(FetchDescriptor<PendingOutcome>())
+            all = try fetchAllOutcomes(context: context)
         } catch {
             logger.error("[OUTCOMES] reclaim fetch failed: \(error.localizedDescription, privacy: .private)")
             return
@@ -264,7 +264,7 @@ final class OutcomeQueueManager {
         }
         lastReclaimCount = reclaimed
         if reclaimed > 0 {
-            save(context)
+            save(context, changedCount: reclaimed, reason: "reclaimOrphanedSendingRows")
             refreshCounts(context: context)
         }
         signposter.endInterval("reclaimOrphanedSendingRows", reclaimInterval)
@@ -275,7 +275,7 @@ final class OutcomeQueueManager {
     func refreshCounts(context: ModelContext) {
         let all: [PendingOutcome]
         do {
-            all = try context.fetch(FetchDescriptor<PendingOutcome>())
+            all = try fetchAllOutcomes(context: context)
         } catch {
             logger.error("[OUTCOMES] refreshCounts fetch failed: \(error.localizedDescription, privacy: .private)")
             return
@@ -394,7 +394,7 @@ final class OutcomeQueueManager {
             return
         }
         row.status = .sending
-        save(context)
+        save(context, changedCount: 1, reason: "attemptDelivery_markSending")
 
         let status: Int?
         var networkFailure = false
@@ -418,7 +418,7 @@ final class OutcomeQueueManager {
         }
 
         classify(row: row, status: status, networkFailure: networkFailure)
-        save(context)
+        save(context, changedCount: 1, reason: "attemptDelivery_classify")
         refreshCounts(context: context)
         signposter.endInterval("attemptDelivery", deliveryInterval)
     }
@@ -462,12 +462,12 @@ final class OutcomeQueueManager {
         let cutoff = now().addingTimeInterval(-Self.maxAge)
         let all: [PendingOutcome]
         do {
-            all = try context.fetch(FetchDescriptor<PendingOutcome>())
+            all = try fetchAllOutcomes(context: context)
         } catch {
             logger.error("[OUTCOMES] expireAged fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
-        var touched = false
+        var touchedCount = 0
         for row in all where row.queuedAt < cutoff {
             switch row.status {
             case .pending, .sending:
@@ -475,32 +475,68 @@ final class OutcomeQueueManager {
                 // can see what failed. Leaves `.expired` rows alone —
                 // dismissal is an explicit user action.
                 row.status = .expired
-                touched = true
+                touchedCount += 1
             case .delivered:
                 // F-4 (QA PR #23): delivered rows were retained forever.
                 // Delete them after the 7-day TTL so the store stays
                 // bounded. The user-visible "Delivered (last 7 days)"
                 // count in Settings is now accurate by construction.
                 context.delete(row)
-                touched = true
+                touchedCount += 1
             case .expired:
                 // Keep — user will dismiss explicitly.
                 break
             }
         }
-        if touched {
-            save(context)
+        if touchedCount > 0 {
+            save(context, changedCount: touchedCount, reason: "expireAged")
             refreshCounts(context: context)
         }
         signposter.endInterval("expireAged", expireInterval)
     }
 
-    private func save(_ context: ModelContext) {
+    private func fetchAllOutcomes(context: ModelContext) throws -> [PendingOutcome] {
+        let fetchID = signposter.makeSignpostID()
+        let fetchInterval = signposter.beginInterval("swiftdata_fetch", id: fetchID)
+        do {
+            let rows = try context.fetch(FetchDescriptor<PendingOutcome>())
+            signposter.emitEvent(
+                "swiftdata_fetch",
+                id: fetchID,
+                "entity=\("PendingOutcome", privacy: .public) count=\(rows.count, privacy: .public)"
+            )
+            signposter.endInterval("swiftdata_fetch", fetchInterval)
+            return rows
+        } catch {
+            signposter.emitEvent(
+                "swiftdata_fetch_failed",
+                id: fetchID,
+                "entity=\("PendingOutcome", privacy: .public)"
+            )
+            signposter.endInterval("swiftdata_fetch", fetchInterval)
+            throw error
+        }
+    }
+
+    private func save(_ context: ModelContext, changedCount: Int, reason: String) {
+        let saveID = signposter.makeSignpostID()
+        let saveInterval = signposter.beginInterval("swiftdata_save", id: saveID)
+        signposter.emitEvent(
+            "swiftdata_save",
+            id: saveID,
+            "entity=\("PendingOutcome", privacy: .public) changed=\(changedCount, privacy: .public) reason=\(reason, privacy: .public)"
+        )
         do {
             try context.save()
+            signposter.endInterval("swiftdata_save", saveInterval)
         } catch {
+            signposter.emitEvent(
+                "swiftdata_save_failed",
+                id: saveID,
+                "entity=\("PendingOutcome", privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            signposter.endInterval("swiftdata_save", saveInterval)
             logger.error("[OUTCOMES] context.save failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 }
-

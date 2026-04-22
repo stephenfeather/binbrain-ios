@@ -70,7 +70,7 @@ final class UploadQueueManager {
         let uploads: [PendingUpload]
         do {
             // Fetch all and filter in memory to avoid SwiftData predicate issues with enums.
-            let all = try context.fetch(FetchDescriptor<PendingUpload>())
+            let all = try fetchAllUploads(context: context)
             uploads = all
                 .filter { $0.status == .pending }
                 .sorted { $0.queuedAt < $1.queuedAt }
@@ -105,9 +105,7 @@ final class UploadQueueManager {
 
             // Mark as in-progress before the network call.
             upload.status = .uploading
-            do { try context.save() } catch {
-                logger.error("Save after marking .uploading failed: \(error.localizedDescription, privacy: .private)")
-            }
+            save(context: context, changedCount: 1, reason: "mark_uploading")
             uploadSignposter.emitEvent("upload_attempt", id: attemptID, "uploading=\(true, privacy: .public)")
 
             do {
@@ -119,18 +117,14 @@ final class UploadQueueManager {
                 uploadSignposter.emitEvent("upload_attempt", id: attemptID, "result=\("success", privacy: .public)")
                 // Success: remove from queue.
                 context.delete(upload)
-                do { try context.save() } catch {
-                    logger.error("Save after delete failed: \(error.localizedDescription, privacy: .private)")
-                }
+                save(context: context, changedCount: 1, reason: "delete_uploaded_row")
             } catch {
                 uploadSignposter.emitEvent("upload_attempt", id: attemptID, "result=\("failure", privacy: .public) error=\(error.localizedDescription, privacy: .private)")
                 // Failure: increment retry count and keep pending for next drain cycle.
                 logger.error("Ingest failed for bin '\(upload.binId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 upload.retryCount += 1
                 upload.status = .pending
-                do { try context.save() } catch {
-                    logger.error("Save after failure handling failed: \(error.localizedDescription, privacy: .private)")
-                }
+                save(context: context, changedCount: 1, reason: "restore_pending_after_failure")
             }
 
             refreshCount(context: context)
@@ -148,7 +142,7 @@ final class UploadQueueManager {
     func clearQueue(context: ModelContext) {
         let all: [PendingUpload]
         do {
-            all = try context.fetch(FetchDescriptor<PendingUpload>())
+            all = try fetchAllUploads(context: context)
         } catch {
             logger.error("clearQueue fetch failed: \(error.localizedDescription, privacy: .private)")
             return
@@ -156,11 +150,7 @@ final class UploadQueueManager {
         for upload in all {
             context.delete(upload)
         }
-        do {
-            try context.save()
-        } catch {
-            logger.error("clearQueue save failed: \(error.localizedDescription, privacy: .private)")
-        }
+        save(context: context, changedCount: all.count, reason: "clear_queue")
         refreshCount(context: context)
     }
 
@@ -182,25 +172,21 @@ final class UploadQueueManager {
 
         let all: [PendingUpload]
         do {
-            all = try context.fetch(FetchDescriptor<PendingUpload>())
+            all = try fetchAllUploads(context: context)
         } catch {
             uploadSignposter.emitEvent("upload_prune", id: pruneID, "error=\("fetch_failed", privacy: .public)")
             uploadSignposter.endInterval("upload_prune", pruneInterval)
             logger.error("pruneExpired fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
-        var pruned = false
+        var prunedCount = 0
         for upload in all where upload.queuedAt < cutoff {
             context.delete(upload)
-            pruned = true
+            prunedCount += 1
         }
-        if pruned {
-            do {
-                try context.save()
-            } catch {
-                logger.error("pruneExpired save failed: \(error.localizedDescription, privacy: .private)")
-            }
-            uploadSignposter.emitEvent("upload_prune", id: pruneID, "pruned=\(all.filter { $0.queuedAt < cutoff }.count, privacy: .public)")
+        if prunedCount > 0 {
+            save(context: context, changedCount: prunedCount, reason: "prune_expired")
+            uploadSignposter.emitEvent("upload_prune", id: pruneID, "pruned=\(prunedCount, privacy: .public)")
             refreshCount(context: context)
         }
         uploadSignposter.endInterval("upload_prune", pruneInterval)
@@ -215,12 +201,56 @@ final class UploadQueueManager {
     func refreshCount(context: ModelContext) {
         let all: [PendingUpload]
         do {
-            all = try context.fetch(FetchDescriptor<PendingUpload>())
+            all = try fetchAllUploads(context: context)
         } catch {
             logger.error("refreshCount fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
         pendingCount = all.filter { $0.status == .pending || $0.status == .failed }.count
     }
-}
 
+    private func fetchAllUploads(context: ModelContext) throws -> [PendingUpload] {
+        let fetchID = uploadSignposter.makeSignpostID()
+        let fetchInterval = uploadSignposter.beginInterval("swiftdata_fetch", id: fetchID)
+        do {
+            let rows = try context.fetch(FetchDescriptor<PendingUpload>())
+            uploadSignposter.emitEvent(
+                "swiftdata_fetch",
+                id: fetchID,
+                "entity=\("PendingUpload", privacy: .public) count=\(rows.count, privacy: .public)"
+            )
+            uploadSignposter.endInterval("swiftdata_fetch", fetchInterval)
+            return rows
+        } catch {
+            uploadSignposter.emitEvent(
+                "swiftdata_fetch_failed",
+                id: fetchID,
+                "entity=\("PendingUpload", privacy: .public)"
+            )
+            uploadSignposter.endInterval("swiftdata_fetch", fetchInterval)
+            throw error
+        }
+    }
+
+    private func save(context: ModelContext, changedCount: Int, reason: String) {
+        let saveID = uploadSignposter.makeSignpostID()
+        let saveInterval = uploadSignposter.beginInterval("swiftdata_save", id: saveID)
+        uploadSignposter.emitEvent(
+            "swiftdata_save",
+            id: saveID,
+            "entity=\("PendingUpload", privacy: .public) changed=\(changedCount, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+        do {
+            try context.save()
+            uploadSignposter.endInterval("swiftdata_save", saveInterval)
+        } catch {
+            uploadSignposter.emitEvent(
+                "swiftdata_save_failed",
+                id: saveID,
+                "entity=\("PendingUpload", privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            uploadSignposter.endInterval("swiftdata_save", saveInterval)
+            logger.error("\(reason, privacy: .public) save failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+}
