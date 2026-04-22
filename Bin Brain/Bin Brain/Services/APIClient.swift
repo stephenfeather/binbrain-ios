@@ -9,6 +9,7 @@ import OSLog
 import Observation
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "APIClient")
+private let apiSignposter = OSSignposter(subsystem: "com.binbrain.app", category: "APIClient")
 
 // MARK: - URL Path Encoding
 
@@ -276,6 +277,13 @@ final class APIClient {
         sessionId: UUID? = nil,
         retryCount: Int = 0
     ) async throws -> IngestResponse {
+        let ingestID = apiSignposter.makeSignpostID()
+        let ingestInterval = apiSignposter.beginInterval("ingest", id: ingestID)
+        apiSignposter.emitEvent(
+            "ingest",
+            id: ingestID,
+            "binId=\(binId, privacy: .public) size=\(jpegData.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
+        )
         var fields = ["bin_id": binId]
         if let deviceMetadata {
             fields["device_metadata"] = deviceMetadata
@@ -293,14 +301,31 @@ final class APIClient {
         if retryCount > 0 {
             extraHeaders["X-Client-Retry-Count"] = "\(retryCount)"
         }
-        return try await request(
-            path: "/ingest",
-            method: "POST",
-            body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 30,
-            extraHeaders: extraHeaders
-        )
+        do {
+            let response: IngestResponse = try await request(
+                path: "/ingest",
+                method: "POST",
+                body: body,
+                contentType: "multipart/form-data; boundary=\(boundary)",
+                timeout: 30,
+                extraHeaders: extraHeaders
+            )
+            apiSignposter.emitEvent(
+                "ingest_result",
+                id: ingestID,
+                "status=\("success", privacy: .public)"
+            )
+            apiSignposter.endInterval("ingest", ingestInterval)
+            return response
+        } catch {
+            apiSignposter.emitEvent(
+                "ingest_result",
+                id: ingestID,
+                "status=\("failure", privacy: .public)"
+            )
+            apiSignposter.endInterval("ingest", ingestInterval)
+            throw error
+        }
     }
 
     // MARK: - Sessions (Swift2_019)
@@ -386,13 +411,37 @@ final class APIClient {
         // Finding #18 — cold qwen3-vl model load has been observed at 149 s on
         // device. 180 s covers the cold path plus warmup jitter without letting
         // a truly hung server hang the UI indefinitely.
-        try await request(
-            path: "/photos/\(String(photoId).urlPathComponentEncoded)/suggest",
-            method: "GET",
-            body: nil,
-            contentType: nil,
-            timeout: 180
+        let suggestID = apiSignposter.makeSignpostID()
+        let suggestInterval = apiSignposter.beginInterval("suggest_request", id: suggestID)
+        apiSignposter.emitEvent(
+            "suggest_request",
+            id: suggestID,
+            "photoId=\(photoId, privacy: .public)"
         )
+        do {
+            let response: PhotoSuggestResponse = try await request(
+                path: "/photos/\(String(photoId).urlPathComponentEncoded)/suggest",
+                method: "GET",
+                body: nil,
+                contentType: nil,
+                timeout: 180
+            )
+            apiSignposter.emitEvent(
+                "suggest_result",
+                id: suggestID,
+                "status=\("success", privacy: .public)"
+            )
+            apiSignposter.endInterval("suggest_request", suggestInterval)
+            return response
+        } catch {
+            apiSignposter.emitEvent(
+                "suggest_result",
+                id: suggestID,
+                "status=\("failure", privacy: .public)"
+            )
+            apiSignposter.endInterval("suggest_request", suggestInterval)
+            throw error
+        }
     }
 
     /// Posts the per-suggestion decision list for a photo as fire-and-forget telemetry.
@@ -412,16 +461,41 @@ final class APIClient {
     @discardableResult
     func postPhotoSuggestionOutcomes(
         photoId: Int,
-        request: PhotoSuggestionOutcomesRequest
+        request: PhotoSuggestionOutcomesRequest,
+        retryCount: Int = 0
     ) async throws -> PhotoSuggestionOutcomesResponse {
         let body = try JSONEncoder.binBrain.encode(request)
-        return try await self.request(
-            path: "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes",
-            method: "POST",
-            body: body,
-            contentType: "application/json",
-            timeout: 10
+        let outcomesID = apiSignposter.makeSignpostID()
+        let outcomesInterval = apiSignposter.beginInterval("outcomes_post", id: outcomesID)
+        apiSignposter.emitEvent(
+            "outcomes_post",
+            id: outcomesID,
+            "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
         )
+        do {
+            let response: PhotoSuggestionOutcomesResponse = try await self.request(
+                path: "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes",
+                method: "POST",
+                body: body,
+                contentType: "application/json",
+                timeout: 10
+            )
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("success", privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
+            return response
+        } catch {
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("failure", privacy: .public) retryCount=\(retryCount, privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
+            throw error
+        }
     }
 
     /// Raw variant of `postPhotoSuggestionOutcomes` used by the
@@ -449,9 +523,30 @@ final class APIClient {
         clientRetryCount: Int,
         idempotencyKey: UUID
     ) async throws -> Int {
-        guard hasAPIKey else { throw APIClientError.missingAPIKey }
+        let outcomesID = apiSignposter.makeSignpostID()
+        let outcomesInterval = apiSignposter.beginInterval("outcomes_post", id: outcomesID)
+        apiSignposter.emitEvent(
+            "outcomes_post",
+            id: outcomesID,
+            "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+        )
+        guard hasAPIKey else {
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("missing_api_key", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
+            throw APIClientError.missingAPIKey
+        }
         let urlString = baseURL + "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes"
         guard let url = URL(string: urlString) else {
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("invalid_url", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
             throw APIClientError.invalidURL(urlString)
         }
         var urlRequest = URLRequest(url: url, timeoutInterval: 10)
@@ -460,14 +555,45 @@ final class APIClient {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("\(max(clientRetryCount, 0))", forHTTPHeaderField: "X-Client-Retry-Count")
         urlRequest.setValue(idempotencyKey.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
-        if let apiKey, shouldAttachKey(requiresAuth: true, probe: false) {
+        let shouldAttach = shouldAttachKey(requiresAuth: true, probe: false)
+        if let apiKey, shouldAttach {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
+        emitAuthAttachDecision(
+            id: outcomesID,
+            requiresAuth: true,
+            attached: shouldAttach && hasAPIKey,
+            probe: false
+        )
 
-        let (_, response) = try await session.data(for: urlRequest)
+        let response: URLResponse
+        do {
+            apiSignposter.emitEvent("request_sent", id: outcomesID)
+            (_, response) = try await session.data(for: urlRequest)
+        } catch {
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("network_failure", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else {
+            apiSignposter.emitEvent(
+                "outcomes_post_result",
+                id: outcomesID,
+                "status=\("non_http_response", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+            )
+            apiSignposter.endInterval("outcomes_post", outcomesInterval)
             throw APIClientError.unexpectedStatusCode(-1)
         }
+        apiSignposter.emitEvent(
+            "outcomes_post_result",
+            id: outcomesID,
+            "status=\(http.statusCode, privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+        )
+        apiSignposter.endInterval("outcomes_post", outcomesInterval)
         return http.statusCode
     }
 
@@ -805,6 +931,24 @@ final class APIClient {
 
     // MARK: - Private Helpers
 
+    /// Emits the authentication attachment decision for a request.
+    ///
+    /// `probe == true` means the caller explicitly allowed probing the current
+    /// key on an unbound host (Settings rebind flow). `attached` reflects the
+    /// final decision after host-binding policy and key presence are applied.
+    private func emitAuthAttachDecision(
+        id: OSSignpostID,
+        requiresAuth: Bool,
+        attached: Bool,
+        probe: Bool
+    ) {
+        apiSignposter.emitEvent(
+            "auth_attach_decision",
+            id: id,
+            "requiresAuth=\(requiresAuth, privacy: .public) attached=\(attached, privacy: .public) probe=\(probe, privacy: .public)"
+        )
+    }
+
     /// Sends an HTTP request and decodes the response into `T`.
     ///
     /// - On HTTP 2xx: decodes response body with `JSONDecoder.binBrain`.
@@ -820,9 +964,29 @@ final class APIClient {
         probeWithCurrentKey: Bool = false,
         extraHeaders: [String: String] = [:]
     ) async throws -> T {
+        let requestID = apiSignposter.makeSignpostID()
+        let bodySize = body?.count ?? 0
+        let requestInterval = apiSignposter.beginInterval("api_request", id: requestID)
+        apiSignposter.emitEvent(
+            "api_request",
+            id: requestID,
+            "method=\(method, privacy: .public) path=\(path, privacy: .public) timeout=\(timeout, privacy: .public) bodySize=\(bodySize, privacy: .public)"
+        )
         if requiresAuth {
             guard hasAPIKey else {
                 logger.warning("\(method, privacy: .public) \(path, privacy: .private) BLOCKED: no API key configured")
+                emitAuthAttachDecision(
+                    id: requestID,
+                    requiresAuth: requiresAuth,
+                    attached: false,
+                    probe: probeWithCurrentKey
+                )
+                apiSignposter.emitEvent(
+                    "api_request_failed",
+                    id: requestID,
+                    "stage=\("missing_api_key", privacy: .public)"
+                )
+                apiSignposter.endInterval("api_request", requestInterval)
                 throw APIClientError.missingAPIKey
             }
         }
@@ -830,6 +994,12 @@ final class APIClient {
         let urlString = baseURL + path
         guard let url = URL(string: urlString) else {
             logger.error("Invalid URL: \(urlString, privacy: .private)")
+            apiSignposter.emitEvent(
+                "api_request_failed",
+                id: requestID,
+                "stage=\("invalid_url", privacy: .public)"
+            )
+            apiSignposter.endInterval("api_request", requestInterval)
             throw APIClientError.invalidURL(urlString)
         }
         var urlRequest = URLRequest(url: url, timeoutInterval: timeout)
@@ -840,29 +1010,60 @@ final class APIClient {
         if let contentType {
             urlRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        if let apiKey, shouldAttachKey(requiresAuth: requiresAuth, probe: probeWithCurrentKey) {
+        let shouldAttach = shouldAttachKey(requiresAuth: requiresAuth, probe: probeWithCurrentKey)
+        if let apiKey, shouldAttach {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
+        emitAuthAttachDecision(
+            id: requestID,
+            requiresAuth: requiresAuth,
+            attached: shouldAttach && apiKey != nil,
+            probe: probeWithCurrentKey
+        )
         for (name, value) in extraHeaders {
             urlRequest.setValue(value, forHTTPHeaderField: name)
         }
+        let headerCount = urlRequest.allHTTPHeaderFields?.count ?? 0
+        apiSignposter.emitEvent(
+            "prepared_headers",
+            id: requestID,
+            "count=\(headerCount, privacy: .public)"
+        )
 
-        let bodySize = body.map { "\($0.count) bytes" } ?? "none"
-        logger.debug("\(method, privacy: .public) \(urlString, privacy: .private) (body: \(bodySize, privacy: .public), timeout: \(timeout, privacy: .public)s)")
+        let bodySizeLog = body.map { "\($0.count) bytes" } ?? "none"
+        logger.debug("\(method, privacy: .public) \(urlString, privacy: .private) (body: \(bodySizeLog, privacy: .public), timeout: \(timeout, privacy: .public)s)")
 
         let data: Data
         let response: URLResponse
         do {
+            apiSignposter.emitEvent("request_sent", id: requestID)
             (data, response) = try await session.data(for: urlRequest)
         } catch {
             logger.error("\(method, privacy: .public) \(path, privacy: .private) NETWORK ERROR: \(error.localizedDescription, privacy: .private)")
+            apiSignposter.emitEvent(
+                "api_request_failed",
+                id: requestID,
+                "stage=\("network", privacy: .public)"
+            )
+            apiSignposter.endInterval("api_request", requestInterval)
             throw error
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             logger.error("\(method, privacy: .public) \(path, privacy: .private) ERROR: non-HTTP response")
+            apiSignposter.emitEvent(
+                "api_request_failed",
+                id: requestID,
+                "stage=\("non_http_response", privacy: .public)"
+            )
+            apiSignposter.endInterval("api_request", requestInterval)
             throw APIClientError.unexpectedStatusCode(-1)
         }
+        apiSignposter.emitEvent(
+            "response_received",
+            id: requestID,
+            "status=\(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)"
+        )
 
         logger.debug("\(method, privacy: .public) \(path, privacy: .private) → \(httpResponse.statusCode, privacy: .public) (\(data.count, privacy: .public) bytes)")
         #if DEBUG
@@ -872,18 +1073,39 @@ final class APIClient {
 
         if (200...299).contains(httpResponse.statusCode) {
             do {
+                apiSignposter.emitEvent("decode_started", id: requestID)
                 let decoded = try JSONDecoder.binBrain.decode(T.self, from: data)
+                apiSignposter.emitEvent("decode_ended", id: requestID)
+                apiSignposter.endInterval("api_request", requestInterval)
                 return decoded
             } catch {
                 logger.error("\(method, privacy: .public) \(path, privacy: .private) DECODE ERROR: \(error.localizedDescription, privacy: .private)")
+                apiSignposter.emitEvent(
+                    "api_request_failed",
+                    id: requestID,
+                    "stage=\("decode", privacy: .public) status=\(httpResponse.statusCode, privacy: .public)"
+                )
+                apiSignposter.endInterval("api_request", requestInterval)
                 throw error
             }
         } else {
             if let apiError = try? JSONDecoder.binBrain.decode(APIError.self, from: data) {
                 logger.error("\(method, privacy: .public) \(path, privacy: .private) API ERROR: \(apiError.localizedDescription, privacy: .private)")
+                apiSignposter.emitEvent(
+                    "api_request_failed",
+                    id: requestID,
+                    "stage=\("api_error", privacy: .public) status=\(httpResponse.statusCode, privacy: .public)"
+                )
+                apiSignposter.endInterval("api_request", requestInterval)
                 throw apiError
             }
             logger.error("\(method, privacy: .public) \(path, privacy: .private) HTTP ERROR: \(httpResponse.statusCode, privacy: .public)")
+            apiSignposter.emitEvent(
+                "api_request_failed",
+                id: requestID,
+                "stage=\("http_error", privacy: .public) status=\(httpResponse.statusCode, privacy: .public)"
+            )
+            apiSignposter.endInterval("api_request", requestInterval)
             throw APIClientError.unexpectedStatusCode(httpResponse.statusCode)
         }
     }
