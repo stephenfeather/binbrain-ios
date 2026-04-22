@@ -81,6 +81,10 @@ struct EditableSuggestion: Identifiable {
 // MARK: - SuggestionReviewViewModel
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "SuggestionReview")
+private let suggestionReviewSignposter = OSSignposter(
+    subsystem: "com.binbrain.app",
+    category: "SuggestionReview"
+)
 #if DEBUG
 /// Debug-only logger for on-device top-K vs. user-confirmed labels (Phase 1.2,
 /// §9 of the design doc). On-device-only by T2; never uploaded.
@@ -425,6 +429,14 @@ final class SuggestionReviewViewModel {
         confirmationErrorMessage = nil
         confirmationInfoMessage = nil
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
+        let taughtIndices = includedIndices.filter { editableSuggestions[$0].teach }
+        let confirmID = suggestionReviewSignposter.makeSignpostID()
+        let confirmInterval = suggestionReviewSignposter.beginInterval("confirm_flow", id: confirmID)
+        suggestionReviewSignposter.emitEvent(
+            "confirm_flow",
+            id: confirmID,
+            "included=\(includedIndices.count, privacy: .public) teach=\(taughtIndices.count, privacy: .public)"
+        )
         logger.debug("confirm: \(self.editableSuggestions.count, privacy: .public) total, \(includedIndices.count, privacy: .public) included")
         for idx in includedIndices {
             let s = editableSuggestions[idx]
@@ -434,6 +446,11 @@ final class SuggestionReviewViewModel {
             do {
                 // Finding #6: /items alone leaves bin_items empty. Follow with
                 // /associate to guarantee the join row is created.
+                suggestionReviewSignposter.emitEvent(
+                    "upsert_start",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public)"
+                )
                 let upsert = try await apiClient.upsertItem(
                     name: s.editedName,
                     category: category,
@@ -441,11 +458,26 @@ final class SuggestionReviewViewModel {
                     confidence: confidence,
                     binId: binId
                 )
+                suggestionReviewSignposter.emitEvent(
+                    "upsert_done",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public) itemId=\(upsert.itemId, privacy: .public)"
+                )
+                suggestionReviewSignposter.emitEvent(
+                    "associate_start",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public) itemId=\(upsert.itemId, privacy: .public)"
+                )
                 let associateResponse = try await apiClient.associateItem(
                     binId: binId,
                     itemId: upsert.itemId,
                     confidence: confidence,
                     quantity: quantity
+                )
+                suggestionReviewSignposter.emitEvent(
+                    "associate_done",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public) itemId=\(upsert.itemId, privacy: .public) inserted=\(associateResponse.inserted, privacy: .public)"
                 )
                 // Swift2_029 — server PR #41 reports inserted:false when
                 // the (bin, item) row pre-existed and quantity/confidence
@@ -466,7 +498,13 @@ final class SuggestionReviewViewModel {
                 } else {
                     confirmationErrorMessage = Self.userFacingMessage(for: error)
                 }
+                suggestionReviewSignposter.emitEvent(
+                    "confirm_aborted",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public) saved=\(savedCount, privacy: .public) failed=\(failedCount, privacy: .public)"
+                )
                 logger.error("confirm aborted at idx \(idx, privacy: .public): \(error.localizedDescription, privacy: .private)")
+                suggestionReviewSignposter.endInterval("confirm_flow", confirmInterval)
                 isConfirming = false
                 return
             }
@@ -493,10 +531,25 @@ final class SuggestionReviewViewModel {
             let s = editableSuggestions[idx]
             let category = s.editedCategory.isEmpty ? nil : s.editedCategory
             do {
+                suggestionReviewSignposter.emitEvent(
+                    "confirm_class_start",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public)"
+                )
                 _ = try await apiClient.confirmClass(className: s.editedName, category: category)
+                suggestionReviewSignposter.emitEvent(
+                    "confirm_class_done",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public)"
+                )
             } catch {
                 logger.error("confirmClass failed for '\(s.editedName, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 teachFailureCount += 1
+                suggestionReviewSignposter.emitEvent(
+                    "confirm_class_error",
+                    id: confirmID,
+                    "idx=\(idx, privacy: .public)"
+                )
             }
         }
 
@@ -513,6 +566,15 @@ final class SuggestionReviewViewModel {
         // MUST NOT surface (fire-and-forget detached Task swallows errors).
         fireOutcomesIfReady(apiClient: apiClient)
 
+        let finalFailureCount = failedIndices.count
+        let finalDuplicateCount = duplicateAssociationCount
+        let finalTeachFailureCount = teachFailureCount
+        suggestionReviewSignposter.emitEvent(
+            "confirm_done",
+            id: confirmID,
+            "failures=\(finalFailureCount, privacy: .public) duplicates=\(finalDuplicateCount, privacy: .public) teachFailures=\(finalTeachFailureCount, privacy: .public)"
+        )
+        suggestionReviewSignposter.endInterval("confirm_flow", confirmInterval)
         isConfirming = false
     }
 
@@ -950,6 +1012,14 @@ final class SuggestionReviewViewModel {
     /// Must be called ONLY from a confirm-success path (no failedIndices,
     /// upsert+associate loop completed). Errors are logged, never surfaced.
     private func fireOutcomesIfReady(apiClient: APIClient) {
+        let guardPhotoId = photoId
+        let hasVisionModel = (visionModel != nil)
+        let hasShownAt = (shownAt != nil)
+        let guardCount = editableSuggestions.count
+        suggestionReviewSignposter.emitEvent(
+            "outcomes_fire_guard",
+            "photoId=\(guardPhotoId, privacy: .public) visionModelPresent=\(hasVisionModel, privacy: .public) shownAtPresent=\(hasShownAt, privacy: .public) count=\(guardCount, privacy: .public)"
+        )
         guard photoId > 0,
               let visionModel,
               let shownAt,
@@ -1016,6 +1086,13 @@ final class SuggestionReviewViewModel {
     func retryRemaining(binId: String, apiClient: APIClient) async {
         isConfirming = true
         let toRetry = failedIndices
+        let retryID = suggestionReviewSignposter.makeSignpostID()
+        let retryInterval = suggestionReviewSignposter.beginInterval("confirm_retry", id: retryID)
+        suggestionReviewSignposter.emitEvent(
+            "confirm_retry",
+            id: retryID,
+            "queued=\(toRetry.count, privacy: .public)"
+        )
         failedIndices = []
         for idx in toRetry {
             let s = editableSuggestions[idx]
@@ -1038,6 +1115,13 @@ final class SuggestionReviewViewModel {
                 )
             } catch {
                 failedIndices = toRetry.filter { $0 >= idx }
+                let remainingCount = failedIndices.count
+                suggestionReviewSignposter.emitEvent(
+                    "confirm_retry_aborted",
+                    id: retryID,
+                    "idx=\(idx, privacy: .public) remaining=\(remainingCount, privacy: .public)"
+                )
+                suggestionReviewSignposter.endInterval("confirm_retry", retryInterval)
                 isConfirming = false
                 return
             }
@@ -1045,6 +1129,13 @@ final class SuggestionReviewViewModel {
         // Swift2_014 — retry success path also fires outcomes (server is
         // idempotent per (photoId, visionModel), so re-firing is safe).
         fireOutcomesIfReady(apiClient: apiClient)
+        let retryRemainingCount = failedIndices.count
+        suggestionReviewSignposter.emitEvent(
+            "confirm_retry_done",
+            id: retryID,
+            "remaining=\(retryRemainingCount, privacy: .public)"
+        )
+        suggestionReviewSignposter.endInterval("confirm_retry", retryInterval)
         isConfirming = false
     }
 
@@ -1069,11 +1160,35 @@ final class SuggestionReviewViewModel {
         }
 
         let decoder = self.decoder
+        let decodeID = suggestionReviewSignposter.makeSignpostID()
+        let decodeInterval = suggestionReviewSignposter.beginInterval("image_decode", id: decodeID)
+        suggestionReviewSignposter.emitEvent(
+            "image_decode",
+            id: decodeID,
+            "bytes=\(data.count, privacy: .public)"
+        )
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                suggestionReviewSignposter.emitEvent(
+                    "image_decode_cancelled",
+                    id: decodeID,
+                    "stage=\("before_decode", privacy: .public)"
+                )
+                suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
+                return
+            }
             let image = decoder(data)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                suggestionReviewSignposter.emitEvent(
+                    "image_decode_cancelled",
+                    id: decodeID,
+                    "stage=\("after_decode", privacy: .public)"
+                )
+                suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
+                return
+            }
             await self?.publish(image: image, generation: generation)
+            suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
         }
     }
 
