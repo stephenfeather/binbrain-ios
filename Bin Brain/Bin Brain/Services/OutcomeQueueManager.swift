@@ -22,6 +22,7 @@ import UIKit
 #endif
 
 private let logger = Logger(subsystem: "com.binbrain.app", category: "OutcomeQueueManager")
+private let signposter = OSSignposter(subsystem: "com.binbrain.app", category: "OutcomeQueue")
 
 // MARK: - OutcomeQueueManager
 
@@ -121,10 +122,14 @@ final class OutcomeQueueManager {
         payload: Data,
         context: ModelContext
     ) -> PendingOutcome {
+        let spid = signposter.makeSignpostID()
+        let persistInterval = signposter.beginInterval("persist", id: spid)
+        signposter.emitEvent("persist_details", id: spid, "photoId=\(photoId, privacy: .public)")
         let row = PendingOutcome(photoId: photoId, payload: payload)
         context.insert(row)
         save(context)
         refreshCounts(context: context)
+        signposter.endInterval("persist", persistInterval)
         return row
     }
 
@@ -169,6 +174,8 @@ final class OutcomeQueueManager {
         context: ModelContext,
         apiClient: APIClient
     ) async {
+        let drainID = signposter.makeSignpostID()
+        let drainInterval = signposter.beginInterval("drain", id: drainID)
         expireAged(context: context)
         let nowDate = now()
         let ready: [PendingOutcome]
@@ -184,6 +191,7 @@ final class OutcomeQueueManager {
         for row in ready {
             await deliver(row, context: context, apiClient: apiClient)
         }
+        signposter.endInterval("drain", drainInterval)
     }
 
     /// Forces every `.pending` row to attempt delivery NOW, ignoring
@@ -192,6 +200,8 @@ final class OutcomeQueueManager {
         context: ModelContext,
         apiClient: APIClient
     ) async {
+        let retryAllID = signposter.makeSignpostID()
+        let retryAllInterval = signposter.beginInterval("retryAll", id: retryAllID)
         expireAged(context: context)
         let rows: [PendingOutcome]
         do {
@@ -204,6 +214,7 @@ final class OutcomeQueueManager {
         for row in rows {
             await deliver(row, context: context, apiClient: apiClient)
         }
+        signposter.endInterval("retryAll", retryAllInterval)
     }
 
     /// Removes a single `.expired` row. Called from the Settings detail
@@ -228,6 +239,8 @@ final class OutcomeQueueManager {
     func reclaimOrphanedSendingRows(context: ModelContext) {
         lastReclaimCapHit = false
         lastReclaimCount = 0
+        let reclaimID = signposter.makeSignpostID()
+        let reclaimInterval = signposter.beginInterval("reclaimOrphanedSendingRows", id: reclaimID)
         let all: [PendingOutcome]
         do {
             all = try context.fetch(FetchDescriptor<PendingOutcome>())
@@ -254,6 +267,7 @@ final class OutcomeQueueManager {
             save(context)
             refreshCounts(context: context)
         }
+        signposter.endInterval("reclaimOrphanedSendingRows", reclaimInterval)
     }
 
     /// Recomputes `pendingCount`, `deliveredCount`, and `expiredCount`
@@ -350,6 +364,9 @@ final class OutcomeQueueManager {
         context: ModelContext,
         apiClient: APIClient
     ) async {
+        let deliveryID = signposter.makeSignpostID()
+        let deliveryInterval = signposter.beginInterval("attemptDelivery", id: deliveryID)
+        signposter.emitEvent("attemptDelivery_details", id: deliveryID, "photoId=\(row.photoId, privacy: .public) retryCount=\(row.retryCount, privacy: .public) status=\(row.status.rawValue, privacy: .public)")
         // Swift2_018b F-3 / Swift2_018c G-1 + SEC-26-1 — CAS guard.
         //
         // Concurrent drain triggers (NWPathMonitor `.satisfied` +
@@ -372,7 +389,10 @@ final class OutcomeQueueManager {
         // it MUST add explicit serialization (actor, lock, or
         // MainActor.run wrapper) before the call, OR this guard must
         // be hardened with a real CAS primitive.
-        guard row.status == .pending else { return }
+        guard row.status == .pending else {
+            signposter.endInterval("attemptDelivery", deliveryInterval)
+            return
+        }
         row.status = .sending
         save(context)
 
@@ -400,9 +420,16 @@ final class OutcomeQueueManager {
         classify(row: row, status: status, networkFailure: networkFailure)
         save(context)
         refreshCounts(context: context)
+        signposter.endInterval("attemptDelivery", deliveryInterval)
     }
 
     private func classify(row: PendingOutcome, status: Int?, networkFailure: Bool) {
+        let classifyID = signposter.makeSignpostID()
+        if let status {
+            signposter.emitEvent("classify", id: classifyID, "status=\(status, privacy: .public) networkFailure=\(networkFailure, privacy: .public)")
+        } else {
+            signposter.emitEvent("classify", id: classifyID, "status=nil networkFailure=\(networkFailure, privacy: .public)")
+        }
         if let status {
             row.lastErrorCode = status
             if (200...299).contains(status) {
@@ -430,6 +457,8 @@ final class OutcomeQueueManager {
     // MARK: - Sweeps
 
     private func expireAged(context: ModelContext) {
+        let expireID = signposter.makeSignpostID()
+        let expireInterval = signposter.beginInterval("expireAged", id: expireID)
         let cutoff = now().addingTimeInterval(-Self.maxAge)
         let all: [PendingOutcome]
         do {
@@ -463,6 +492,7 @@ final class OutcomeQueueManager {
             save(context)
             refreshCounts(context: context)
         }
+        signposter.endInterval("expireAged", expireInterval)
     }
 
     private func save(_ context: ModelContext) {
@@ -473,3 +503,4 @@ final class OutcomeQueueManager {
         }
     }
 }
+
