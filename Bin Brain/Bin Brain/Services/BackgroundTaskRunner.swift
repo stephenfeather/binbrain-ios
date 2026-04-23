@@ -10,7 +10,7 @@ import Foundation
 import UIKit
 
 /// Minimal lifecycle contract for a background task.
-protocol BackgroundTaskRunning: AnyObject {
+protocol BackgroundTaskRunning: AnyObject, Sendable {
     /// Begins a background task. Returns an opaque identifier usable with `end(_:)`.
     /// `expirationHandler` is invoked by the OS if the grant runs out.
     func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> Int
@@ -21,7 +21,7 @@ protocol BackgroundTaskRunning: AnyObject {
 }
 
 /// Production impl — routes directly to `UIApplication.shared`.
-final class UIApplicationBackgroundTaskRunner: BackgroundTaskRunning {
+final class UIApplicationBackgroundTaskRunner: BackgroundTaskRunning, @unchecked Sendable {
     func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> Int {
         let raw = UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expirationHandler)
         return raw.rawValue
