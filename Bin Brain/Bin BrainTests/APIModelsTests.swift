@@ -685,8 +685,30 @@ final class APIModelsTests: XCTestCase {
                         "original_bytes": 2481144,
                         "input_format": "jpeg"
                     },
-                    "ocr": [],
-                    "barcodes": [],
+                    "ocr": [
+                        {
+                            "text": "M3x8 DIN 912",
+                            "confidence": 0.94,
+                            "bounding_box": {
+                                "x": 0.12,
+                                "y": 0.44,
+                                "width": 0.41,
+                                "height": 0.09
+                            }
+                        }
+                    ],
+                    "barcodes": [
+                        {
+                            "payload": "4005176834561",
+                            "symbology": "EAN-13",
+                            "bounding_box": {
+                                "x": 0.58,
+                                "y": 0.14,
+                                "width": 0.27,
+                                "height": 0.18
+                            }
+                        }
+                    ],
                     "classifications": [],
                     "crop_applied": null,
                     "quality_override_context": {
@@ -729,6 +751,10 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalHeight, 3024)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalBytes, 2_481_144)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.inputFormat, "jpeg")
+        XCTAssertEqual(metadata.deviceProcessing.ocr.count, 1)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.ocr.first?.boundingBox?.width), 0.41, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.barcodes.count, 1)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.barcodes.first?.boundingBox?.height), 0.18, accuracy: 1e-10)
         XCTAssertEqual(metadata.deviceProcessing.qualityOverrideContext?.failedGate, .blur)
         XCTAssertEqual(metadata.deviceProcessing.cannyMetrics?.analysisLongestSide, 512)
     }

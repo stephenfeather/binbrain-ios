@@ -38,11 +38,23 @@ final class PipelineModelsTests: XCTestCase {
                     shortestSide: 3024
                 ),
                 ocr: [
-                    OCRResult(text: "M3x8 DIN 912", confidence: 0.94),
-                    OCRResult(text: "Würth", confidence: 0.87)
+                    OCRResult(
+                        text: "M3x8 DIN 912",
+                        confidence: 0.94,
+                        boundingBox: NormalizedBoundingBox(x: 0.12, y: 0.44, width: 0.41, height: 0.09)
+                    ),
+                    OCRResult(
+                        text: "Würth",
+                        confidence: 0.87,
+                        boundingBox: NormalizedBoundingBox(x: 0.18, y: 0.31, width: 0.22, height: 0.07)
+                    )
                 ],
                 barcodes: [
-                    BarcodeResult(payload: "4005176834561", symbology: "EAN-13")
+                    BarcodeResult(
+                        payload: "4005176834561",
+                        symbology: "EAN-13",
+                        boundingBox: NormalizedBoundingBox(x: 0.58, y: 0.14, width: 0.27, height: 0.18)
+                    )
                 ],
                 classifications: [
                     ClassificationResult(label: "screw", confidence: 0.82),
@@ -251,11 +263,13 @@ final class PipelineModelsTests: XCTestCase {
         let ocr = try XCTUnwrap(processing["ocr"] as? [[String: Any]])
         XCTAssertEqual(ocr.count, 2)
         XCTAssertEqual(ocr[0]["text"] as? String, "M3x8 DIN 912")
+        XCTAssertNotNil(ocr[0]["bounding_box"])
 
         // Barcodes have payload + symbology
         let barcodes = try XCTUnwrap(processing["barcodes"] as? [[String: Any]])
         XCTAssertEqual(barcodes[0]["payload"] as? String, "4005176834561")
         XCTAssertEqual(barcodes[0]["symbology"] as? String, "EAN-13")
+        XCTAssertNotNil(barcodes[0]["bounding_box"])
 
         // Classifications have label + confidence
         let classifications = try XCTUnwrap(processing["classifications"] as? [[String: Any]])

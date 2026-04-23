@@ -111,17 +111,62 @@ final class MetadataExtractorsTests: XCTestCase {
         XCTAssertTrue(deduplicated.isEmpty)
     }
 
-    func testDeduplicateOCRKeepsHighestConfidenceForDuplicates() {
+    func testDeduplicateOCRKeepsHighestConfidenceForDuplicates() throws {
         let input = [
-            OCRResult(text: "SKU-1234", confidence: 0.6),
-            OCRResult(text: "sku-1234", confidence: 0.95),
-            OCRResult(text: " SKU-1234 ", confidence: 0.7)
+            OCRResult(
+                text: "SKU-1234",
+                confidence: 0.6,
+                boundingBox: NormalizedBoundingBox(x: 0.10, y: 0.20, width: 0.30, height: 0.08)
+            ),
+            OCRResult(
+                text: "sku-1234",
+                confidence: 0.95,
+                boundingBox: NormalizedBoundingBox(x: 0.14, y: 0.26, width: 0.34, height: 0.09)
+            ),
+            OCRResult(
+                text: " SKU-1234 ",
+                confidence: 0.7,
+                boundingBox: NormalizedBoundingBox(x: 0.18, y: 0.29, width: 0.28, height: 0.07)
+            )
         ]
 
         let deduplicated = MetadataExtractors.deduplicateOCR(input)
 
         XCTAssertEqual(deduplicated.count, 1)
         XCTAssertEqual(deduplicated[0].confidence, 0.95)
+        let bbox = try XCTUnwrap(deduplicated[0].boundingBox)
+        XCTAssertEqual(bbox.x, 0.14, accuracy: 1e-10)
+        XCTAssertEqual(bbox.height, 0.09, accuracy: 1e-10)
+    }
+
+    @MainActor
+    func testOCRResultRoundTripsBoundingBox() throws {
+        let result = OCRResult(
+            text: "M3x8 DIN 912",
+            confidence: 0.94,
+            boundingBox: NormalizedBoundingBox(x: 0.12, y: 0.44, width: 0.41, height: 0.09)
+        )
+
+        let data = try JSONEncoder().encode(result)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let bbox = try XCTUnwrap(json["bounding_box"] as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(bbox["x"] as? Double), 0.12, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(bbox["width"] as? Double), 0.41, accuracy: 1e-10)
+    }
+
+    @MainActor
+    func testBarcodeResultRoundTripsBoundingBox() throws {
+        let result = BarcodeResult(
+            payload: "4005176834561",
+            symbology: "EAN-13",
+            boundingBox: NormalizedBoundingBox(x: 0.58, y: 0.14, width: 0.27, height: 0.18)
+        )
+
+        let data = try JSONEncoder().encode(result)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let bbox = try XCTUnwrap(json["bounding_box"] as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(bbox["y"] as? Double), 0.14, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(bbox["height"] as? Double), 0.18, accuracy: 1e-10)
     }
 
     // MARK: - Barcode Mapping

@@ -116,10 +116,14 @@ nonisolated struct MetadataExtractors: Sendable {
     /// - Parameter observations: Raw observations from `VNRecognizeTextRequest`.
     /// - Returns: Filtered and deduplicated OCR results.
     static func mapOCRResults(_ observations: [VNRecognizedTextObservation]) -> [OCRResult] {
-        let candidates: [OCRResult] = observations.compactMap { observation in
+        let candidates: [OCRResult] = observations.compactMap { observation -> OCRResult? in
             guard let candidate = observation.topCandidates(1).first else { return nil }
             guard candidate.confidence >= ocrConfidenceThreshold else { return nil }
-            return OCRResult(text: candidate.string, confidence: candidate.confidence)
+            return OCRResult(
+                text: candidate.string,
+                confidence: candidate.confidence,
+                boundingBox: normalizedBoundingBox(from: observation.boundingBox)
+            )
         }
         return deduplicateOCR(candidates)
     }
@@ -155,13 +159,26 @@ nonisolated struct MetadataExtractors: Sendable {
     /// - Parameter observations: Raw observations from `VNDetectBarcodesRequest`.
     /// - Returns: Barcode results with non-nil payloads.
     static func mapBarcodeResults(_ observations: [VNBarcodeObservation]) -> [BarcodeResult] {
-        observations.compactMap { observation in
+        observations.compactMap { observation -> BarcodeResult? in
             guard let payload = observation.payloadStringValue else { return nil }
             return BarcodeResult(
                 payload: payload,
-                symbology: observation.symbology.rawValue
+                symbology: observation.symbology.rawValue,
+                boundingBox: normalizedBoundingBox(from: observation.boundingBox)
             )
         }
+    }
+
+    /// Converts a Vision normalized rectangle into the JSON sidecar bounding-box shape.
+    static func normalizedBoundingBox(from rect: CGRect) -> NormalizedBoundingBox? {
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        guard rect.minX.isFinite, rect.minY.isFinite, rect.width.isFinite, rect.height.isFinite else { return nil }
+        return NormalizedBoundingBox(
+            x: rect.minX,
+            y: rect.minY,
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     /// Maps Vision classification observations to `ClassificationResult` values,

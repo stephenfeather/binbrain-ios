@@ -273,6 +273,20 @@ struct OCRResult: Codable, Equatable {
     let text: String
     /// Recognition confidence (0.0–1.0).
     let confidence: Float
+    /// Normalized bounding box for the recognized text when Vision provides one.
+    let boundingBox: NormalizedBoundingBox?
+
+    nonisolated init(text: String, confidence: Float, boundingBox: NormalizedBoundingBox? = nil) {
+        self.text = text
+        self.confidence = confidence
+        self.boundingBox = boundingBox
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case confidence
+        case boundingBox = "bounding_box"
+    }
 }
 
 /// A detected barcode payload.
@@ -281,6 +295,20 @@ struct BarcodeResult: Codable, Equatable {
     let payload: String
     /// The barcode symbology (e.g., "EAN-13", "QR").
     let symbology: String
+    /// Normalized bounding box for the detected barcode when Vision provides one.
+    let boundingBox: NormalizedBoundingBox?
+
+    nonisolated init(payload: String, symbology: String, boundingBox: NormalizedBoundingBox? = nil) {
+        self.payload = payload
+        self.symbology = symbology
+        self.boundingBox = boundingBox
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case payload
+        case symbology
+        case boundingBox = "bounding_box"
+    }
 }
 
 /// An image classification label.

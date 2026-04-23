@@ -244,6 +244,8 @@ final class ImagePipelineTests: XCTestCase {
             let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
             let saliency = try XCTUnwrap(processing["saliency_context"] as? [String: Any])
             let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+            let ocr = try XCTUnwrap(processing["ocr"] as? [[String: Any]])
+            let barcodes = try XCTUnwrap(processing["barcodes"] as? [[String: Any]])
             XCTAssertNotNil(saliency["status"])
             XCTAssertNotNil(saliency["object_count"])
             XCTAssertNotNil(saliency["crop_threshold"])
@@ -252,6 +254,12 @@ final class ImagePipelineTests: XCTestCase {
             XCTAssertEqual(capture["original_height"] as? Int, 100)
             XCTAssertEqual(capture["original_bytes"] as? Int, jpegData.count)
             XCTAssertEqual(capture["input_format"] as? String, "jpeg")
+            if let firstOCR = ocr.first {
+                XCTAssertNotNil(firstOCR["bounding_box"])
+            }
+            if let firstBarcode = barcodes.first {
+                XCTAssertNotNil(firstBarcode["bounding_box"])
+            }
             XCTAssertNil(processing["quality_override_context"])
             XCTAssertNotNil(processing["canny_metrics"])
         } catch {
