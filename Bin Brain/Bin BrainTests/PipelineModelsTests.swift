@@ -77,7 +77,18 @@ final class PipelineModelsTests: XCTestCase {
                     originalWidth: 4032,
                     originalHeight: 3024,
                     originalBytes: 2_481_144,
-                    inputFormat: "jpeg"
+                    inputFormat: "jpeg",
+                    cameraDeviceType: "tripleCamera",
+                    cameraPosition: "back",
+                    zoomFactor: 1.0,
+                    flashUsed: false,
+                    torchUsed: false,
+                    hdrEnabled: true,
+                    iso: 320,
+                    exposureDurationMs: 16.6,
+                    focusMode: "continuousAutoFocus",
+                    lensPosition: 0.42,
+                    focalLengthMm: 6.86
                 ),
                 optimizedUpload: OptimizedUploadStats(
                     optimizedWidth: 2048,
@@ -188,6 +199,19 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(capture["original_height"])
         XCTAssertNotNil(capture["original_bytes"])
         XCTAssertNotNil(capture["input_format"])
+        XCTAssertNotNil(capture["camera_device_type"])
+        XCTAssertNotNil(capture["camera_position"])
+        XCTAssertNotNil(capture["zoom_factor"])
+        XCTAssertNotNil(capture["flash_used"])
+        XCTAssertNotNil(capture["torch_used"])
+        XCTAssertNotNil(capture["hdr_enabled"])
+        XCTAssertNotNil(capture["iso"])
+        XCTAssertNotNil(capture["exposure_duration_ms"])
+        XCTAssertNotNil(capture["focus_mode"])
+        XCTAssertNotNil(capture["lens_position"])
+        XCTAssertNotNil(capture["focal_length_mm"])
+        XCTAssertNil(capture["cameraDeviceType"], "Should not have camelCase key")
+        XCTAssertNil(capture["zoomFactor"], "Should not have camelCase key")
 
         let optimized = try XCTUnwrap(processing["optimized_upload"] as? [String: Any])
         XCTAssertNotNil(optimized["optimized_width"])
@@ -314,5 +338,51 @@ final class PipelineModelsTests: XCTestCase {
 
         let canny = try XCTUnwrap(processing["canny_metrics"] as? [String: Any])
         XCTAssertEqual(canny["analysis_longest_side"] as? Int, 512)
+    }
+
+    // MARK: - Capture Metadata Camera Fields
+
+    func testCaptureMetadataEncodesCameraFields() throws {
+        let metadata = makeSampleMetadata()
+        let data = try encoder.encode(metadata)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
+        let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+
+        XCTAssertEqual(capture["camera_device_type"] as? String, "tripleCamera")
+        XCTAssertEqual(capture["camera_position"] as? String, "back")
+        XCTAssertEqual(try XCTUnwrap(capture["zoom_factor"] as? Double), 1.0, accuracy: 1e-10)
+        XCTAssertEqual(capture["flash_used"] as? Bool, false)
+        XCTAssertEqual(capture["torch_used"] as? Bool, false)
+        XCTAssertEqual(capture["hdr_enabled"] as? Bool, true)
+        XCTAssertEqual(try XCTUnwrap(capture["iso"] as? Double), 320, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(capture["exposure_duration_ms"] as? Double), 16.6, accuracy: 1e-10)
+        XCTAssertEqual(capture["focus_mode"] as? String, "continuousAutoFocus")
+        XCTAssertEqual(try XCTUnwrap(capture["lens_position"] as? Double), 0.42, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(capture["focal_length_mm"] as? Double), 6.86, accuracy: 1e-10)
+    }
+
+    /// Backward compatibility: a CaptureMetadata built without any camera
+    /// fields must round-trip with all camera fields nil and omit them from
+    /// the encoded JSON entirely (since `JSONEncoder` defaults to skipping
+    /// nil optional values).
+    func testCaptureMetadataWithoutCameraFieldsRoundTrips() throws {
+        let original = CaptureMetadata(
+            originalWidth: 1024,
+            originalHeight: 768,
+            originalBytes: 100_000,
+            inputFormat: "jpeg"
+        )
+        let data = try encoder.encode(original)
+        let decoded = try decoder.decode(CaptureMetadata.self, from: data)
+        XCTAssertEqual(original, decoded)
+        XCTAssertNil(decoded.cameraDeviceType)
+        XCTAssertNil(decoded.iso)
+        XCTAssertNil(decoded.focalLengthMm)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["camera_device_type"])
+        XCTAssertNil(json["iso"])
+        XCTAssertNil(json["focal_length_mm"])
     }
 }

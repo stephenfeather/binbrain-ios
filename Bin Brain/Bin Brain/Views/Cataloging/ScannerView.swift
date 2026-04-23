@@ -43,7 +43,13 @@ struct ScannerView: UIViewControllerRepresentable {
     let onQRCode: (String) -> Void
 
     /// Called when the scanner delivers a captured still image.
-    let onPhotoCapture: (UIImage) -> Void
+    ///
+    /// The optional `CameraCaptureContext` carries EXIF/lens telemetry from
+    /// the most recent `AVCapturePhoto` delegate callback, when available.
+    /// The async `DataScannerViewController.capturePhoto()` returns only a
+    /// `UIImage` (no metadata), so the coordinator stashes the most recent
+    /// `AVCapturePhoto` from `didCapturePhoto` and pairs the two here.
+    let onPhotoCapture: (UIImage, CameraCaptureContext?) -> Void
 
     /// Called once the scanner is ready, delivering a closure the parent can invoke
     /// to trigger `capturePhoto()` when the shutter button is tapped.
@@ -85,16 +91,19 @@ struct ScannerView: UIViewControllerRepresentable {
         scanner.didMove(toParent: container)
 
         let photoCallback = onPhotoCapture
-        let captureFunc: @MainActor () -> Void = { [weak scanner] in
+        let coordinator = context.coordinator
+        let captureFunc: @MainActor () -> Void = { [weak scanner, weak coordinator] in
             guard let scanner else {
                 logger.warning("capturePhoto: scanner is nil")
                 return
             }
+            coordinator?.consumeCapturedPhoto()
             Task {
                 do {
                     let photo = try await scanner.capturePhoto()
                     logger.debug("capturePhoto returned: \(photo.size.width, privacy: .public)x\(photo.size.height, privacy: .public)")
-                    photoCallback(photo)
+                    let cameraContext = await coordinator?.consumeCapturedPhotoContext()
+                    photoCallback(photo, cameraContext)
                 } catch {
                     logger.error("capturePhoto error: \(error.localizedDescription, privacy: .private)")
                 }
@@ -144,10 +153,33 @@ struct ScannerView: UIViewControllerRepresentable {
         private var hasDeliveredQR = false
         weak var scanner: DataScannerViewController?
 
+        /// AVCapturePhoto stashed from the most recent `didCapturePhoto`
+        /// delegate fire. Read once by the async `capturePhoto()` flow and
+        /// then cleared so subsequent captures don't see stale data.
+        private var lastCapturedPhoto: AVCapturePhoto?
+
         // MARK: - Init
 
         init(parent: ScannerView) {
             self.parent = parent
+        }
+
+        // MARK: - Capture Coordination
+
+        /// Clears any previously-stashed AVCapturePhoto so the next
+        /// `didCapturePhoto` delegate fire is uniquely tied to the upcoming
+        /// shutter event.
+        func consumeCapturedPhoto() {
+            lastCapturedPhoto = nil
+        }
+
+        /// Drains the stashed AVCapturePhoto into a `CameraCaptureContext`,
+        /// returning `nil` when the delegate did not fire (or carried no
+        /// metadata). The slot is cleared either way.
+        func consumeCapturedPhotoContext() -> CameraCaptureContext? {
+            defer { lastCapturedPhoto = nil }
+            guard let photo = lastCapturedPhoto else { return nil }
+            return CameraMetadataExtractor.context(from: photo)
         }
 
         // MARK: - DataScannerViewControllerDelegate
@@ -173,12 +205,12 @@ struct ScannerView: UIViewControllerRepresentable {
             _ dataScanner: DataScannerViewController,
             didCapturePhoto photo: AVCapturePhoto
         ) {
-            // On modern iOS, capturePhoto() returns UIImage directly via the async call.
-            // This delegate path is a fallback; convert via fileDataRepresentation.
-            if let data = photo.fileDataRepresentation(),
-               let image = UIImage(data: data) {
-                parent.onPhotoCapture(image)
-            }
+            // The async `capturePhoto()` flow above is the canonical photo
+            // delivery path; the delegate fires alongside it, and we use it
+            // only to stash the AVCapturePhoto so the async path can extract
+            // EXIF/lens metadata. We do NOT fire `onPhotoCapture` from here
+            // to avoid double-processing the same capture.
+            lastCapturedPhoto = photo
         }
     }
 }

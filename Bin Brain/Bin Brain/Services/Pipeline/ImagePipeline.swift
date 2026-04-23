@@ -64,11 +64,14 @@ actor ImagePipeline {
 
     /// Runs the full pipeline: quality gates → optimize → extract → package metadata.
     ///
-    /// - Parameter imageData: Raw JPEG bytes from the camera capture.
+    /// - Parameters:
+    ///   - imageData: Raw JPEG bytes from the camera capture.
+    ///   - cameraContext: Optional capture-time camera state (ISO, exposure,
+    ///     focal length, lens model, etc.). Merged into `captureMetadata`.
     /// - Returns: A `PipelineResult` with optimized image data, metadata sidecar, and quality scores.
     /// - Throws: `PipelineError.qualityGateFailed` if a quality check fails,
     ///   or `PipelineError.invalidImageData` if the input cannot be decoded.
-    func process(_ imageData: Data) async throws -> PipelineResult {
+    func process(_ imageData: Data, cameraContext: CameraCaptureContext? = nil) async throws -> PipelineResult {
         let processID = pipelineSignposter.makeSignpostID()
         let processInterval = pipelineSignposter.beginInterval("image_pipeline_process", id: processID)
         defer { pipelineSignposter.endInterval("image_pipeline_process", processInterval) }
@@ -82,7 +85,11 @@ actor ImagePipeline {
         do {
             // Decode and cap input resolution
             let decodedImage = try decodeCGImage(from: imageData)
-            let captureMetadata = buildCaptureMetadata(from: decodedImage, imageData: imageData)
+            let captureMetadata = buildCaptureMetadata(
+                from: decodedImage,
+                imageData: imageData,
+                cameraContext: cameraContext
+            )
             let cgImage = capResolution(decodedImage)
 
             // Stage 1: Quality gates
@@ -155,10 +162,17 @@ actor ImagePipeline {
 
     /// Runs the pipeline without quality gates. Used when the user taps "Upload Anyway."
     ///
-    /// - Parameter imageData: Raw JPEG bytes from the camera capture.
+    /// - Parameters:
+    ///   - imageData: Raw JPEG bytes from the camera capture.
+    ///   - originalFailure: The quality-gate failure being overridden, when known.
+    ///   - cameraContext: Optional capture-time camera state, merged into `captureMetadata`.
     /// - Returns: A `PipelineResult` with optimized image data and metadata.
     /// - Throws: `PipelineError.invalidImageData` if the input cannot be decoded.
-    func processSkippingQualityGates(_ imageData: Data, originalFailure: QualityGateFailure? = nil) async throws -> PipelineResult {
+    func processSkippingQualityGates(
+        _ imageData: Data,
+        originalFailure: QualityGateFailure? = nil,
+        cameraContext: CameraCaptureContext? = nil
+    ) async throws -> PipelineResult {
         let processID = pipelineSignposter.makeSignpostID()
         let processInterval = pipelineSignposter.beginInterval("image_pipeline_process_skip_quality", id: processID)
         defer { pipelineSignposter.endInterval("image_pipeline_process_skip_quality", processInterval) }
@@ -172,7 +186,11 @@ actor ImagePipeline {
         do {
             // Decode and cap input resolution
             let decodedImage = try decodeCGImage(from: imageData)
-            let captureMetadata = buildCaptureMetadata(from: decodedImage, imageData: imageData)
+            let captureMetadata = buildCaptureMetadata(
+                from: decodedImage,
+                imageData: imageData,
+                cameraContext: cameraContext
+            )
             let cgImage = capResolution(decodedImage)
 
             // Run saliency for smart crop (without the full gate validation)
@@ -381,12 +399,27 @@ actor ImagePipeline {
         )
     }
 
-    private func buildCaptureMetadata(from cgImage: CGImage, imageData: Data) -> CaptureMetadata {
+    private func buildCaptureMetadata(
+        from cgImage: CGImage,
+        imageData: Data,
+        cameraContext: CameraCaptureContext?
+    ) -> CaptureMetadata {
         CaptureMetadata(
             originalWidth: cgImage.width,
             originalHeight: cgImage.height,
             originalBytes: imageData.count,
-            inputFormat: Self.inferInputFormat(from: imageData)
+            inputFormat: Self.inferInputFormat(from: imageData),
+            cameraDeviceType: cameraContext?.cameraDeviceType,
+            cameraPosition: cameraContext?.cameraPosition,
+            zoomFactor: cameraContext?.zoomFactor,
+            flashUsed: cameraContext?.flashUsed,
+            torchUsed: cameraContext?.torchUsed,
+            hdrEnabled: cameraContext?.hdrEnabled,
+            iso: cameraContext?.iso,
+            exposureDurationMs: cameraContext?.exposureDurationMs,
+            focusMode: cameraContext?.focusMode,
+            lensPosition: cameraContext?.lensPosition,
+            focalLengthMm: cameraContext?.focalLengthMm
         )
     }
 

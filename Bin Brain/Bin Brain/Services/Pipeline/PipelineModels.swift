@@ -192,6 +192,13 @@ struct DeviceProcessing: Codable, Equatable {
 }
 
 /// Lightweight metadata about the source image bytes entering the pipeline.
+///
+/// Camera-state fields (`cameraDeviceType` and below) are optional because they
+/// depend on capture-stack access. `DataScannerViewController` doesn't expose
+/// the underlying `AVCaptureDevice`, so live-device state (zoom, torch, HDR,
+/// focus mode, lens position) cannot be sampled today and stays `nil`. EXIF-
+/// derivable fields (iso, exposureDurationMs, focalLengthMm, flashUsed) are
+/// populated from `AVCapturePhoto.metadata` when available.
 struct CaptureMetadata: Codable, Equatable {
     /// Width of the decoded image before any pipeline downscaling.
     let originalWidth: Int
@@ -201,12 +208,123 @@ struct CaptureMetadata: Codable, Equatable {
     let originalBytes: Int
     /// Best-effort format inferred from the input bytes.
     let inputFormat: String
+    /// AVCaptureDevice.DeviceType identifier (e.g., "wideAngleCamera",
+    /// "ultraWideCamera"); inferred from EXIF lens model when not available.
+    let cameraDeviceType: String?
+    /// "front" or "back".
+    let cameraPosition: String?
+    /// Effective zoom factor at capture time.
+    let zoomFactor: Double?
+    /// True if the flash actually fired.
+    let flashUsed: Bool?
+    /// True if the torch was on at capture time.
+    let torchUsed: Bool?
+    /// True if HDR/auto-bracketing was enabled.
+    let hdrEnabled: Bool?
+    /// ISO sensitivity reported by the sensor.
+    let iso: Double?
+    /// Exposure duration in milliseconds.
+    let exposureDurationMs: Double?
+    /// AVCaptureDevice.FocusMode raw value (e.g., "continuousAutoFocus").
+    let focusMode: String?
+    /// Lens position (0.0–1.0) when manual focus is in use.
+    let lensPosition: Double?
+    /// Effective focal length in millimeters.
+    let focalLengthMm: Double?
+
+    nonisolated init(
+        originalWidth: Int,
+        originalHeight: Int,
+        originalBytes: Int,
+        inputFormat: String,
+        cameraDeviceType: String? = nil,
+        cameraPosition: String? = nil,
+        zoomFactor: Double? = nil,
+        flashUsed: Bool? = nil,
+        torchUsed: Bool? = nil,
+        hdrEnabled: Bool? = nil,
+        iso: Double? = nil,
+        exposureDurationMs: Double? = nil,
+        focusMode: String? = nil,
+        lensPosition: Double? = nil,
+        focalLengthMm: Double? = nil
+    ) {
+        self.originalWidth = originalWidth
+        self.originalHeight = originalHeight
+        self.originalBytes = originalBytes
+        self.inputFormat = inputFormat
+        self.cameraDeviceType = cameraDeviceType
+        self.cameraPosition = cameraPosition
+        self.zoomFactor = zoomFactor
+        self.flashUsed = flashUsed
+        self.torchUsed = torchUsed
+        self.hdrEnabled = hdrEnabled
+        self.iso = iso
+        self.exposureDurationMs = exposureDurationMs
+        self.focusMode = focusMode
+        self.lensPosition = lensPosition
+        self.focalLengthMm = focalLengthMm
+    }
 
     enum CodingKeys: String, CodingKey {
         case originalWidth = "original_width"
         case originalHeight = "original_height"
         case originalBytes = "original_bytes"
         case inputFormat = "input_format"
+        case cameraDeviceType = "camera_device_type"
+        case cameraPosition = "camera_position"
+        case zoomFactor = "zoom_factor"
+        case flashUsed = "flash_used"
+        case torchUsed = "torch_used"
+        case hdrEnabled = "hdr_enabled"
+        case iso
+        case exposureDurationMs = "exposure_duration_ms"
+        case focusMode = "focus_mode"
+        case lensPosition = "lens_position"
+        case focalLengthMm = "focal_length_mm"
+    }
+}
+
+/// Camera-state snapshot captured at the moment of shutter, supplied by the
+/// capture layer to the pipeline. Pure value type so it is safe to cross actor
+/// boundaries. Any field may be `nil` when the capture stack cannot supply it.
+struct CameraCaptureContext: Equatable, Sendable {
+    let cameraDeviceType: String?
+    let cameraPosition: String?
+    let zoomFactor: Double?
+    let flashUsed: Bool?
+    let torchUsed: Bool?
+    let hdrEnabled: Bool?
+    let iso: Double?
+    let exposureDurationMs: Double?
+    let focusMode: String?
+    let lensPosition: Double?
+    let focalLengthMm: Double?
+
+    init(
+        cameraDeviceType: String? = nil,
+        cameraPosition: String? = nil,
+        zoomFactor: Double? = nil,
+        flashUsed: Bool? = nil,
+        torchUsed: Bool? = nil,
+        hdrEnabled: Bool? = nil,
+        iso: Double? = nil,
+        exposureDurationMs: Double? = nil,
+        focusMode: String? = nil,
+        lensPosition: Double? = nil,
+        focalLengthMm: Double? = nil
+    ) {
+        self.cameraDeviceType = cameraDeviceType
+        self.cameraPosition = cameraPosition
+        self.zoomFactor = zoomFactor
+        self.flashUsed = flashUsed
+        self.torchUsed = torchUsed
+        self.hdrEnabled = hdrEnabled
+        self.iso = iso
+        self.exposureDurationMs = exposureDurationMs
+        self.focusMode = focusMode
+        self.lensPosition = lensPosition
+        self.focalLengthMm = focalLengthMm
     }
 }
 

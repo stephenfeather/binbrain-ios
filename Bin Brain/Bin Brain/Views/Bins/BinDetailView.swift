@@ -218,7 +218,7 @@ struct BinDetailView: View {
                 ScannerView(
                     showShutterButton: .constant(true),
                     onQRCode: { _ in },
-                    onPhotoCapture: { image in
+                    onPhotoCapture: { image, cameraContext in
                         let oriented: UIImage
                         if image.imageOrientation != .up {
                             let fmt = UIGraphicsImageRendererFormat()
@@ -250,7 +250,8 @@ struct BinDetailView: View {
                                 apiClient: apiClient,
                                 sessionId: sessionId,
                                 sessionManager: sessionManager,
-                                context: modelContext
+                                context: modelContext,
+                                cameraContext: cameraContext
                             )
                         }
                     },

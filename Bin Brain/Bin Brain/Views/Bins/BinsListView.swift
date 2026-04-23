@@ -115,7 +115,7 @@ struct BinsListView: View {
                     onQRCode: { code in
                         scannerViewModel.qrDetected(code)
                     },
-                    onPhotoCapture: { image in
+                    onPhotoCapture: { image, cameraContext in
                         logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public) orientation: \(image.imageOrientation.rawValue, privacy: .public)")
                         // Normalize EXIF orientation before JPEG encoding. jpegData(compressionQuality:)
                         // does not reliably embed the EXIF orientation tag, so a landscape capture
@@ -155,7 +155,8 @@ struct BinsListView: View {
                                 apiClient: apiClient,
                                 sessionId: sessionId,
                                 sessionManager: sessionManager,
-                                context: modelContext
+                                context: modelContext,
+                                cameraContext: cameraContext
                             )
                         }
                     },

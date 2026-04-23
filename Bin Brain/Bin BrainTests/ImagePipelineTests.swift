@@ -343,4 +343,76 @@ final class ImagePipelineTests: XCTestCase {
         XCTAssertEqual(decoded.height, 200,
             ".up orientation must not alter height")
     }
+
+    // MARK: - Camera Capture Context Merge
+
+    /// Verifies that a CameraCaptureContext supplied to `process(_:cameraContext:)`
+    /// flows through into the resulting `device_metadata.capture_metadata`
+    /// alongside the bytes-derived fields.
+    func testProcessMergesCameraCaptureContextIntoMetadata() async throws {
+        guard let jpegData = makeTestJPEG(width: 120, height: 120) else {
+            XCTFail("Failed to create test JPEG"); return
+        }
+        let context = CameraCaptureContext(
+            cameraDeviceType: "wideAngleCamera",
+            cameraPosition: "back",
+            zoomFactor: 2.0,
+            flashUsed: true,
+            torchUsed: false,
+            hdrEnabled: nil,
+            iso: 400,
+            exposureDurationMs: 8.33,
+            focusMode: nil,
+            lensPosition: nil,
+            focalLengthMm: 6.86
+        )
+
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData, cameraContext: context)
+            let capture = try XCTUnwrap(result.deviceMetadata.deviceProcessing.captureMetadata)
+            XCTAssertEqual(capture.originalWidth, 120)
+            XCTAssertEqual(capture.originalHeight, 120)
+            XCTAssertEqual(capture.cameraDeviceType, "wideAngleCamera")
+            XCTAssertEqual(capture.cameraPosition, "back")
+            XCTAssertEqual(capture.zoomFactor, 2.0)
+            XCTAssertEqual(capture.flashUsed, true)
+            XCTAssertEqual(capture.torchUsed, false)
+            XCTAssertNil(capture.hdrEnabled)
+            XCTAssertEqual(capture.iso, 400)
+            XCTAssertEqual(capture.exposureDurationMs, 8.33)
+            XCTAssertEqual(capture.focalLengthMm, 6.86)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable — requires device testing"
+            )
+            throw error
+        }
+    }
+
+    /// Verifies the default (no cameraContext) call path leaves all camera
+    /// fields nil so the existing capture-metadata contract is unchanged.
+    func testProcessWithoutCameraContextLeavesCameraFieldsNil() async throws {
+        guard let jpegData = makeTestJPEG(width: 120, height: 120) else {
+            XCTFail("Failed to create test JPEG"); return
+        }
+
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData)
+            let capture = try XCTUnwrap(result.deviceMetadata.deviceProcessing.captureMetadata)
+            XCTAssertNil(capture.cameraDeviceType)
+            XCTAssertNil(capture.cameraPosition)
+            XCTAssertNil(capture.zoomFactor)
+            XCTAssertNil(capture.flashUsed)
+            XCTAssertNil(capture.iso)
+            XCTAssertNil(capture.exposureDurationMs)
+            XCTAssertNil(capture.focalLengthMm)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable — requires device testing"
+            )
+            throw error
+        }
+    }
 }
