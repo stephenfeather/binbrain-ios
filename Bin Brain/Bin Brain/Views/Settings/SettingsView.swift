@@ -62,13 +62,13 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .task {
-            // Finding #20 — prime the key-binding chip once on appear via an
-            // off-main Keychain read, instead of reading Keychain from a
-            // computed getter every SwiftUI body re-render.
+            // Finding #20 — prime the key-binding chip once on appear,
+            // instead of reading Keychain from a computed getter every
+            // SwiftUI body re-render.
+            viewModel.refreshAPIKeyBindingStatus()
             async let models: () = viewModel.loadModels(apiClient: apiClient)
             async let imageSize: () = viewModel.loadImageSize(apiClient: apiClient)
-            async let binding: () = viewModel.refreshAPIKeyBindingStatus()
-            _ = await (models, imageSize, binding)
+            _ = await (models, imageSize)
         }
         .onChange(of: viewModel.modelSelectSuccessTick) { _, _ in
             // Finding #9 — fire haptic + brief toast on each successful switch.

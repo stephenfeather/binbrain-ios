@@ -175,7 +175,7 @@ final class SettingsViewModel {
     func commitAPIKey() {
         if apiKey.isEmpty {
             try? keychain.clearAPIKeyBinding()
-            Task { await refreshAPIKeyBindingStatus() }
+            refreshAPIKeyBindingStatus()
             return
         }
         guard let origin = APIClient.normalizedOrigin(of: serverURL) else {
@@ -187,7 +187,7 @@ final class SettingsViewModel {
         } catch {
             logger.error("apiKey binding write failed: \(error.localizedDescription, privacy: .public)")
         }
-        Task { await refreshAPIKeyBindingStatus() }
+        refreshAPIKeyBindingStatus()
     }
 
     /// Schedules a debounced save after a 0.5-second pause.
@@ -381,23 +381,19 @@ final class SettingsViewModel {
     /// touches Keychain I/O.
     private(set) var apiKeyBindingStatus: APIKeyBindingStatus = .noKeyStored
 
-    /// Recomputes `apiKeyBindingStatus` from Keychain off the main actor.
+    /// Recomputes `apiKeyBindingStatus` from Keychain.
     /// Call after any event that could change the binding (commit, rebind,
     /// auto-rebind, server-URL commit, view appear).
-    func refreshAPIKeyBindingStatus() async {
-        let currentURL = serverURL
-        let keychain = self.keychain
-        // Dispatch the Keychain read to a detached task so the read happens
-        // off the main actor. Keychain APIs are thread-safe.
-        let status: APIKeyBindingStatus = await Task.detached(priority: .userInitiated) {
-            guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
-                  !key.isEmpty else {
-                return .noKeyStored
-            }
-            let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
-            let current = APIClient.normalizedOrigin(of: currentURL)
-            return (bound == current) ? .keyBoundToCurrentHost : .keyUnboundForCurrentHost
-        }.value
+    func refreshAPIKeyBindingStatus() {
+        let currentOrigin = APIClient.normalizedOrigin(of: serverURL)
+        let status: APIKeyBindingStatus
+        guard let key = keychain.readString(forKey: KeychainHelper.apiKeyAccount),
+              !key.isEmpty else {
+            apiKeyBindingStatus = .noKeyStored
+            return
+        }
+        let bound = keychain.readString(forKey: KeychainHelper.boundHostAccount)
+        status = (bound == currentOrigin) ? .keyBoundToCurrentHost : .keyUnboundForCurrentHost
         apiKeyBindingStatus = status
     }
 
@@ -411,10 +407,10 @@ final class SettingsViewModel {
     ///
     /// - Parameter apiClient: Used by the underlying `rebindKey` probe.
     func attemptAutoRebindIfApplicable(apiClient: APIClient) async {
-        await refreshAPIKeyBindingStatus()
+        refreshAPIKeyBindingStatus()
         guard apiKeyBindingStatus == .keyUnboundForCurrentHost else { return }
         await rebindKey(apiClient: apiClient)
-        await refreshAPIKeyBindingStatus()
+        refreshAPIKeyBindingStatus()
     }
 
     /// Debounced wrapper for `attemptAutoRebindIfApplicable` (Finding #20).
