@@ -685,6 +685,16 @@ final class APIModelsTests: XCTestCase {
                         "original_bytes": 2481144,
                         "input_format": "jpeg"
                     },
+                    "optimized_upload": {
+                        "optimized_width": 2048,
+                        "optimized_height": 1536,
+                        "optimized_bytes": 512240,
+                        "upload_format": "jpeg",
+                        "resize_applied": true,
+                        "compression_quality": 0.85,
+                        "compression_ratio": 0.2065,
+                        "crop_fraction": 0.6349
+                    },
                     "ocr": [
                         {
                             "text": "M3x8 DIN 912",
@@ -751,6 +761,14 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalHeight, 3024)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalBytes, 2_481_144)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.inputFormat, "jpeg")
+        XCTAssertEqual(metadata.deviceProcessing.optimizedUpload?.optimizedWidth, 2048)
+        XCTAssertEqual(metadata.deviceProcessing.optimizedUpload?.optimizedHeight, 1536)
+        XCTAssertEqual(metadata.deviceProcessing.optimizedUpload?.optimizedBytes, 512_240)
+        XCTAssertEqual(metadata.deviceProcessing.optimizedUpload?.uploadFormat, "jpeg")
+        XCTAssertEqual(metadata.deviceProcessing.optimizedUpload?.resizeApplied, true)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.optimizedUpload?.compressionQuality), 0.85, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.optimizedUpload?.compressionRatio), 0.2065, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.optimizedUpload?.cropFraction), 0.6349, accuracy: 1e-10)
         XCTAssertEqual(metadata.deviceProcessing.ocr.count, 1)
         XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.ocr.first?.boundingBox?.width), 0.41, accuracy: 1e-10)
         XCTAssertEqual(metadata.deviceProcessing.barcodes.count, 1)

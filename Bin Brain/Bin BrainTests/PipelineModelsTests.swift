@@ -79,6 +79,16 @@ final class PipelineModelsTests: XCTestCase {
                     originalBytes: 2_481_144,
                     inputFormat: "jpeg"
                 ),
+                optimizedUpload: OptimizedUploadStats(
+                    optimizedWidth: 2048,
+                    optimizedHeight: 1536,
+                    optimizedBytes: 512_240,
+                    uploadFormat: "jpeg",
+                    resizeApplied: true,
+                    compressionQuality: 0.85,
+                    compressionRatio: 0.2065,
+                    cropFraction: 0.6349
+                ),
                 cropApplied: CropInfo(
                     originalSize: [4032, 3024],
                     cropRect: [420, 310, 3200, 2400]
@@ -153,6 +163,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["quality_scores"])
         XCTAssertNotNil(processing["saliency_context"])
         XCTAssertNotNil(processing["capture_metadata"])
+        XCTAssertNotNil(processing["optimized_upload"])
         XCTAssertNotNil(processing["crop_applied"])
         XCTAssertNotNil(processing["quality_override_context"])
         XCTAssertNotNil(processing["canny_metrics"])
@@ -177,6 +188,16 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(capture["original_height"])
         XCTAssertNotNil(capture["original_bytes"])
         XCTAssertNotNil(capture["input_format"])
+
+        let optimized = try XCTUnwrap(processing["optimized_upload"] as? [String: Any])
+        XCTAssertNotNil(optimized["optimized_width"])
+        XCTAssertNotNil(optimized["optimized_height"])
+        XCTAssertNotNil(optimized["optimized_bytes"])
+        XCTAssertNotNil(optimized["upload_format"])
+        XCTAssertNotNil(optimized["resize_applied"])
+        XCTAssertNotNil(optimized["compression_quality"])
+        XCTAssertNotNil(optimized["compression_ratio"])
+        XCTAssertNotNil(optimized["crop_fraction"])
 
         // Crop info level
         let crop = try XCTUnwrap(processing["crop_applied"] as? [String: Any])
@@ -215,6 +236,7 @@ final class PipelineModelsTests: XCTestCase {
                 classifications: [],
                 saliencyContext: nil,
                 captureMetadata: nil,
+                optimizedUpload: nil,
                 cropApplied: nil,
                 qualityOverrideContext: nil,
                 cannyMetrics: nil
@@ -258,6 +280,16 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertEqual(capture["original_height"] as? Int, 3024)
         XCTAssertEqual(capture["original_bytes"] as? Int, 2_481_144)
         XCTAssertEqual(capture["input_format"] as? String, "jpeg")
+
+        let optimized = try XCTUnwrap(processing["optimized_upload"] as? [String: Any])
+        XCTAssertEqual(optimized["optimized_width"] as? Int, 2048)
+        XCTAssertEqual(optimized["optimized_height"] as? Int, 1536)
+        XCTAssertEqual(optimized["optimized_bytes"] as? Int, 512_240)
+        XCTAssertEqual(optimized["upload_format"] as? String, "jpeg")
+        XCTAssertEqual(optimized["resize_applied"] as? Bool, true)
+        XCTAssertEqual(try XCTUnwrap(optimized["compression_quality"] as? Double), 0.85, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(optimized["compression_ratio"] as? Double), 0.2065, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(optimized["crop_fraction"] as? Double), 0.6349, accuracy: 1e-10)
 
         // OCR is array of objects with text + confidence
         let ocr = try XCTUnwrap(processing["ocr"] as? [[String: Any]])

@@ -47,6 +47,9 @@ final class ImageOptimizerTests: XCTestCase {
         let decoded = UIImage(data: result.jpegData)!
         let longestSide = max(decoded.size.width, decoded.size.height)
         XCTAssertLessThanOrEqual(longestSide, 2048, "Longest side should be <= 2048")
+        XCTAssertEqual(result.uploadInfo.optimizedWidth, Int(decoded.size.width))
+        XCTAssertEqual(result.uploadInfo.optimizedHeight, Int(decoded.size.height))
+        XCTAssertTrue(result.uploadInfo.resizeApplied)
     }
 
     func testSmallImageNotResized() {
@@ -61,6 +64,7 @@ final class ImageOptimizerTests: XCTestCase {
         let decoded = UIImage(data: result.jpegData)!
         XCTAssertEqual(Int(decoded.size.width), 1024, "Width should remain unchanged")
         XCTAssertEqual(Int(decoded.size.height), 768, "Height should remain unchanged")
+        XCTAssertFalse(result.uploadInfo.resizeApplied)
     }
 
     func testResizePreservesAspectRatio() {
@@ -166,6 +170,9 @@ final class ImageOptimizerTests: XCTestCase {
         // Can decode back to UIImage
         let decoded = UIImage(data: result.jpegData)
         XCTAssertNotNil(decoded, "Output JPEG should be decodable to UIImage")
+        XCTAssertEqual(result.uploadInfo.uploadFormat, "jpeg")
+        XCTAssertEqual(result.uploadInfo.optimizedBytes, result.jpegData.count)
+        XCTAssertEqual(result.uploadInfo.compressionQuality, 0.85, accuracy: 1e-10)
     }
 
     // MARK: - Auto-Enhance Tests
@@ -251,6 +258,22 @@ final class ImageOptimizerTests: XCTestCase {
         let longestSide = max(decoded.size.width, decoded.size.height)
         // After crop + padding, image may still be > 2048, so resize kicks in
         XCTAssertLessThanOrEqual(longestSide, 2048, "Should be resized after crop if still too large")
+        XCTAssertLessThan(result.uploadInfo.cropFraction, 1.0)
+        XCTAssertTrue(result.uploadInfo.resizeApplied)
+    }
+
+    func testUploadStatsReflectNoCropFullFrame() {
+        let image = makeSolidImage(width: 1200, height: 900)
+
+        let result = optimizer.optimize(
+            image,
+            saliencyBoundingBox: nil,
+            context: context
+        )
+
+        XCTAssertEqual(result.uploadInfo.cropFraction, 1.0, accuracy: 1e-10)
+        XCTAssertEqual(result.uploadInfo.optimizedWidth, 1200)
+        XCTAssertEqual(result.uploadInfo.optimizedHeight, 900)
     }
 
     // MARK: - Gradient Image Helper

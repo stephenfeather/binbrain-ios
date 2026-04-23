@@ -31,6 +31,18 @@ nonisolated private let optimizerSignposter = OSSignposter(subsystem: "com.binbr
 /// 4. JPEG encode (quality 0.85, always JPEG — server cannot decode HEIC)
 nonisolated struct ImageOptimizer: Sendable {
 
+    /// Facts about the final optimized upload image, before pipeline-level metadata
+    /// such as compression ratio is assembled.
+    struct UploadInfo: Equatable {
+        let optimizedWidth: Int
+        let optimizedHeight: Int
+        let optimizedBytes: Int
+        let uploadFormat: String
+        let resizeApplied: Bool
+        let compressionQuality: Double
+        let cropFraction: Double
+    }
+
     // MARK: - Constants
 
     /// Maximum output dimension on the longest side.
@@ -64,7 +76,7 @@ nonisolated struct ImageOptimizer: Sendable {
         saliencyBoundingBox: CGRect?,
         context: CIContext,
         autoEnhance: Bool = false
-    ) -> (jpegData: Data, cropInfo: CropInfo?, cropDecision: SaliencyCropDecision) {
+    ) -> (jpegData: Data, cropInfo: CropInfo?, cropDecision: SaliencyCropDecision, uploadInfo: UploadInfo) {
         let transformID = optimizerSignposter.makeSignpostID()
         let transformInterval = optimizerSignposter.beginInterval("media_transform", id: transformID)
         let imageWidth = cgImage.width
@@ -126,8 +138,9 @@ nonisolated struct ImageOptimizer: Sendable {
         let currentWidth = CGFloat(currentImage.width)
         let currentHeight = CGFloat(currentImage.height)
         let longestSide = max(currentWidth, currentHeight)
+        let resizeApplied = longestSide > Self.maxLongestSide
 
-        if longestSide > Self.maxLongestSide {
+        if resizeApplied {
             let scale = Self.maxLongestSide / longestSide
             ciImage = applyLanczosResize(to: ciImage, scale: scale)
         }
@@ -135,15 +148,30 @@ nonisolated struct ImageOptimizer: Sendable {
         // Stage 4: Render and JPEG encode
         let renderedImage = renderToCGImage(ciImage: ciImage, context: context) ?? currentImage
         let jpegData = encodeJPEG(renderedImage)
+        let cropFraction = Self.cropFraction(cropInfo: cropInfo, originalWidth: imageWidth, originalHeight: imageHeight)
+        let uploadInfo = UploadInfo(
+            optimizedWidth: renderedImage.width,
+            optimizedHeight: renderedImage.height,
+            optimizedBytes: jpegData.count,
+            uploadFormat: "jpeg",
+            resizeApplied: resizeApplied,
+            compressionQuality: Double(Self.jpegQuality),
+            cropFraction: cropFraction
+        )
         optimizerCropLogger.notice("[optimize] out image=\(renderedImage.width, privacy: .public)x\(renderedImage.height, privacy: .public) jpeg=\(jpegData.count, privacy: .public)B")
         optimizerSignposter.emitEvent(
             "media_transform_done",
             id: transformID,
-            "stage=\("optimize", privacy: .public) bytesOut=\(jpegData.count, privacy: .public) widthOut=\(renderedImage.width, privacy: .public) heightOut=\(renderedImage.height, privacy: .public) cropped=\((cropInfo != nil), privacy: .public) resized=\((longestSide > Self.maxLongestSide), privacy: .public)"
+            "stage=\("optimize", privacy: .public) bytesOut=\(jpegData.count, privacy: .public) widthOut=\(renderedImage.width, privacy: .public) heightOut=\(renderedImage.height, privacy: .public) cropped=\((cropInfo != nil), privacy: .public) resized=\(resizeApplied, privacy: .public)"
         )
         optimizerSignposter.endInterval("media_transform", transformInterval)
 
-        return (jpegData: jpegData, cropInfo: cropInfo, cropDecision: cropDecision)
+        return (
+            jpegData: jpegData,
+            cropInfo: cropInfo,
+            cropDecision: cropDecision,
+            uploadInfo: uploadInfo
+        )
     }
 
     // MARK: - Smart Crop
@@ -190,6 +218,22 @@ nonisolated struct ImageOptimizer: Sendable {
             width: floor(clampedW),
             height: floor(clampedH)
         )
+    }
+
+    private static func cropFraction(cropInfo: CropInfo?, originalWidth: Int, originalHeight: Int) -> Double {
+        guard
+            let cropInfo,
+            cropInfo.cropRect.count == 4,
+            originalWidth > 0,
+            originalHeight > 0
+        else {
+            return 1.0
+        }
+
+        let cropArea = cropInfo.cropRect[2] * cropInfo.cropRect[3]
+        let originalArea = originalWidth * originalHeight
+        guard originalArea > 0 else { return 1.0 }
+        return Double(cropArea) / Double(originalArea)
     }
 
     // MARK: - Auto-Enhance

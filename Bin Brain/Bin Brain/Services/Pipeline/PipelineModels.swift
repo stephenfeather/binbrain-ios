@@ -164,6 +164,8 @@ struct DeviceProcessing: Codable, Equatable {
     let saliencyContext: SaliencyContext?
     /// Capture-time facts preserved from the image bytes handed into the pipeline.
     let captureMetadata: CaptureMetadata?
+    /// Facts about the optimized upload image handed to the server.
+    let optimizedUpload: OptimizedUploadStats?
     /// Crop information, if a smart crop was applied.
     let cropApplied: CropInfo?
     /// Original quality-gate failure carried through when the user bypasses it.
@@ -182,6 +184,7 @@ struct DeviceProcessing: Codable, Equatable {
         case classifications
         case saliencyContext = "saliency_context"
         case captureMetadata = "capture_metadata"
+        case optimizedUpload = "optimized_upload"
         case cropApplied = "crop_applied"
         case qualityOverrideContext = "quality_override_context"
         case cannyMetrics = "canny_metrics"
@@ -204,6 +207,37 @@ struct CaptureMetadata: Codable, Equatable {
         case originalHeight = "original_height"
         case originalBytes = "original_bytes"
         case inputFormat = "input_format"
+    }
+}
+
+/// Facts about the final optimized upload image and how it was produced.
+struct OptimizedUploadStats: Codable, Equatable {
+    /// Width of the upload image in pixels.
+    let optimizedWidth: Int
+    /// Height of the upload image in pixels.
+    let optimizedHeight: Int
+    /// Size in bytes of the upload payload.
+    let optimizedBytes: Int
+    /// Image format sent to the server.
+    let uploadFormat: String
+    /// Whether the image was resized during optimization.
+    let resizeApplied: Bool
+    /// JPEG compression quality used for the final encode.
+    let compressionQuality: Double
+    /// Ratio of optimized bytes to the original input bytes.
+    let compressionRatio: Double
+    /// Fraction of original image area retained after cropping.
+    let cropFraction: Double
+
+    enum CodingKeys: String, CodingKey {
+        case optimizedWidth = "optimized_width"
+        case optimizedHeight = "optimized_height"
+        case optimizedBytes = "optimized_bytes"
+        case uploadFormat = "upload_format"
+        case resizeApplied = "resize_applied"
+        case compressionQuality = "compression_quality"
+        case compressionRatio = "compression_ratio"
+        case cropFraction = "crop_fraction"
     }
 }
 

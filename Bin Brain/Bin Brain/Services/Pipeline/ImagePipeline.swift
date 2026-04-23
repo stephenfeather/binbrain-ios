@@ -129,6 +129,10 @@ actor ImagePipeline {
                 extraction: extraction,
                 saliencyContext: saliencyContext,
                 captureMetadata: captureMetadata,
+                optimizedUpload: buildOptimizedUploadStats(
+                    from: optimized.uploadInfo,
+                    originalBytes: imageData.count
+                ),
                 qualityOverrideContext: nil,
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
@@ -230,6 +234,10 @@ actor ImagePipeline {
                 extraction: extraction,
                 saliencyContext: saliencyContext,
                 captureMetadata: captureMetadata,
+                optimizedUpload: buildOptimizedUploadStats(
+                    from: optimized.uploadInfo,
+                    originalBytes: imageData.count
+                ),
                 qualityOverrideContext: overrideContext,
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
@@ -342,6 +350,7 @@ actor ImagePipeline {
         extraction: (ocr: [OCRResult], barcodes: [BarcodeResult], classifications: [ClassificationResult]),
         saliencyContext: SaliencyContext?,
         captureMetadata: CaptureMetadata?,
+        optimizedUpload: OptimizedUploadStats?,
         qualityOverrideContext: QualityOverrideContext?,
         cannyMetrics: CannyMetrics?,
         pipelineMs: Int
@@ -357,6 +366,7 @@ actor ImagePipeline {
             classifications: extraction.classifications,
             saliencyContext: saliencyContext,
             captureMetadata: captureMetadata,
+            optimizedUpload: optimizedUpload,
             cropApplied: cropInfo,
             qualityOverrideContext: qualityOverrideContext,
             cannyMetrics: cannyMetrics
@@ -377,6 +387,29 @@ actor ImagePipeline {
             originalHeight: cgImage.height,
             originalBytes: imageData.count,
             inputFormat: Self.inferInputFormat(from: imageData)
+        )
+    }
+
+    private func buildOptimizedUploadStats(
+        from uploadInfo: ImageOptimizer.UploadInfo,
+        originalBytes: Int
+    ) -> OptimizedUploadStats {
+        let compressionRatio: Double
+        if originalBytes > 0 {
+            compressionRatio = Double(uploadInfo.optimizedBytes) / Double(originalBytes)
+        } else {
+            compressionRatio = 0
+        }
+
+        return OptimizedUploadStats(
+            optimizedWidth: uploadInfo.optimizedWidth,
+            optimizedHeight: uploadInfo.optimizedHeight,
+            optimizedBytes: uploadInfo.optimizedBytes,
+            uploadFormat: uploadInfo.uploadFormat,
+            resizeApplied: uploadInfo.resizeApplied,
+            compressionQuality: uploadInfo.compressionQuality,
+            compressionRatio: compressionRatio,
+            cropFraction: uploadInfo.cropFraction
         )
     }
 

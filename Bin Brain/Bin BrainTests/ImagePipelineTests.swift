@@ -156,6 +156,7 @@ final class ImagePipelineTests: XCTestCase {
             XCTAssertEqual(processing.qualityScores.exposureMean, 0)
             XCTAssertEqual(processing.qualityScores.saliencyCoverage, 0)
             XCTAssertNotNil(processing.saliencyContext)
+            XCTAssertNotNil(processing.optimizedUpload)
             XCTAssertNil(processing.qualityOverrideContext)
             XCTAssertNotNil(processing.cannyMetrics)
 
@@ -244,6 +245,7 @@ final class ImagePipelineTests: XCTestCase {
             let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
             let saliency = try XCTUnwrap(processing["saliency_context"] as? [String: Any])
             let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+            let optimized = try XCTUnwrap(processing["optimized_upload"] as? [String: Any])
             let ocr = try XCTUnwrap(processing["ocr"] as? [[String: Any]])
             let barcodes = try XCTUnwrap(processing["barcodes"] as? [[String: Any]])
             XCTAssertNotNil(saliency["status"])
@@ -254,6 +256,14 @@ final class ImagePipelineTests: XCTestCase {
             XCTAssertEqual(capture["original_height"] as? Int, 100)
             XCTAssertEqual(capture["original_bytes"] as? Int, jpegData.count)
             XCTAssertEqual(capture["input_format"] as? String, "jpeg")
+            XCTAssertEqual(optimized["upload_format"] as? String, "jpeg")
+            XCTAssertNotNil(optimized["optimized_width"])
+            XCTAssertNotNil(optimized["optimized_height"])
+            XCTAssertNotNil(optimized["optimized_bytes"])
+            XCTAssertNotNil(optimized["resize_applied"])
+            XCTAssertNotNil(optimized["compression_quality"])
+            XCTAssertNotNil(optimized["compression_ratio"])
+            XCTAssertNotNil(optimized["crop_fraction"])
             if let firstOCR = ocr.first {
                 XCTAssertNotNil(firstOCR["bounding_box"])
             }
