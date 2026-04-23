@@ -81,6 +81,56 @@ struct QualityScores: Codable, Equatable {
     }
 }
 
+/// High-level outcome of the saliency analysis stage.
+enum SaliencyDetectionStatus: String, Codable, Equatable {
+    case detected = "detected"
+    case noObjects = "no_objects"
+    case analysisFailed = "analysis_failed"
+    case notRun = "not_run"
+}
+
+/// Captures how the optimizer handled the saliency result when deciding whether to crop.
+enum SaliencyCropDecision: String, Codable, Equatable {
+    case applied = "applied"
+    case skippedThresholdMet = "skipped_threshold_met"
+    case skippedNoBoundingBox = "skipped_no_bounding_box"
+    case skippedAnalysisFailed = "skipped_analysis_failed"
+    case skippedCropFailed = "skipped_crop_failed"
+}
+
+/// A normalized 0...1 bounding box with origin at the bottom-left.
+struct NormalizedBoundingBox: Codable, Equatable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+/// Structured saliency telemetry preserved alongside other device-processing metadata.
+struct SaliencyContext: Codable, Equatable {
+    /// Whether saliency produced objects, found none, or failed internally.
+    let status: SaliencyDetectionStatus
+    /// Number of salient objects returned by Vision.
+    let objectCount: Int
+    /// Fraction of the image covered by the union bounding box.
+    let coverage: Double
+    /// Union bounding box for all salient objects, when present.
+    let unionBoundingBox: NormalizedBoundingBox?
+    /// Coverage threshold used to decide whether to crop.
+    let cropThreshold: Double
+    /// The crop decision taken by the optimizer.
+    let cropDecision: SaliencyCropDecision
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case objectCount = "object_count"
+        case coverage
+        case unionBoundingBox = "union_bounding_box"
+        case cropThreshold = "crop_threshold"
+        case cropDecision = "crop_decision"
+    }
+}
+
 // MARK: - Metadata Sidecar
 
 /// Top-level metadata sidecar sent alongside the photo upload.
@@ -110,6 +160,8 @@ struct DeviceProcessing: Codable, Equatable {
     let barcodes: [BarcodeResult]
     /// Image classifications from Vision.
     let classifications: [ClassificationResult]
+    /// Structured saliency analysis context and crop decision.
+    let saliencyContext: SaliencyContext?
     /// Capture-time facts preserved from the image bytes handed into the pipeline.
     let captureMetadata: CaptureMetadata?
     /// Crop information, if a smart crop was applied.
@@ -128,6 +180,7 @@ struct DeviceProcessing: Codable, Equatable {
         case ocr
         case barcodes
         case classifications
+        case saliencyContext = "saliency_context"
         case captureMetadata = "capture_metadata"
         case cropApplied = "crop_applied"
         case qualityOverrideContext = "quality_override_context"
@@ -171,7 +224,7 @@ struct QualityOverrideContext: Codable, Equatable {
     /// User-facing threshold direction label.
     let thresholdLabel: String
 
-    init(
+    nonisolated init(
         bypassed: Bool = true,
         failedGate: QualityGate,
         message: String,

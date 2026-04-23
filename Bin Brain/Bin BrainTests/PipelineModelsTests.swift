@@ -48,6 +48,19 @@ final class PipelineModelsTests: XCTestCase {
                     ClassificationResult(label: "screw", confidence: 0.82),
                     ClassificationResult(label: "nail", confidence: 0.11)
                 ],
+                saliencyContext: SaliencyContext(
+                    status: .detected,
+                    objectCount: 3,
+                    coverage: 0.42,
+                    unionBoundingBox: NormalizedBoundingBox(
+                        x: 0.12,
+                        y: 0.18,
+                        width: 0.56,
+                        height: 0.74
+                    ),
+                    cropThreshold: 0.60,
+                    cropDecision: .applied
+                ),
                 captureMetadata: CaptureMetadata(
                     originalWidth: 4032,
                     originalHeight: 3024,
@@ -126,6 +139,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["ios_version"])
         XCTAssertNotNil(processing["device_model"])
         XCTAssertNotNil(processing["quality_scores"])
+        XCTAssertNotNil(processing["saliency_context"])
         XCTAssertNotNil(processing["capture_metadata"])
         XCTAssertNotNil(processing["crop_applied"])
         XCTAssertNotNil(processing["quality_override_context"])
@@ -137,6 +151,14 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(scores["exposure_mean"])
         XCTAssertNotNil(scores["saliency_coverage"])
         XCTAssertNotNil(scores["shortest_side"])
+
+        let saliency = try XCTUnwrap(processing["saliency_context"] as? [String: Any])
+        XCTAssertNotNil(saliency["status"])
+        XCTAssertNotNil(saliency["object_count"])
+        XCTAssertNotNil(saliency["coverage"])
+        XCTAssertNotNil(saliency["union_bounding_box"])
+        XCTAssertNotNil(saliency["crop_threshold"])
+        XCTAssertNotNil(saliency["crop_decision"])
 
         let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
         XCTAssertNotNil(capture["original_width"])
@@ -179,6 +201,7 @@ final class PipelineModelsTests: XCTestCase {
                 ocr: [],
                 barcodes: [],
                 classifications: [],
+                saliencyContext: nil,
                 captureMetadata: nil,
                 cropApplied: nil,
                 qualityOverrideContext: nil,
@@ -205,6 +228,18 @@ final class PipelineModelsTests: XCTestCase {
 
         // Pipeline ms is integer
         XCTAssertEqual(processing["pipeline_ms"] as? Int, 623)
+
+        let saliency = try XCTUnwrap(processing["saliency_context"] as? [String: Any])
+        XCTAssertEqual(saliency["status"] as? String, "detected")
+        XCTAssertEqual(saliency["object_count"] as? Int, 3)
+        XCTAssertEqual(try XCTUnwrap(saliency["crop_threshold"] as? Double), 0.60, accuracy: 1e-10)
+        XCTAssertEqual(saliency["crop_decision"] as? String, "applied")
+
+        let unionBox = try XCTUnwrap(saliency["union_bounding_box"] as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(unionBox["x"] as? Double), 0.12, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(unionBox["y"] as? Double), 0.18, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(unionBox["width"] as? Double), 0.56, accuracy: 1e-10)
+        XCTAssertEqual(try XCTUnwrap(unionBox["height"] as? Double), 0.74, accuracy: 1e-10)
 
         let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
         XCTAssertEqual(capture["original_width"] as? Int, 4032)

@@ -666,6 +666,19 @@ final class APIModelsTests: XCTestCase {
                         "saliency_coverage": 0.72,
                         "shortest_side": 1920
                     },
+                    "saliency_context": {
+                        "status": "detected",
+                        "object_count": 2,
+                        "coverage": 0.41,
+                        "union_bounding_box": {
+                            "x": 0.14,
+                            "y": 0.22,
+                            "width": 0.51,
+                            "height": 0.62
+                        },
+                        "crop_threshold": 0.6,
+                        "crop_decision": "applied"
+                    },
                     "capture_metadata": {
                         "original_width": 4032,
                         "original_height": 3024,
@@ -707,6 +720,11 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.version, "1")
         XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
         XCTAssertEqual(metadata.deviceProcessing.qualityScores.blurVariance, 150.5, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.saliencyContext?.status, .detected)
+        XCTAssertEqual(metadata.deviceProcessing.saliencyContext?.objectCount, 2)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.saliencyContext?.coverage), 0.41, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.saliencyContext?.cropDecision, .applied)
+        XCTAssertEqual(try XCTUnwrap(metadata.deviceProcessing.saliencyContext?.unionBoundingBox?.width), 0.51, accuracy: 1e-10)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalWidth, 4032)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalHeight, 3024)
         XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalBytes, 2_481_144)

@@ -38,13 +38,13 @@ final class ImageOptimizerTests: XCTestCase {
     func testLargeImageResizedToMaxDimension() {
         let image = makeSolidImage(width: 4032, height: 3024)
 
-        let (jpegData, _) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
-        let decoded = UIImage(data: jpegData)!
+        let decoded = UIImage(data: result.jpegData)!
         let longestSide = max(decoded.size.width, decoded.size.height)
         XCTAssertLessThanOrEqual(longestSide, 2048, "Longest side should be <= 2048")
     }
@@ -52,13 +52,13 @@ final class ImageOptimizerTests: XCTestCase {
     func testSmallImageNotResized() {
         let image = makeSolidImage(width: 1024, height: 768)
 
-        let (jpegData, _) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
-        let decoded = UIImage(data: jpegData)!
+        let decoded = UIImage(data: result.jpegData)!
         XCTAssertEqual(Int(decoded.size.width), 1024, "Width should remain unchanged")
         XCTAssertEqual(Int(decoded.size.height), 768, "Height should remain unchanged")
     }
@@ -66,13 +66,13 @@ final class ImageOptimizerTests: XCTestCase {
     func testResizePreservesAspectRatio() {
         let image = makeSolidImage(width: 4032, height: 3024)
 
-        let (jpegData, _) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
-        let decoded = UIImage(data: jpegData)!
+        let decoded = UIImage(data: result.jpegData)!
         let ratio = decoded.size.width / decoded.size.height
         let expectedRatio = 4032.0 / 3024.0
         XCTAssertEqual(ratio, expectedRatio, accuracy: 0.02, "Aspect ratio should be preserved")
@@ -85,14 +85,15 @@ final class ImageOptimizerTests: XCTestCase {
         // Normalized box covering 25% of the frame (0.5 * 0.5)
         let saliencyBox = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
 
-        let (_, cropInfo) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: saliencyBox,
             context: context
         )
 
-        XCTAssertNotNil(cropInfo, "CropInfo should be populated when saliency < 60%")
-        XCTAssertEqual(cropInfo?.originalSize, [2000, 2000])
+        XCTAssertNotNil(result.cropInfo, "CropInfo should be populated when saliency < 60%")
+        XCTAssertEqual(result.cropInfo?.originalSize, [2000, 2000])
+        XCTAssertEqual(result.cropDecision, .applied)
     }
 
     func testSaliencyBoxOver60PercentSkipsCrop() {
@@ -100,25 +101,27 @@ final class ImageOptimizerTests: XCTestCase {
         // Normalized box covering 81% of the frame (0.9 * 0.9)
         let saliencyBox = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
 
-        let (_, cropInfo) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: saliencyBox,
             context: context
         )
 
-        XCTAssertNil(cropInfo, "CropInfo should be nil when saliency >= 60%")
+        XCTAssertNil(result.cropInfo, "CropInfo should be nil when saliency >= 60%")
+        XCTAssertEqual(result.cropDecision, .skippedThresholdMet)
     }
 
     func testNilSaliencyBoxSkipsCrop() {
         let image = makeSolidImage(width: 2000, height: 2000)
 
-        let (_, cropInfo) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
-        XCTAssertNil(cropInfo, "CropInfo should be nil when saliency box is nil")
+        XCTAssertNil(result.cropInfo, "CropInfo should be nil when saliency box is nil")
+        XCTAssertEqual(result.cropDecision, .skippedNoBoundingBox)
     }
 
     func testCropInfoContainsPixelCoordinates() {
@@ -126,13 +129,13 @@ final class ImageOptimizerTests: XCTestCase {
         // Small box in the center: 20% coverage (0.4 * 0.5)
         let saliencyBox = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
 
-        let (_, cropInfo) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: saliencyBox,
             context: context
         )
 
-        let info = try! XCTUnwrap(cropInfo)
+        let info = try! XCTUnwrap(result.cropInfo)
         XCTAssertEqual(info.originalSize, [4000, 3000])
         // cropRect should be [x, y, width, height] in pixel coordinates
         XCTAssertEqual(info.cropRect.count, 4)
@@ -148,20 +151,20 @@ final class ImageOptimizerTests: XCTestCase {
     func testOutputIsValidJPEG() {
         let image = makeSolidImage(width: 800, height: 600)
 
-        let (jpegData, _) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
         // JPEG magic bytes: FF D8 FF
-        XCTAssertGreaterThan(jpegData.count, 3)
-        XCTAssertEqual(jpegData[0], 0xFF)
-        XCTAssertEqual(jpegData[1], 0xD8)
-        XCTAssertEqual(jpegData[2], 0xFF)
+        XCTAssertGreaterThan(result.jpegData.count, 3)
+        XCTAssertEqual(result.jpegData[0], 0xFF)
+        XCTAssertEqual(result.jpegData[1], 0xD8)
+        XCTAssertEqual(result.jpegData[2], 0xFF)
 
         // Can decode back to UIImage
-        let decoded = UIImage(data: jpegData)
+        let decoded = UIImage(data: result.jpegData)
         XCTAssertNotNil(decoded, "Output JPEG should be decodable to UIImage")
     }
 
@@ -171,14 +174,14 @@ final class ImageOptimizerTests: XCTestCase {
         let image = makeSolidImage(width: 800, height: 600)
 
         // Default parameter — autoEnhance should be false
-        let (jpegData1, _) = optimizer.optimize(
+        let result1 = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
         // Explicitly disabled
-        let (jpegData2, _) = optimizer.optimize(
+        let result2 = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context,
@@ -186,21 +189,21 @@ final class ImageOptimizerTests: XCTestCase {
         )
 
         // Both should produce identical output (no enhancement applied)
-        XCTAssertEqual(jpegData1, jpegData2, "Default and explicit false should produce identical output")
+        XCTAssertEqual(result1.jpegData, result2.jpegData, "Default and explicit false should produce identical output")
     }
 
     func testAutoEnhanceEnabledProducesDifferentOutput() {
         // Use a gradient image so auto-enhance has something to adjust
         let image = makeGradientImage(width: 800, height: 600)
 
-        let (jpegDefault, _) = optimizer.optimize(
+        let defaultResult = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context,
             autoEnhance: false
         )
 
-        let (jpegEnhanced, _) = optimizer.optimize(
+        let enhancedResult = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context,
@@ -210,8 +213,8 @@ final class ImageOptimizerTests: XCTestCase {
         // Auto-enhance may or may not change the image depending on the input.
         // If filters are applied, the output should differ. If CIImage decides
         // no adjustment is needed, they could be equal. We just verify both are valid.
-        XCTAssertNotNil(UIImage(data: jpegDefault))
-        XCTAssertNotNil(UIImage(data: jpegEnhanced))
+        XCTAssertNotNil(UIImage(data: defaultResult.jpegData))
+        XCTAssertNotNil(UIImage(data: enhancedResult.jpegData))
     }
 
     // MARK: - Edge Cases
@@ -219,13 +222,13 @@ final class ImageOptimizerTests: XCTestCase {
     func testExactly2048ImageNotResized() {
         let image = makeSolidImage(width: 2048, height: 1536)
 
-        let (jpegData, _) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: nil,
             context: context
         )
 
-        let decoded = UIImage(data: jpegData)!
+        let decoded = UIImage(data: result.jpegData)!
         XCTAssertEqual(Int(decoded.size.width), 2048)
         XCTAssertEqual(Int(decoded.size.height), 1536)
     }
@@ -236,14 +239,15 @@ final class ImageOptimizerTests: XCTestCase {
         // Small centered box: 10% coverage
         let saliencyBox = CGRect(x: 0.35, y: 0.35, width: 0.3, height: 0.3)
 
-        let (jpegData, cropInfo) = optimizer.optimize(
+        let result = optimizer.optimize(
             image,
             saliencyBoundingBox: saliencyBox,
             context: context
         )
 
-        XCTAssertNotNil(cropInfo, "Should have cropped")
-        let decoded = UIImage(data: jpegData)!
+        XCTAssertNotNil(result.cropInfo, "Should have cropped")
+        XCTAssertEqual(result.cropDecision, .applied)
+        let decoded = UIImage(data: result.jpegData)!
         let longestSide = max(decoded.size.width, decoded.size.height)
         // After crop + padding, image may still be > 2048, so resize kicks in
         XCTAssertLessThanOrEqual(longestSide, 2048, "Should be resized after crop if still too large")

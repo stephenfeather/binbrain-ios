@@ -90,17 +90,28 @@ actor ImagePipeline {
             if let failure = validation.failure {
                 throw PipelineError.qualityGateFailed(failure)
             }
+            let saliencyAnalysis = validation.saliencyAnalysis ?? SaliencyAnalysis(
+                status: .notRun,
+                objectCount: 0,
+                coverage: 0,
+                boundingBox: nil,
+                failure: nil
+            )
 
             // Stage 2: Optimize for upload
             let optimized = optimizer.optimize(
                 cgImage,
-                saliencyBoundingBox: validation.saliencyBoundingBox,
+                saliencyBoundingBox: saliencyAnalysis.boundingBox,
                 context: context
+            )
+            let saliencyContext = buildSaliencyContext(
+                from: saliencyAnalysis,
+                cropDecision: optimized.cropDecision
             )
 
             let cannyMetrics = edgeMetricsExtractor.extract(
                 from: cgImage,
-                saliencyBoundingBox: validation.saliencyBoundingBox,
+                saliencyBoundingBox: saliencyAnalysis.boundingBox,
                 cropInfo: optimized.cropInfo,
                 context: context
             )
@@ -116,6 +127,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: validation.scores,
                 extraction: extraction,
+                saliencyContext: saliencyContext,
                 captureMetadata: captureMetadata,
                 qualityOverrideContext: nil,
                 cannyMetrics: cannyMetrics,
@@ -160,24 +172,34 @@ actor ImagePipeline {
             let cgImage = capResolution(decodedImage)
 
             // Run saliency for smart crop (without the full gate validation)
-            let saliencyBox: CGRect?
+            let saliencyAnalysis: SaliencyAnalysis
             do {
-                saliencyBox = try await qualityGates.checkSaliencyOnly(cgImage)
+                saliencyAnalysis = try await qualityGates.checkSaliency(cgImage)
             } catch {
                 logger.error("Saliency check failed, proceeding without smart crop: \(error.localizedDescription, privacy: .private)")
-                saliencyBox = nil
+                saliencyAnalysis = SaliencyAnalysis(
+                    status: .analysisFailed,
+                    objectCount: 0,
+                    coverage: 0,
+                    boundingBox: nil,
+                    failure: nil
+                )
             }
 
             // Stage 2: Optimize
             let optimized = optimizer.optimize(
                 cgImage,
-                saliencyBoundingBox: saliencyBox,
+                saliencyBoundingBox: saliencyAnalysis.boundingBox,
                 context: context
+            )
+            let saliencyContext = buildSaliencyContext(
+                from: saliencyAnalysis,
+                cropDecision: saliencyAnalysis.status == .analysisFailed ? .skippedAnalysisFailed : optimized.cropDecision
             )
 
             let cannyMetrics = edgeMetricsExtractor.extract(
                 from: cgImage,
-                saliencyBoundingBox: saliencyBox,
+                saliencyBoundingBox: saliencyAnalysis.boundingBox,
                 cropInfo: optimized.cropInfo,
                 context: context
             )
@@ -206,6 +228,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: scores,
                 extraction: extraction,
+                saliencyContext: saliencyContext,
                 captureMetadata: captureMetadata,
                 qualityOverrideContext: overrideContext,
                 cannyMetrics: cannyMetrics,
@@ -317,6 +340,7 @@ actor ImagePipeline {
         cropInfo: CropInfo?,
         scores: QualityScores,
         extraction: (ocr: [OCRResult], barcodes: [BarcodeResult], classifications: [ClassificationResult]),
+        saliencyContext: SaliencyContext?,
         captureMetadata: CaptureMetadata?,
         qualityOverrideContext: QualityOverrideContext?,
         cannyMetrics: CannyMetrics?,
@@ -331,6 +355,7 @@ actor ImagePipeline {
             ocr: extraction.ocr,
             barcodes: extraction.barcodes,
             classifications: extraction.classifications,
+            saliencyContext: saliencyContext,
             captureMetadata: captureMetadata,
             cropApplied: cropInfo,
             qualityOverrideContext: qualityOverrideContext,
@@ -352,6 +377,29 @@ actor ImagePipeline {
             originalHeight: cgImage.height,
             originalBytes: imageData.count,
             inputFormat: Self.inferInputFormat(from: imageData)
+        )
+    }
+
+    private func buildSaliencyContext(
+        from analysis: SaliencyAnalysis,
+        cropDecision: SaliencyCropDecision
+    ) -> SaliencyContext {
+        let normalizedBox = analysis.boundingBox.map {
+            NormalizedBoundingBox(
+                x: Double($0.origin.x),
+                y: Double($0.origin.y),
+                width: Double($0.width),
+                height: Double($0.height)
+            )
+        }
+
+        return SaliencyContext(
+            status: analysis.status,
+            objectCount: analysis.objectCount,
+            coverage: analysis.coverage,
+            unionBoundingBox: normalizedBox,
+            cropThreshold: ImageOptimizer.cropThresholdValue,
+            cropDecision: cropDecision
         )
     }
 

@@ -25,6 +25,15 @@ nonisolated private let blurGateLogger = Logger(subsystem: "com.binbrain.app", c
 nonisolated let cropDebugLogger = Logger(subsystem: "com.binbrain.app", category: "crop-debug")
 nonisolated private let qualitySignposter = OSSignposter(subsystem: "com.binbrain.app", category: "Vision")
 
+/// Structured result of the saliency-analysis stage before upload metadata is assembled.
+struct SaliencyAnalysis: Sendable {
+    let status: SaliencyDetectionStatus
+    let objectCount: Int
+    let coverage: Double
+    let boundingBox: CGRect?
+    let failure: QualityGateFailure?
+}
+
 // MARK: - Thresholds
 
 /// Blur detection threshold for a 1024px shortest side.
@@ -57,7 +66,7 @@ nonisolated struct QualityGates: Sendable {
     ///
     /// - Parameter cgImage: The image to validate.
     /// - Returns: A tuple of all computed scores and an optional failure.
-    func validate(_ cgImage: CGImage) async throws -> (scores: QualityScores, failure: QualityGateFailure?, saliencyBoundingBox: CGRect?) {
+    func validate(_ cgImage: CGImage) async throws -> (scores: QualityScores, failure: QualityGateFailure?, saliencyAnalysis: SaliencyAnalysis?) {
         var blurVariance: Double = 0
         var exposureMean: Double = 0
         var saliencyCoverage: Double = 0
@@ -101,16 +110,16 @@ nonisolated struct QualityGates: Sendable {
         }
 
         // Gate 4: Saliency
-        let saliencyResult = try await checkSaliency(cgImage)
-        saliencyCoverage = saliencyResult.coverage
-        if let failure = saliencyResult.failure {
+        let saliencyAnalysis = try await checkSaliency(cgImage)
+        saliencyCoverage = saliencyAnalysis.coverage
+        if let failure = saliencyAnalysis.failure {
             let scores = QualityScores(
                 blurVariance: blurVariance,
                 exposureMean: exposureMean,
                 saliencyCoverage: saliencyCoverage,
                 shortestSide: shortestSide
             )
-            return (scores, failure, saliencyResult.boundingBox)
+            return (scores, failure, saliencyAnalysis)
         }
 
         let scores = QualityScores(
@@ -119,7 +128,7 @@ nonisolated struct QualityGates: Sendable {
             saliencyCoverage: saliencyCoverage,
             shortestSide: shortestSide
         )
-        return (scores, nil, saliencyResult.boundingBox)
+        return (scores, nil, saliencyAnalysis)
     }
 
     // MARK: - Gate 1: Resolution
@@ -377,7 +386,7 @@ nonisolated struct QualityGates: Sendable {
     ///
     /// - Parameter cgImage: The image to check.
     /// - Returns: The saliency coverage, the bounding box of the most salient region, and an optional failure.
-    func checkSaliency(_ cgImage: CGImage) async throws -> (coverage: Double, boundingBox: CGRect?, failure: QualityGateFailure?) {
+    func checkSaliency(_ cgImage: CGImage) async throws -> SaliencyAnalysis {
         let saliencyID = qualitySignposter.makeSignpostID()
         let saliencyInterval = qualitySignposter.beginInterval("vision_saliency", id: saliencyID)
         qualitySignposter.emitEvent(
@@ -386,7 +395,7 @@ nonisolated struct QualityGates: Sendable {
             "width=\(cgImage.width, privacy: .public) height=\(cgImage.height, privacy: .public)"
         )
         return try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<(coverage: Double, boundingBox: CGRect?, failure: QualityGateFailure?), Error>) in
+            (continuation: CheckedContinuation<SaliencyAnalysis, Error>) in
             visionQueue.async {
                 let request = VNGenerateObjectnessBasedSaliencyImageRequest()
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
@@ -421,7 +430,13 @@ nonisolated struct QualityGates: Sendable {
                         "objects=\(0, privacy: .public) coverage=\(0.0, privacy: .public)"
                     )
                     qualitySignposter.endInterval("vision_saliency", saliencyInterval)
-                    continuation.resume(returning: (0, nil, noObjectsFailure))
+                    continuation.resume(returning: SaliencyAnalysis(
+                        status: .noObjects,
+                        objectCount: 0,
+                        coverage: 0,
+                        boundingBox: nil,
+                        failure: noObjectsFailure
+                    ))
                     return
                 }
 
@@ -434,7 +449,13 @@ nonisolated struct QualityGates: Sendable {
                         "objects=\(0, privacy: .public) coverage=\(0.0, privacy: .public)"
                     )
                     qualitySignposter.endInterval("vision_saliency", saliencyInterval)
-                    continuation.resume(returning: (0, nil, noObjectsFailure))
+                    continuation.resume(returning: SaliencyAnalysis(
+                        status: .noObjects,
+                        objectCount: 0,
+                        coverage: 0,
+                        boundingBox: nil,
+                        failure: noObjectsFailure
+                    ))
                     return
                 }
 
@@ -462,7 +483,13 @@ nonisolated struct QualityGates: Sendable {
                     "objects=\(salientObjects.count, privacy: .public) coverage=\(coverage, privacy: .public)"
                 )
                 qualitySignposter.endInterval("vision_saliency", saliencyInterval)
-                continuation.resume(returning: (coverage, unionBox, nil))
+                continuation.resume(returning: SaliencyAnalysis(
+                    status: .detected,
+                    objectCount: salientObjects.count,
+                    coverage: coverage,
+                    boundingBox: unionBox,
+                    failure: nil
+                ))
             }
         }
     }

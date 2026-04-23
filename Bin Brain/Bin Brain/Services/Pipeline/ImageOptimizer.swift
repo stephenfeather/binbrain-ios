@@ -45,6 +45,9 @@ nonisolated struct ImageOptimizer: Sendable {
     /// Padding factor added around the saliency bounding box.
     private static let cropPadding: CGFloat = 0.15
 
+    /// Shared threshold value surfaced for metadata assembly.
+    static var cropThresholdValue: Double { Double(cropThreshold) }
+
     // MARK: - Public API
 
     /// Optimizes a CGImage for upload.
@@ -61,7 +64,7 @@ nonisolated struct ImageOptimizer: Sendable {
         saliencyBoundingBox: CGRect?,
         context: CIContext,
         autoEnhance: Bool = false
-    ) -> (jpegData: Data, cropInfo: CropInfo?) {
+    ) -> (jpegData: Data, cropInfo: CropInfo?, cropDecision: SaliencyCropDecision) {
         let transformID = optimizerSignposter.makeSignpostID()
         let transformInterval = optimizerSignposter.beginInterval("media_transform", id: transformID)
         let imageWidth = cgImage.width
@@ -74,6 +77,7 @@ nonisolated struct ImageOptimizer: Sendable {
         )
         var currentImage = cgImage
         var cropInfo: CropInfo?
+        var cropDecision: SaliencyCropDecision = .skippedNoBoundingBox
 
         // Stage 1: Smart crop
         optimizerCropLogger.notice("[optimize] in image=\(imageWidth, privacy: .public)x\(imageHeight, privacy: .public) bbox=\(saliencyBoundingBox.map { "(\($0.origin.x),\($0.origin.y),\($0.width),\($0.height))" } ?? "nil", privacy: .public)")
@@ -87,6 +91,7 @@ nonisolated struct ImageOptimizer: Sendable {
                 )
                 optimizerCropLogger.notice("[optimize] coverage=\(coverage, privacy: .public) < threshold=\(Self.cropThreshold, privacy: .public) → CROPPING to pixelRect=(x=\(cropRect.origin.x, privacy: .public), y=\(cropRect.origin.y, privacy: .public), w=\(cropRect.width, privacy: .public), h=\(cropRect.height, privacy: .public)) padding=\(Self.cropPadding, privacy: .public)")
                 if let cropped = cgImage.cropping(to: cropRect) {
+                    cropDecision = .applied
                     cropInfo = CropInfo(
                         originalSize: [imageWidth, imageHeight],
                         cropRect: [
@@ -99,12 +104,15 @@ nonisolated struct ImageOptimizer: Sendable {
                     currentImage = cropped
                     optimizerCropLogger.notice("[optimize] cropped result=\(cropped.width, privacy: .public)x\(cropped.height, privacy: .public)")
                 } else {
+                    cropDecision = .skippedCropFailed
                     optimizerCropLogger.error("[optimize] cgImage.cropping(to:) returned nil — pixelRect may be out of bounds; uploading uncropped frame")
                 }
             } else {
+                cropDecision = .skippedThresholdMet
                 optimizerCropLogger.notice("[optimize] coverage=\(coverage, privacy: .public) ≥ threshold=\(Self.cropThreshold, privacy: .public) → SKIP crop, full frame")
             }
         } else {
+            cropDecision = .skippedNoBoundingBox
             optimizerCropLogger.notice("[optimize] no saliency bbox → SKIP crop, full frame")
         }
 
@@ -135,7 +143,7 @@ nonisolated struct ImageOptimizer: Sendable {
         )
         optimizerSignposter.endInterval("media_transform", transformInterval)
 
-        return (jpegData: jpegData, cropInfo: cropInfo)
+        return (jpegData: jpegData, cropInfo: cropInfo, cropDecision: cropDecision)
     }
 
     // MARK: - Smart Crop
