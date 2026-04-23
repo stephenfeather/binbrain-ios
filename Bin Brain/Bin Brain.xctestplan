@@ -1,0 +1,37 @@
+{
+  "configurations" : [
+    {
+      "id" : "7E4D6C54-2F40-4E4D-8E4A-15B26EE5C9C1",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Bin Brain.xcodeproj",
+      "identifier" : "5DF45F0C2F4FBE270022FF18",
+      "name" : "Bin Brain"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Bin Brain.xcodeproj",
+        "identifier" : "5DF45F1B2F4FBE290022FF18",
+        "name" : "Bin BrainTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Bin Brain.xcodeproj",
+        "identifier" : "5DF45F252F4FBE290022FF18",
+        "name" : "Bin BrainUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
