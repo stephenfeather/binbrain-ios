@@ -52,6 +52,15 @@ final class PipelineModelsTests: XCTestCase {
                     originalSize: [4032, 3024],
                     cropRect: [420, 310, 3200, 2400]
                 ),
+                qualityOverrideContext: QualityOverrideContext(
+                    bypassed: true,
+                    failedGate: .blur,
+                    message: "Image is too blurry — hold still and retake",
+                    measured: 1.28,
+                    threshold: 2.0,
+                    label: "Blur variance",
+                    thresholdLabel: "minimum"
+                ),
                 cannyMetrics: CannyMetrics(
                     analysisLongestSide: 512,
                     gaussianSigma: 1.6,
@@ -112,6 +121,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["device_model"])
         XCTAssertNotNil(processing["quality_scores"])
         XCTAssertNotNil(processing["crop_applied"])
+        XCTAssertNotNil(processing["quality_override_context"])
         XCTAssertNotNil(processing["canny_metrics"])
 
         // Quality scores level
@@ -125,6 +135,11 @@ final class PipelineModelsTests: XCTestCase {
         let crop = try XCTUnwrap(processing["crop_applied"] as? [String: Any])
         XCTAssertNotNil(crop["original_size"])
         XCTAssertNotNil(crop["crop_rect"])
+
+        let override = try XCTUnwrap(processing["quality_override_context"] as? [String: Any])
+        XCTAssertNotNil(override["bypassed"])
+        XCTAssertNotNil(override["failed_gate"])
+        XCTAssertNotNil(override["threshold_label"])
 
         let canny = try XCTUnwrap(processing["canny_metrics"] as? [String: Any])
         XCTAssertNotNil(canny["analysis_longest_side"])
@@ -152,6 +167,7 @@ final class PipelineModelsTests: XCTestCase {
                 barcodes: [],
                 classifications: [],
                 cropApplied: nil,
+                qualityOverrideContext: nil,
                 cannyMetrics: nil
             )
         )
@@ -189,6 +205,11 @@ final class PipelineModelsTests: XCTestCase {
         // Classifications have label + confidence
         let classifications = try XCTUnwrap(processing["classifications"] as? [[String: Any]])
         XCTAssertEqual(classifications[0]["label"] as? String, "screw")
+
+        let override = try XCTUnwrap(processing["quality_override_context"] as? [String: Any])
+        XCTAssertEqual(override["bypassed"] as? Bool, true)
+        XCTAssertEqual(override["failed_gate"] as? String, "blur")
+        XCTAssertEqual(override["threshold_label"] as? String, "minimum")
 
         let canny = try XCTUnwrap(processing["canny_metrics"] as? [String: Any])
         XCTAssertEqual(canny["analysis_longest_side"] as? Int, 512)

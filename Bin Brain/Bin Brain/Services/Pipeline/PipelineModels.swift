@@ -112,6 +112,8 @@ struct DeviceProcessing: Codable, Equatable {
     let classifications: [ClassificationResult]
     /// Crop information, if a smart crop was applied.
     let cropApplied: CropInfo?
+    /// Original quality-gate failure carried through when the user bypasses it.
+    let qualityOverrideContext: QualityOverrideContext?
     /// Optional edge-structure metrics derived from Core Image Canny analysis.
     let cannyMetrics: CannyMetrics?
 
@@ -125,7 +127,66 @@ struct DeviceProcessing: Codable, Equatable {
         case barcodes
         case classifications
         case cropApplied = "crop_applied"
+        case qualityOverrideContext = "quality_override_context"
         case cannyMetrics = "canny_metrics"
+    }
+}
+
+/// Captures the original gate failure when the user chooses "Upload Anyway."
+struct QualityOverrideContext: Codable, Equatable {
+    /// True when the user bypassed the quality gate and continued.
+    let bypassed: Bool
+    /// The gate that originally failed.
+    let failedGate: QualityGate
+    /// User-facing explanation shown at the rejection screen.
+    let message: String
+    /// The measured value that tripped the gate.
+    let measured: Double
+    /// The threshold the measured value was compared against.
+    let threshold: Double
+    /// User-facing label for the metric.
+    let label: String
+    /// User-facing threshold direction label.
+    let thresholdLabel: String
+
+    init(
+        bypassed: Bool = true,
+        failedGate: QualityGate,
+        message: String,
+        measured: Double,
+        threshold: Double,
+        label: String,
+        thresholdLabel: String
+    ) {
+        self.bypassed = bypassed
+        self.failedGate = failedGate
+        self.message = message
+        self.measured = measured
+        self.threshold = threshold
+        self.label = label
+        self.thresholdLabel = thresholdLabel
+    }
+
+    init(from failure: QualityGateFailure) {
+        self.init(
+            bypassed: true,
+            failedGate: failure.gate,
+            message: failure.message,
+            measured: failure.metrics.measured,
+            threshold: failure.metrics.threshold,
+            label: failure.metrics.label,
+            thresholdLabel: failure.metrics.thresholdLabel
+        )
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case bypassed
+        case failedGate = "failed_gate"
+        case message
+        case measured
+        case threshold
+        case label
+        case thresholdLabel = "threshold_label"
     }
 }
 

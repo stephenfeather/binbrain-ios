@@ -155,11 +155,48 @@ final class ImagePipelineTests: XCTestCase {
             XCTAssertEqual(processing.qualityScores.blurVariance, 0)
             XCTAssertEqual(processing.qualityScores.exposureMean, 0)
             XCTAssertEqual(processing.qualityScores.saliencyCoverage, 0)
+            XCTAssertNil(processing.qualityOverrideContext)
             XCTAssertNotNil(processing.cannyMetrics)
 
             _ = processing.ocr
             _ = processing.barcodes
             _ = processing.classifications
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable — requires device testing"
+            )
+            throw error
+        }
+    }
+
+    func testProcessSkippingGatesCarriesQualityOverrideContext() async throws {
+        guard let jpegData = makeTestJPEG(width: 100, height: 100) else {
+            XCTFail("Failed to create test JPEG")
+            return
+        }
+
+        let failure = QualityGateFailure(
+            gate: .blur,
+            message: "Image is too blurry — hold still and retake",
+            metrics: QualityGateMetrics(
+                measured: 1.28,
+                threshold: 2.0,
+                label: "Blur variance",
+                thresholdLabel: "minimum"
+            )
+        )
+
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: failure)
+            let override = try XCTUnwrap(result.deviceMetadata.deviceProcessing.qualityOverrideContext)
+            XCTAssertTrue(override.bypassed)
+            XCTAssertEqual(override.failedGate, .blur)
+            XCTAssertEqual(override.message, failure.message)
+            XCTAssertEqual(override.measured, 1.28, accuracy: 0.0001)
+            XCTAssertEqual(override.threshold, 2.0, accuracy: 0.0001)
+            XCTAssertEqual(override.label, "Blur variance")
+            XCTAssertEqual(override.thresholdLabel, "minimum")
         } catch {
             try XCTSkipIf(
                 error.localizedDescription.contains("espresso"),
@@ -204,6 +241,7 @@ final class ImagePipelineTests: XCTestCase {
             let data = try encoder.encode(result.deviceMetadata)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
+            XCTAssertNil(processing["quality_override_context"])
             XCTAssertNotNil(processing["canny_metrics"])
         } catch {
             try XCTSkipIf(

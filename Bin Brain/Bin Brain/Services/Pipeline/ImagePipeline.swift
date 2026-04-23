@@ -115,6 +115,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: validation.scores,
                 extraction: extraction,
+                qualityOverrideContext: nil,
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
             )
@@ -139,7 +140,7 @@ actor ImagePipeline {
     /// - Parameter imageData: Raw JPEG bytes from the camera capture.
     /// - Returns: A `PipelineResult` with optimized image data and metadata.
     /// - Throws: `PipelineError.invalidImageData` if the input cannot be decoded.
-    func processSkippingQualityGates(_ imageData: Data) async throws -> PipelineResult {
+    func processSkippingQualityGates(_ imageData: Data, originalFailure: QualityGateFailure? = nil) async throws -> PipelineResult {
         let processID = pipelineSignposter.makeSignpostID()
         let processInterval = pipelineSignposter.beginInterval("image_pipeline_process_skip_quality", id: processID)
         defer { pipelineSignposter.endInterval("image_pipeline_process_skip_quality", processInterval) }
@@ -196,6 +197,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: scores,
                 extraction: extraction,
+                qualityOverrideContext: originalFailure.map(QualityOverrideContext.init(from:)),
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
             )
@@ -304,6 +306,7 @@ actor ImagePipeline {
         cropInfo: CropInfo?,
         scores: QualityScores,
         extraction: (ocr: [OCRResult], barcodes: [BarcodeResult], classifications: [ClassificationResult]),
+        qualityOverrideContext: QualityOverrideContext?,
         cannyMetrics: CannyMetrics?,
         pipelineMs: Int
     ) -> PipelineResult {
@@ -317,6 +320,7 @@ actor ImagePipeline {
             barcodes: extraction.barcodes,
             classifications: extraction.classifications,
             cropApplied: cropInfo,
+            qualityOverrideContext: qualityOverrideContext,
             cannyMetrics: cannyMetrics
         )
 

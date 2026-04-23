@@ -670,6 +670,15 @@ final class APIModelsTests: XCTestCase {
                     "barcodes": [],
                     "classifications": [],
                     "crop_applied": null,
+                    "quality_override_context": {
+                        "bypassed": true,
+                        "failed_gate": "blur",
+                        "message": "Image is too blurry — hold still and retake",
+                        "measured": 1.28,
+                        "threshold": 2.0,
+                        "label": "Blur variance",
+                        "threshold_label": "minimum"
+                    },
                     "canny_metrics": {
                         "analysis_longest_side": 512,
                         "gaussian_sigma": 1.6,
@@ -692,6 +701,7 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.version, "1")
         XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
         XCTAssertEqual(metadata.deviceProcessing.qualityScores.blurVariance, 150.5, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.qualityOverrideContext?.failedGate, .blur)
         XCTAssertEqual(metadata.deviceProcessing.cannyMetrics?.analysisLongestSide, 512)
     }
 

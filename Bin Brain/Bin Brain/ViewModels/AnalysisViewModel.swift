@@ -336,6 +336,7 @@ final class AnalysisViewModel {
             if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
         }
 
+        let originalFailure = lastQualityFailure
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         preliminaryClassifications = []
@@ -346,7 +347,7 @@ final class AnalysisViewModel {
         var metadataString: String?
 
         do {
-            let result = try await pipeline.processSkippingQualityGates(jpegData)
+            let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: originalFailure)
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr

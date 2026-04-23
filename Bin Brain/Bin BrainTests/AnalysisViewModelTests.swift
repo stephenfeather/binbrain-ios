@@ -50,6 +50,23 @@ private func makeAnalysisMockResponse(statusCode: Int) -> HTTPURLResponse {
     )!
 }
 
+private extension URLRequest {
+    var bodyData: Data? {
+        if let data = httpBody { return data }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            guard read > 0 else { break }
+            data.append(contentsOf: buffer.prefix(read))
+        }
+        return data
+    }
+}
+
 // MARK: - AnalysisViewModelTests
 
 // MARK: - Test double for BackgroundTaskRunning
@@ -514,6 +531,39 @@ final class AnalysisViewModelTests: XCTestCase {
 
         XCTAssertEqual(runner.endCount, 1,
                        "Late expiration after defer cleanup must not double-release the grant")
+    }
+
+    func testOverrideQualityGateIncludesFailureContextInDeviceMetadata() async throws {
+        let tinyJPEG = try XCTUnwrap(makeTinyJPEG(), "failed to synthesize tiny JPEG")
+
+        let failingClient = makeMockAPIClient { _ in
+            XCTFail("No network call expected when resolution gate fails")
+            throw URLError(.cancelled)
+        }
+        await sut.run(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: failingClient)
+        let failure = try XCTUnwrap(sut.lastQualityFailure, "precondition: quality failure should be captured")
+        XCTAssertEqual(failure.gate, .resolution)
+
+        var capturedIngestBody = ""
+        let client = makeMockAPIClient { [self] request in
+            if request.url?.path.contains("/suggest") == true {
+                return (makeAnalysisMockResponse(statusCode: 200), suggestSuccessJSON)
+            }
+            capturedIngestBody = request.bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            return (makeAnalysisMockResponse(statusCode: 200), ingestSuccessJSON)
+        }
+
+        await sut.overrideQualityGate(jpegData: tinyJPEG, binId: "BIN-0001", apiClient: client)
+
+        try XCTSkipIf(
+            !capturedIngestBody.contains("device_metadata"),
+            "Image pipeline fell back to raw upload without metadata on this simulator clone"
+        )
+        XCTAssertTrue(capturedIngestBody.contains("quality_override_context"),
+                      "device_metadata should include quality_override_context on Upload Anyway")
+        XCTAssertTrue(capturedIngestBody.contains("\"bypassed\":true"))
+        XCTAssertTrue(capturedIngestBody.contains("\"failed_gate\":\"resolution\""))
+        XCTAssertTrue(capturedIngestBody.contains("\"threshold_label\":\"minimum\""))
     }
 
     func testReSuggestReleasesBackgroundTaskOnSuccess() async {
