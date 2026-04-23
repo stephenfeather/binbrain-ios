@@ -172,6 +172,8 @@ struct DeviceProcessing: Codable, Equatable {
     let qualityOverrideContext: QualityOverrideContext?
     /// Optional edge-structure metrics derived from Core Image Canny analysis.
     let cannyMetrics: CannyMetrics?
+    /// Cataloging-session supervision signals (retakes, quality bypasses).
+    let userBehavior: UserBehavior?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -188,6 +190,35 @@ struct DeviceProcessing: Codable, Equatable {
         case cropApplied = "crop_applied"
         case qualityOverrideContext = "quality_override_context"
         case cannyMetrics = "canny_metrics"
+        case userBehavior = "user_behavior"
+    }
+}
+
+/// Cataloging-session supervision telemetry. Counts survive across quality
+/// retries but reset when the cataloging sheet is dismissed.
+struct UserBehavior: Codable, Equatable {
+    /// Number of Retake Photo taps in this cataloging session before the
+    /// current photo was captured.
+    let retakeCount: Int
+    /// Cumulative Upload Anyway (quality bypass) taps in this cataloging
+    /// session, including the current photo if it was bypassed.
+    let qualityBypassCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case retakeCount = "retake_count"
+        case qualityBypassCount = "quality_bypass_count"
+    }
+}
+
+/// Cataloging-session supervision snapshot supplied by the capture layer to
+/// the pipeline. Mirrors `UserBehavior` but is a pure input value type.
+struct UserBehaviorContext: Equatable, Sendable {
+    let retakeCount: Int
+    let qualityBypassCount: Int
+
+    init(retakeCount: Int = 0, qualityBypassCount: Int = 0) {
+        self.retakeCount = retakeCount
+        self.qualityBypassCount = qualityBypassCount
     }
 }
 

@@ -122,6 +122,10 @@ final class PipelineModelsTests: XCTestCase {
                     fullFrameEdgeDensity: 0.084,
                     saliencyEdgeDensity: 0.137,
                     uploadFrameEdgeDensity: 0.121
+                ),
+                userBehavior: UserBehavior(
+                    retakeCount: 2,
+                    qualityBypassCount: 1
                 )
             )
         )
@@ -178,6 +182,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["crop_applied"])
         XCTAssertNotNil(processing["quality_override_context"])
         XCTAssertNotNil(processing["canny_metrics"])
+        XCTAssertNotNil(processing["user_behavior"])
 
         // Quality scores level
         let scores = try XCTUnwrap(processing["quality_scores"] as? [String: Any])
@@ -263,7 +268,8 @@ final class PipelineModelsTests: XCTestCase {
                 optimizedUpload: nil,
                 cropApplied: nil,
                 qualityOverrideContext: nil,
-                cannyMetrics: nil
+                cannyMetrics: nil,
+                userBehavior: nil
             )
         )
         let data = try encoder.encode(metadata)
@@ -271,6 +277,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertEqual(metadata, decoded)
         XCTAssertNil(decoded.deviceProcessing.cropApplied)
         XCTAssertNil(decoded.deviceProcessing.cannyMetrics)
+        XCTAssertNil(decoded.deviceProcessing.userBehavior)
     }
 
     // MARK: - Spec Format Match
@@ -360,6 +367,30 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertEqual(capture["focus_mode"] as? String, "continuousAutoFocus")
         XCTAssertEqual(try XCTUnwrap(capture["lens_position"] as? Double), 0.42, accuracy: 1e-10)
         XCTAssertEqual(try XCTUnwrap(capture["focal_length_mm"] as? Double), 6.86, accuracy: 1e-10)
+    }
+
+    // MARK: - User Behavior
+
+    func testUserBehaviorRoundTripsAndEncodesSnakeCase() throws {
+        let original = UserBehavior(retakeCount: 3, qualityBypassCount: 1)
+        let data = try encoder.encode(original)
+        let decoded = try decoder.decode(UserBehavior.self, from: data)
+        XCTAssertEqual(original, decoded)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["retake_count"] as? Int, 3)
+        XCTAssertEqual(json["quality_bypass_count"] as? Int, 1)
+        XCTAssertNil(json["retakeCount"], "Should not have camelCase key")
+    }
+
+    func testDeviceMetadataUserBehaviorEncodesAtSidecarRoot() throws {
+        let metadata = makeSampleMetadata()
+        let data = try encoder.encode(metadata)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
+        let behavior = try XCTUnwrap(processing["user_behavior"] as? [String: Any])
+        XCTAssertEqual(behavior["retake_count"] as? Int, 2)
+        XCTAssertEqual(behavior["quality_bypass_count"] as? Int, 1)
     }
 
     /// Backward compatibility: a CaptureMetadata built without any camera

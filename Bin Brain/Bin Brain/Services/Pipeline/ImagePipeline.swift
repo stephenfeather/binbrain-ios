@@ -68,10 +68,16 @@ actor ImagePipeline {
     ///   - imageData: Raw JPEG bytes from the camera capture.
     ///   - cameraContext: Optional capture-time camera state (ISO, exposure,
     ///     focal length, lens model, etc.). Merged into `captureMetadata`.
+    ///   - userBehavior: Optional cataloging-session supervision counts
+    ///     (retakes, quality bypasses). Attached to the metadata sidecar.
     /// - Returns: A `PipelineResult` with optimized image data, metadata sidecar, and quality scores.
     /// - Throws: `PipelineError.qualityGateFailed` if a quality check fails,
     ///   or `PipelineError.invalidImageData` if the input cannot be decoded.
-    func process(_ imageData: Data, cameraContext: CameraCaptureContext? = nil) async throws -> PipelineResult {
+    func process(
+        _ imageData: Data,
+        cameraContext: CameraCaptureContext? = nil,
+        userBehavior: UserBehaviorContext? = nil
+    ) async throws -> PipelineResult {
         let processID = pipelineSignposter.makeSignpostID()
         let processInterval = pipelineSignposter.beginInterval("image_pipeline_process", id: processID)
         defer { pipelineSignposter.endInterval("image_pipeline_process", processInterval) }
@@ -142,6 +148,7 @@ actor ImagePipeline {
                 ),
                 qualityOverrideContext: nil,
                 cannyMetrics: cannyMetrics,
+                userBehavior: userBehavior.map(Self.userBehavior(from:)),
                 pipelineMs: pipelineMs
             )
             pipelineSignposter.emitEvent(
@@ -166,12 +173,14 @@ actor ImagePipeline {
     ///   - imageData: Raw JPEG bytes from the camera capture.
     ///   - originalFailure: The quality-gate failure being overridden, when known.
     ///   - cameraContext: Optional capture-time camera state, merged into `captureMetadata`.
+    ///   - userBehavior: Optional cataloging-session supervision counts.
     /// - Returns: A `PipelineResult` with optimized image data and metadata.
     /// - Throws: `PipelineError.invalidImageData` if the input cannot be decoded.
     func processSkippingQualityGates(
         _ imageData: Data,
         originalFailure: QualityGateFailure? = nil,
-        cameraContext: CameraCaptureContext? = nil
+        cameraContext: CameraCaptureContext? = nil,
+        userBehavior: UserBehaviorContext? = nil
     ) async throws -> PipelineResult {
         let processID = pipelineSignposter.makeSignpostID()
         let processInterval = pipelineSignposter.beginInterval("image_pipeline_process_skip_quality", id: processID)
@@ -258,6 +267,7 @@ actor ImagePipeline {
                 ),
                 qualityOverrideContext: overrideContext,
                 cannyMetrics: cannyMetrics,
+                userBehavior: userBehavior.map(Self.userBehavior(from:)),
                 pipelineMs: pipelineMs
             )
             pipelineSignposter.emitEvent(
@@ -371,6 +381,7 @@ actor ImagePipeline {
         optimizedUpload: OptimizedUploadStats?,
         qualityOverrideContext: QualityOverrideContext?,
         cannyMetrics: CannyMetrics?,
+        userBehavior: UserBehavior?,
         pipelineMs: Int
     ) -> PipelineResult {
         let deviceProcessing = DeviceProcessing(
@@ -387,7 +398,8 @@ actor ImagePipeline {
             optimizedUpload: optimizedUpload,
             cropApplied: cropInfo,
             qualityOverrideContext: qualityOverrideContext,
-            cannyMetrics: cannyMetrics
+            cannyMetrics: cannyMetrics,
+            userBehavior: userBehavior
         )
 
         let metadata = DeviceMetadata(deviceProcessing: deviceProcessing)
@@ -466,6 +478,13 @@ actor ImagePipeline {
             unionBoundingBox: normalizedBox,
             cropThreshold: ImageOptimizer.cropThresholdValue,
             cropDecision: cropDecision
+        )
+    }
+
+    private static func userBehavior(from context: UserBehaviorContext) -> UserBehavior {
+        UserBehavior(
+            retakeCount: context.retakeCount,
+            qualityBypassCount: context.qualityBypassCount
         )
     }
 

@@ -109,6 +109,11 @@ final class AnalysisViewModel {
     /// capture context as the original (rejected) attempt.
     private var lastCameraContext: CameraCaptureContext?
 
+    /// Cataloging-session supervision counts from the most recent `run(...)`
+    /// invocation. `overrideQualityGate(...)` replaces this with an updated
+    /// snapshot that reflects the just-incremented bypass count.
+    private var lastUserBehavior: UserBehaviorContext?
+
     // MARK: - Dependencies
 
     /// The on-device image processing pipeline.
@@ -155,10 +160,14 @@ final class AnalysisViewModel {
     ///     exposure, focal length, lens model, etc.) sourced from the
     ///     `AVCapturePhoto` delegate. Forwarded into `ImagePipeline.process`
     ///     so it lands in `device_metadata.capture_metadata`.
-    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil) async {
+    ///   - userBehavior: Optional cataloging-session supervision snapshot
+    ///     (retake_count, quality_bypass_count). Forwarded into
+    ///     `ImagePipeline.process` so it lands in `device_metadata.user_behavior`.
+    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil, userBehavior: UserBehaviorContext? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastCameraContext = cameraContext
+        lastUserBehavior = userBehavior
         preliminaryClassifications = []
         preliminaryOCR = []
 
@@ -215,7 +224,7 @@ final class AnalysisViewModel {
         var metadataString: String?
 
         do {
-            let result = try await pipeline.process(jpegData, cameraContext: cameraContext)
+            let result = try await pipeline.process(jpegData, cameraContext: cameraContext, userBehavior: userBehavior)
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
@@ -329,7 +338,11 @@ final class AnalysisViewModel {
     ///   - binId: The bin identifier to associate the photo with.
     ///   - apiClient: The `APIClient` instance to use for network calls.
     ///   - context: An optional `ModelContext` for persisting a `PendingAnalysis` on background task expiry.
-    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil) async {
+    ///   - userBehavior: Optional cataloging-session supervision snapshot
+    ///     taken AFTER the bypass tap was recorded. When supplied, replaces
+    ///     the stored snapshot from the original `run(...)` so the bypass
+    ///     count reflects reality.
+    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, userBehavior: UserBehaviorContext? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
         // after tapping "Upload Anyway".
@@ -349,6 +362,9 @@ final class AnalysisViewModel {
         let originalFailure = lastQualityFailure
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
+        if let userBehavior {
+            lastUserBehavior = userBehavior
+        }
         preliminaryClassifications = []
         preliminaryOCR = []
         phase = .processingImage
@@ -357,7 +373,7 @@ final class AnalysisViewModel {
         var metadataString: String?
 
         do {
-            let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: originalFailure, cameraContext: lastCameraContext)
+            let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: originalFailure, cameraContext: lastCameraContext, userBehavior: lastUserBehavior)
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
@@ -463,6 +479,7 @@ final class AnalysisViewModel {
         lastRejectedPhotoData = nil
         lastUploadedPhotoData = nil
         lastCameraContext = nil
+        lastUserBehavior = nil
     }
 
     // MARK: - Session recovery (Swift2_019b / SEC-24-1)

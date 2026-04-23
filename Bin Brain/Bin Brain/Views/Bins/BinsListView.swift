@@ -56,6 +56,7 @@ struct BinsListView: View {
     @State private var catalogingPath: [CatalogingStep] = []
     @State private var scannerViewModel = ScannerViewModel()
     @State private var analysisViewModel = AnalysisViewModel()
+    @State private var catalogingSession = CatalogingSession()
     @State private var reviewViewModel = SuggestionReviewViewModel()
     @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
@@ -156,7 +157,8 @@ struct BinsListView: View {
                                 sessionId: sessionId,
                                 sessionManager: sessionManager,
                                 context: modelContext,
-                                cameraContext: cameraContext
+                                cameraContext: cameraContext,
+                                userBehavior: catalogingSession.snapshot()
                             )
                         }
                     },
@@ -249,12 +251,14 @@ struct BinsListView: View {
                 // Finding #4-UX-2: "Retake Photo" must return to the camera so
                 // the user can capture a fresh frame. The previous implementation
                 // re-ran analysis on the SAME (still-blurry) photo.
+                catalogingSession.recordRetake()
                 analysisViewModel.reset()
                 navigatedOnPreliminary = false
                 capturedPhotoData = nil
                 catalogingPath.removeAll()
             },
             onOverride: {
+                catalogingSession.recordQualityBypass()
                 Task {
                     guard let data = capturedPhotoData,
                           let binId = capturedBinId else { return }
@@ -266,7 +270,8 @@ struct BinsListView: View {
                         apiClient: apiClient,
                         sessionId: sessionId,
                         sessionManager: sessionManager,
-                        context: modelContext
+                        context: modelContext,
+                        userBehavior: catalogingSession.snapshot()
                     )
                 }
             },
@@ -354,6 +359,7 @@ struct BinsListView: View {
         showShutterButton = false
         scannerViewModel.reset()
         analysisViewModel.reset()
+        catalogingSession.reset()
         captureProxy.action = nil
         capturedPhotoData = nil
         capturedBinId = nil

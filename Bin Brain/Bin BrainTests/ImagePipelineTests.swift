@@ -390,6 +390,47 @@ final class ImagePipelineTests: XCTestCase {
         }
     }
 
+    /// Verifies that a UserBehaviorContext supplied to `process(_:userBehavior:)`
+    /// flows through into `device_metadata.user_behavior` as a
+    /// `UserBehavior` object.
+    func testProcessMergesUserBehaviorIntoMetadata() async throws {
+        guard let jpegData = makeTestJPEG(width: 120, height: 120) else {
+            XCTFail("Failed to create test JPEG"); return
+        }
+        let behavior = UserBehaviorContext(retakeCount: 2, qualityBypassCount: 1)
+
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData, userBehavior: behavior)
+            let emitted = try XCTUnwrap(result.deviceMetadata.deviceProcessing.userBehavior)
+            XCTAssertEqual(emitted.retakeCount, 2)
+            XCTAssertEqual(emitted.qualityBypassCount, 1)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable — requires device testing"
+            )
+            throw error
+        }
+    }
+
+    /// Verifies the default (no userBehavior) call path leaves the field nil
+    /// so the existing metadata contract is unchanged.
+    func testProcessWithoutUserBehaviorLeavesFieldNil() async throws {
+        guard let jpegData = makeTestJPEG(width: 120, height: 120) else {
+            XCTFail("Failed to create test JPEG"); return
+        }
+        do {
+            let result = try await pipeline.processSkippingQualityGates(jpegData)
+            XCTAssertNil(result.deviceMetadata.deviceProcessing.userBehavior)
+        } catch {
+            try XCTSkipIf(
+                error.localizedDescription.contains("espresso"),
+                "Vision Neural Engine unavailable — requires device testing"
+            )
+            throw error
+        }
+    }
+
     /// Verifies the default (no cameraContext) call path leaves all camera
     /// fields nil so the existing capture-metadata contract is unchanged.
     func testProcessWithoutCameraContextLeavesCameraFieldsNil() async throws {
