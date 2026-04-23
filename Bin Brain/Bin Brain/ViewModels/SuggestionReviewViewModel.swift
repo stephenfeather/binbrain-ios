@@ -1160,35 +1160,36 @@ final class SuggestionReviewViewModel {
         }
 
         let decoder = self.decoder
-        let decodeID = suggestionReviewSignposter.makeSignpostID()
-        let decodeInterval = suggestionReviewSignposter.beginInterval("image_decode", id: decodeID)
-        suggestionReviewSignposter.emitEvent(
+        let signposter = suggestionReviewSignposter
+        let decodeID = signposter.makeSignpostID()
+        let decodeInterval = signposter.beginInterval("image_decode", id: decodeID)
+        signposter.emitEvent(
             "image_decode",
             id: decodeID,
             "bytes=\(data.count, privacy: .public)"
         )
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard !Task.isCancelled else {
-                suggestionReviewSignposter.emitEvent(
+                signposter.emitEvent(
                     "image_decode_cancelled",
                     id: decodeID,
                     "stage=\("before_decode", privacy: .public)"
                 )
-                suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
+                signposter.endInterval("image_decode", decodeInterval)
                 return
             }
             let image = decoder(data)
             guard !Task.isCancelled else {
-                suggestionReviewSignposter.emitEvent(
+                signposter.emitEvent(
                     "image_decode_cancelled",
                     id: decodeID,
                     "stage=\("after_decode", privacy: .public)"
                 )
-                suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
+                signposter.endInterval("image_decode", decodeInterval)
                 return
             }
             await self?.publish(image: image, generation: generation)
-            suggestionReviewSignposter.endInterval("image_decode", decodeInterval)
+            signposter.endInterval("image_decode", decodeInterval)
         }
     }
 
