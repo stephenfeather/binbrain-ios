@@ -12,6 +12,10 @@ private let appSignposter = OSSignposter(subsystem: "com.binbrain.app", category
 @main
 struct Bin_BrainApp: App {
 
+    // MARK: - Startup State
+
+    @State private var didRunPostLaunchSetup = false
+
     // MARK: - Scene Phase
 
     @Environment(\.scenePhase) private var scenePhase
@@ -43,16 +47,14 @@ struct Bin_BrainApp: App {
         KeychainHelper.seedDebugAPIKeyFromBuildConfigIfNeeded()
         appSignposter.emitEvent("app_startup", id: spid, "debug_seeded=\(true, privacy: .public)")
         #endif
-        // Apply complete file protection to the SwiftData store so queued
-        // pending uploads are unreadable when the device is locked (#9, F-08).
-        Self.applyFileProtection(to: sharedModelContainer)
-        appSignposter.emitEvent("app_startup", id: spid, "file_protection_applied=\(true, privacy: .public)")
         appSignposter.endInterval("app_startup", startupInterval)
     }
 
     // MARK: - SwiftData
 
     var sharedModelContainer: ModelContainer = {
+        let spid = appSignposter.makeSignpostID()
+        let interval = appSignposter.beginInterval("model_container_create", id: spid)
         let schema = Schema([
             PendingUpload.self,
             PendingAnalysis.self,
@@ -60,8 +62,22 @@ struct Bin_BrainApp: App {
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let storePath = container.configurations.first.map { $0.url.lastPathComponent } ?? "unknown"
+            appSignposter.emitEvent(
+                "model_container_create",
+                id: spid,
+                "result=\("success", privacy: .public) store=\(storePath, privacy: .private)"
+            )
+            appSignposter.endInterval("model_container_create", interval)
+            return container
         } catch {
+            appSignposter.emitEvent(
+                "model_container_create",
+                id: spid,
+                "result=\("failure", privacy: .public)"
+            )
+            appSignposter.endInterval("model_container_create", interval)
             fatalError("Could not create ModelContainer: \(error)")
         }
     }()
@@ -72,6 +88,9 @@ struct Bin_BrainApp: App {
         WindowGroup {
             RootView()
                 .task { await requestNotificationPermission() }
+                .task {
+                    await runPostLaunchSetupIfNeeded()
+                }
                 .task {
                     // Swift2_018b F-1 — reclaim any rows left `.sending`
                     // by a previous process that crashed mid-POST. Must
@@ -142,6 +161,21 @@ struct Bin_BrainApp: App {
         } catch {
             logger.error("Notification authorization failed: \(error.localizedDescription, privacy: .private)")
         }
+    }
+
+    /// Defers launch-agnostic filesystem setup until after the first scene is live.
+    @MainActor
+    private func runPostLaunchSetupIfNeeded() async {
+        guard !didRunPostLaunchSetup else { return }
+        didRunPostLaunchSetup = true
+        await Task.yield()
+        let spid = appSignposter.makeSignpostID()
+        let interval = appSignposter.beginInterval("post_launch_setup", id: spid)
+        // Apply complete file protection to the SwiftData store so queued
+        // pending uploads are unreadable when the device is locked (#9, F-08).
+        Self.applyFileProtection(to: sharedModelContainer)
+        appSignposter.emitEvent("post_launch_setup", id: spid, "file_protection_applied=\(true, privacy: .public)")
+        appSignposter.endInterval("post_launch_setup", interval)
     }
 
     /// Applies `.completeFileProtection` to the SwiftData store file and its
