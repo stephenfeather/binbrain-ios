@@ -110,6 +110,8 @@ struct DeviceProcessing: Codable, Equatable {
     let barcodes: [BarcodeResult]
     /// Image classifications from Vision.
     let classifications: [ClassificationResult]
+    /// Capture-time facts preserved from the image bytes handed into the pipeline.
+    let captureMetadata: CaptureMetadata?
     /// Crop information, if a smart crop was applied.
     let cropApplied: CropInfo?
     /// Original quality-gate failure carried through when the user bypasses it.
@@ -126,9 +128,29 @@ struct DeviceProcessing: Codable, Equatable {
         case ocr
         case barcodes
         case classifications
+        case captureMetadata = "capture_metadata"
         case cropApplied = "crop_applied"
         case qualityOverrideContext = "quality_override_context"
         case cannyMetrics = "canny_metrics"
+    }
+}
+
+/// Lightweight metadata about the source image bytes entering the pipeline.
+struct CaptureMetadata: Codable, Equatable {
+    /// Width of the decoded image before any pipeline downscaling.
+    let originalWidth: Int
+    /// Height of the decoded image before any pipeline downscaling.
+    let originalHeight: Int
+    /// Size in bytes of the image payload provided to the pipeline.
+    let originalBytes: Int
+    /// Best-effort format inferred from the input bytes.
+    let inputFormat: String
+
+    enum CodingKeys: String, CodingKey {
+        case originalWidth = "original_width"
+        case originalHeight = "original_height"
+        case originalBytes = "original_bytes"
+        case inputFormat = "input_format"
     }
 }
 
@@ -167,7 +189,7 @@ struct QualityOverrideContext: Codable, Equatable {
         self.thresholdLabel = thresholdLabel
     }
 
-    init(from failure: QualityGateFailure) {
+    nonisolated init(from failure: QualityGateFailure) {
         self.init(
             bypassed: true,
             failedGate: failure.gate,

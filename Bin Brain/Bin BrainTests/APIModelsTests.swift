@@ -666,6 +666,12 @@ final class APIModelsTests: XCTestCase {
                         "saliency_coverage": 0.72,
                         "shortest_side": 1920
                     },
+                    "capture_metadata": {
+                        "original_width": 4032,
+                        "original_height": 3024,
+                        "original_bytes": 2481144,
+                        "input_format": "jpeg"
+                    },
                     "ocr": [],
                     "barcodes": [],
                     "classifications": [],
@@ -701,6 +707,10 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.version, "1")
         XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
         XCTAssertEqual(metadata.deviceProcessing.qualityScores.blurVariance, 150.5, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalWidth, 4032)
+        XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalHeight, 3024)
+        XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.originalBytes, 2_481_144)
+        XCTAssertEqual(metadata.deviceProcessing.captureMetadata?.inputFormat, "jpeg")
         XCTAssertEqual(metadata.deviceProcessing.qualityOverrideContext?.failedGate, .blur)
         XCTAssertEqual(metadata.deviceProcessing.cannyMetrics?.analysisLongestSide, 512)
     }

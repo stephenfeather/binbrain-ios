@@ -48,6 +48,12 @@ final class PipelineModelsTests: XCTestCase {
                     ClassificationResult(label: "screw", confidence: 0.82),
                     ClassificationResult(label: "nail", confidence: 0.11)
                 ],
+                captureMetadata: CaptureMetadata(
+                    originalWidth: 4032,
+                    originalHeight: 3024,
+                    originalBytes: 2_481_144,
+                    inputFormat: "jpeg"
+                ),
                 cropApplied: CropInfo(
                     originalSize: [4032, 3024],
                     cropRect: [420, 310, 3200, 2400]
@@ -120,6 +126,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["ios_version"])
         XCTAssertNotNil(processing["device_model"])
         XCTAssertNotNil(processing["quality_scores"])
+        XCTAssertNotNil(processing["capture_metadata"])
         XCTAssertNotNil(processing["crop_applied"])
         XCTAssertNotNil(processing["quality_override_context"])
         XCTAssertNotNil(processing["canny_metrics"])
@@ -130,6 +137,12 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(scores["exposure_mean"])
         XCTAssertNotNil(scores["saliency_coverage"])
         XCTAssertNotNil(scores["shortest_side"])
+
+        let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+        XCTAssertNotNil(capture["original_width"])
+        XCTAssertNotNil(capture["original_height"])
+        XCTAssertNotNil(capture["original_bytes"])
+        XCTAssertNotNil(capture["input_format"])
 
         // Crop info level
         let crop = try XCTUnwrap(processing["crop_applied"] as? [String: Any])
@@ -166,6 +179,7 @@ final class PipelineModelsTests: XCTestCase {
                 ocr: [],
                 barcodes: [],
                 classifications: [],
+                captureMetadata: nil,
                 cropApplied: nil,
                 qualityOverrideContext: nil,
                 cannyMetrics: nil
@@ -191,6 +205,12 @@ final class PipelineModelsTests: XCTestCase {
 
         // Pipeline ms is integer
         XCTAssertEqual(processing["pipeline_ms"] as? Int, 623)
+
+        let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+        XCTAssertEqual(capture["original_width"] as? Int, 4032)
+        XCTAssertEqual(capture["original_height"] as? Int, 3024)
+        XCTAssertEqual(capture["original_bytes"] as? Int, 2_481_144)
+        XCTAssertEqual(capture["input_format"] as? String, "jpeg")
 
         // OCR is array of objects with text + confidence
         let ocr = try XCTUnwrap(processing["ocr"] as? [[String: Any]])

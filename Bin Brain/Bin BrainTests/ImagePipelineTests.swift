@@ -241,6 +241,11 @@ final class ImagePipelineTests: XCTestCase {
             let data = try encoder.encode(result.deviceMetadata)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
+            let capture = try XCTUnwrap(processing["capture_metadata"] as? [String: Any])
+            XCTAssertEqual(capture["original_width"] as? Int, 100)
+            XCTAssertEqual(capture["original_height"] as? Int, 100)
+            XCTAssertEqual(capture["original_bytes"] as? Int, jpegData.count)
+            XCTAssertEqual(capture["input_format"] as? String, "jpeg")
             XCTAssertNil(processing["quality_override_context"])
             XCTAssertNotNil(processing["canny_metrics"])
         } catch {

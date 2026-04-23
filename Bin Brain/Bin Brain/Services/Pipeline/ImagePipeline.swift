@@ -81,8 +81,9 @@ actor ImagePipeline {
 
         do {
             // Decode and cap input resolution
-            var cgImage = try decodeCGImage(from: imageData)
-            cgImage = capResolution(cgImage)
+            let decodedImage = try decodeCGImage(from: imageData)
+            let captureMetadata = buildCaptureMetadata(from: decodedImage, imageData: imageData)
+            let cgImage = capResolution(decodedImage)
 
             // Stage 1: Quality gates
             let validation = try await qualityGates.validate(cgImage)
@@ -115,6 +116,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: validation.scores,
                 extraction: extraction,
+                captureMetadata: captureMetadata,
                 qualityOverrideContext: nil,
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
@@ -153,8 +155,9 @@ actor ImagePipeline {
 
         do {
             // Decode and cap input resolution
-            var cgImage = try decodeCGImage(from: imageData)
-            cgImage = capResolution(cgImage)
+            let decodedImage = try decodeCGImage(from: imageData)
+            let captureMetadata = buildCaptureMetadata(from: decodedImage, imageData: imageData)
+            let cgImage = capResolution(decodedImage)
 
             // Run saliency for smart crop (without the full gate validation)
             let saliencyBox: CGRect?
@@ -191,13 +194,20 @@ actor ImagePipeline {
                 saliencyCoverage: 0,
                 shortestSide: min(cgImage.width, cgImage.height)
             )
+            let overrideContext: QualityOverrideContext?
+            if let originalFailure {
+                overrideContext = QualityOverrideContext(from: originalFailure)
+            } else {
+                overrideContext = nil
+            }
 
             let result = buildResult(
                 optimizedData: optimized.jpegData,
                 cropInfo: optimized.cropInfo,
                 scores: scores,
                 extraction: extraction,
-                qualityOverrideContext: originalFailure.map(QualityOverrideContext.init(from:)),
+                captureMetadata: captureMetadata,
+                qualityOverrideContext: overrideContext,
                 cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
             )
@@ -234,10 +244,11 @@ actor ImagePipeline {
     func decodeCGImage(from data: Data) throws -> CGImage {
         let transformID = pipelineSignposter.makeSignpostID()
         let transformInterval = pipelineSignposter.beginInterval("media_transform", id: transformID)
+        let inputFormat = Self.inferInputFormat(from: data)
         pipelineSignposter.emitEvent(
             "media_transform",
             id: transformID,
-            "stage=\("decode_normalize", privacy: .public) bytesIn=\(data.count, privacy: .public) formatIn=\("jpeg", privacy: .public) formatOut=\("cgimage", privacy: .public)"
+            "stage=\("decode_normalize", privacy: .public) bytesIn=\(data.count, privacy: .public) formatIn=\(inputFormat, privacy: .public) formatOut=\("cgimage", privacy: .public)"
         )
         guard let uiImage = UIImage(data: data) else {
             pipelineSignposter.emitEvent(
@@ -306,6 +317,7 @@ actor ImagePipeline {
         cropInfo: CropInfo?,
         scores: QualityScores,
         extraction: (ocr: [OCRResult], barcodes: [BarcodeResult], classifications: [ClassificationResult]),
+        captureMetadata: CaptureMetadata?,
         qualityOverrideContext: QualityOverrideContext?,
         cannyMetrics: CannyMetrics?,
         pipelineMs: Int
@@ -319,6 +331,7 @@ actor ImagePipeline {
             ocr: extraction.ocr,
             barcodes: extraction.barcodes,
             classifications: extraction.classifications,
+            captureMetadata: captureMetadata,
             cropApplied: cropInfo,
             qualityOverrideContext: qualityOverrideContext,
             cannyMetrics: cannyMetrics
@@ -331,6 +344,51 @@ actor ImagePipeline {
             deviceMetadata: metadata,
             qualityScores: scores
         )
+    }
+
+    private func buildCaptureMetadata(from cgImage: CGImage, imageData: Data) -> CaptureMetadata {
+        CaptureMetadata(
+            originalWidth: cgImage.width,
+            originalHeight: cgImage.height,
+            originalBytes: imageData.count,
+            inputFormat: Self.inferInputFormat(from: imageData)
+        )
+    }
+
+    private static func inferInputFormat(from data: Data) -> String {
+        guard data.count >= 12 else { return "unknown" }
+
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return "jpeg"
+        }
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "png"
+        }
+        if data.starts(with: [0x47, 0x49, 0x46, 0x38]) {
+            return "gif"
+        }
+        if data.starts(with: [0x49, 0x49, 0x2A, 0x00]) || data.starts(with: [0x4D, 0x4D, 0x00, 0x2A]) {
+            return "tiff"
+        }
+        if data.prefix(4) == Data([0x52, 0x49, 0x46, 0x46]) && data[8...11] == Data([0x57, 0x45, 0x42, 0x50]) {
+            return "webp"
+        }
+        if data[4...7] == Data([0x66, 0x74, 0x79, 0x70]) {
+            let brandData = data[8...11]
+            if let brand = String(data: brandData, encoding: .ascii) {
+                switch brand {
+                case "heic", "heix", "hevc", "hevx":
+                    return "heic"
+                case "mif1", "msf1":
+                    return "heif"
+                case "avif":
+                    return "avif"
+                default:
+                    break
+                }
+            }
+        }
+        return "unknown"
     }
 
     // MARK: - Static Device Info
