@@ -669,7 +669,17 @@ final class APIModelsTests: XCTestCase {
                     "ocr": [],
                     "barcodes": [],
                     "classifications": [],
-                    "crop_applied": null
+                    "crop_applied": null,
+                    "canny_metrics": {
+                        "analysis_longest_side": 512,
+                        "gaussian_sigma": 1.6,
+                        "threshold_low": 0.02,
+                        "threshold_high": 0.05,
+                        "hysteresis_passes": 1,
+                        "full_frame_edge_density": 0.084,
+                        "saliency_edge_density": 0.137,
+                        "upload_frame_edge_density": null
+                    }
                 }
             }
         }
@@ -682,6 +692,7 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(metadata.deviceProcessing.version, "1")
         XCTAssertEqual(metadata.deviceProcessing.pipelineMs, 420)
         XCTAssertEqual(metadata.deviceProcessing.qualityScores.blurVariance, 150.5, accuracy: 1e-10)
+        XCTAssertEqual(metadata.deviceProcessing.cannyMetrics?.analysisLongestSide, 512)
     }
 
     func testPhotoRecordDecodesWithoutDeviceMetadata() throws {

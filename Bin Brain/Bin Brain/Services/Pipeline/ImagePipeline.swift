@@ -40,6 +40,9 @@ actor ImagePipeline {
     /// Stage 3: OCR, barcode, classification extraction.
     private let extractors: MetadataExtractors
 
+    /// Additive image-structure telemetry derived from edge analysis.
+    private let edgeMetricsExtractor: EdgeMetricsExtractor
+
     // MARK: - Constants
 
     /// Maximum input dimension before the pipeline downscales.
@@ -54,6 +57,7 @@ actor ImagePipeline {
         self.qualityGates = QualityGates()
         self.optimizer = ImageOptimizer()
         self.extractors = MetadataExtractors()
+        self.edgeMetricsExtractor = EdgeMetricsExtractor()
     }
 
     // MARK: - Public API
@@ -93,6 +97,13 @@ actor ImagePipeline {
                 context: context
             )
 
+            let cannyMetrics = edgeMetricsExtractor.extract(
+                from: cgImage,
+                saliencyBoundingBox: validation.saliencyBoundingBox,
+                cropInfo: optimized.cropInfo,
+                context: context
+            )
+
             // Stage 3: Extract metadata from original (pre-optimize) image
             let extraction = try await extractors.extract(from: cgImage)
 
@@ -104,6 +115,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: validation.scores,
                 extraction: extraction,
+                cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
             )
             pipelineSignposter.emitEvent(
@@ -159,6 +171,13 @@ actor ImagePipeline {
                 context: context
             )
 
+            let cannyMetrics = edgeMetricsExtractor.extract(
+                from: cgImage,
+                saliencyBoundingBox: saliencyBox,
+                cropInfo: optimized.cropInfo,
+                context: context
+            )
+
             // Stage 3: Extract metadata
             let extraction = try await extractors.extract(from: cgImage)
 
@@ -177,6 +196,7 @@ actor ImagePipeline {
                 cropInfo: optimized.cropInfo,
                 scores: scores,
                 extraction: extraction,
+                cannyMetrics: cannyMetrics,
                 pipelineMs: pipelineMs
             )
             pipelineSignposter.emitEvent(
@@ -284,6 +304,7 @@ actor ImagePipeline {
         cropInfo: CropInfo?,
         scores: QualityScores,
         extraction: (ocr: [OCRResult], barcodes: [BarcodeResult], classifications: [ClassificationResult]),
+        cannyMetrics: CannyMetrics?,
         pipelineMs: Int
     ) -> PipelineResult {
         let deviceProcessing = DeviceProcessing(
@@ -295,7 +316,8 @@ actor ImagePipeline {
             ocr: extraction.ocr,
             barcodes: extraction.barcodes,
             classifications: extraction.classifications,
-            cropApplied: cropInfo
+            cropApplied: cropInfo,
+            cannyMetrics: cannyMetrics
         )
 
         let metadata = DeviceMetadata(deviceProcessing: deviceProcessing)

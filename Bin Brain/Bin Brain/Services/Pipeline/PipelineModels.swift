@@ -112,6 +112,8 @@ struct DeviceProcessing: Codable, Equatable {
     let classifications: [ClassificationResult]
     /// Crop information, if a smart crop was applied.
     let cropApplied: CropInfo?
+    /// Optional edge-structure metrics derived from Core Image Canny analysis.
+    let cannyMetrics: CannyMetrics?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -123,6 +125,7 @@ struct DeviceProcessing: Codable, Equatable {
         case barcodes
         case classifications
         case cropApplied = "crop_applied"
+        case cannyMetrics = "canny_metrics"
     }
 }
 
@@ -162,5 +165,36 @@ struct CropInfo: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case originalSize = "original_size"
         case cropRect = "crop_rect"
+    }
+}
+
+/// Edge-structure telemetry derived from Core Image's Canny edge detector.
+struct CannyMetrics: Codable, Equatable {
+    /// Longest side actually used for edge analysis after optional downscaling.
+    let analysisLongestSide: Int
+    /// Sigma of the Gaussian smoothing stage.
+    let gaussianSigma: Double
+    /// Threshold for weak edges.
+    let thresholdLow: Double
+    /// Threshold for strong edges.
+    let thresholdHigh: Double
+    /// Number of hysteresis passes used.
+    let hysteresisPasses: Int
+    /// Mean edge-map intensity across the whole analyzed frame (0.0–1.0).
+    let fullFrameEdgeDensity: Double
+    /// Mean edge-map intensity within the saliency ROI, when present.
+    let saliencyEdgeDensity: Double?
+    /// Mean edge-map intensity within the eventual uploaded crop, when present.
+    let uploadFrameEdgeDensity: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case analysisLongestSide = "analysis_longest_side"
+        case gaussianSigma = "gaussian_sigma"
+        case thresholdLow = "threshold_low"
+        case thresholdHigh = "threshold_high"
+        case hysteresisPasses = "hysteresis_passes"
+        case fullFrameEdgeDensity = "full_frame_edge_density"
+        case saliencyEdgeDensity = "saliency_edge_density"
+        case uploadFrameEdgeDensity = "upload_frame_edge_density"
     }
 }

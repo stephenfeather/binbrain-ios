@@ -155,6 +155,7 @@ final class ImagePipelineTests: XCTestCase {
             XCTAssertEqual(processing.qualityScores.blurVariance, 0)
             XCTAssertEqual(processing.qualityScores.exposureMean, 0)
             XCTAssertEqual(processing.qualityScores.saliencyCoverage, 0)
+            XCTAssertNotNil(processing.cannyMetrics)
 
             _ = processing.ocr
             _ = processing.barcodes
@@ -202,7 +203,8 @@ final class ImagePipelineTests: XCTestCase {
             let encoder = JSONEncoder()
             let data = try encoder.encode(result.deviceMetadata)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            XCTAssertNotNil(json["device_processing"])
+            let processing = try XCTUnwrap(json["device_processing"] as? [String: Any])
+            XCTAssertNotNil(processing["canny_metrics"])
         } catch {
             try XCTSkipIf(
                 error.localizedDescription.contains("espresso"),

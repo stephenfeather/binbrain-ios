@@ -51,6 +51,16 @@ final class PipelineModelsTests: XCTestCase {
                 cropApplied: CropInfo(
                     originalSize: [4032, 3024],
                     cropRect: [420, 310, 3200, 2400]
+                ),
+                cannyMetrics: CannyMetrics(
+                    analysisLongestSide: 512,
+                    gaussianSigma: 1.6,
+                    thresholdLow: 0.02,
+                    thresholdHigh: 0.05,
+                    hysteresisPasses: 1,
+                    fullFrameEdgeDensity: 0.084,
+                    saliencyEdgeDensity: 0.137,
+                    uploadFrameEdgeDensity: 0.121
                 )
             )
         )
@@ -102,6 +112,7 @@ final class PipelineModelsTests: XCTestCase {
         XCTAssertNotNil(processing["device_model"])
         XCTAssertNotNil(processing["quality_scores"])
         XCTAssertNotNil(processing["crop_applied"])
+        XCTAssertNotNil(processing["canny_metrics"])
 
         // Quality scores level
         let scores = try XCTUnwrap(processing["quality_scores"] as? [String: Any])
@@ -114,6 +125,12 @@ final class PipelineModelsTests: XCTestCase {
         let crop = try XCTUnwrap(processing["crop_applied"] as? [String: Any])
         XCTAssertNotNil(crop["original_size"])
         XCTAssertNotNil(crop["crop_rect"])
+
+        let canny = try XCTUnwrap(processing["canny_metrics"] as? [String: Any])
+        XCTAssertNotNil(canny["analysis_longest_side"])
+        XCTAssertNotNil(canny["full_frame_edge_density"])
+        XCTAssertNotNil(canny["saliency_edge_density"])
+        XCTAssertNotNil(canny["upload_frame_edge_density"])
     }
 
     // MARK: - Nil Crop Info
@@ -134,13 +151,15 @@ final class PipelineModelsTests: XCTestCase {
                 ocr: [],
                 barcodes: [],
                 classifications: [],
-                cropApplied: nil
+                cropApplied: nil,
+                cannyMetrics: nil
             )
         )
         let data = try encoder.encode(metadata)
         let decoded = try decoder.decode(DeviceMetadata.self, from: data)
         XCTAssertEqual(metadata, decoded)
         XCTAssertNil(decoded.deviceProcessing.cropApplied)
+        XCTAssertNil(decoded.deviceProcessing.cannyMetrics)
     }
 
     // MARK: - Spec Format Match
@@ -170,5 +189,8 @@ final class PipelineModelsTests: XCTestCase {
         // Classifications have label + confidence
         let classifications = try XCTUnwrap(processing["classifications"] as? [[String: Any]])
         XCTAssertEqual(classifications[0]["label"] as? String, "screw")
+
+        let canny = try XCTUnwrap(processing["canny_metrics"] as? [String: Any])
+        XCTAssertEqual(canny["analysis_longest_side"] as? Int, 512)
     }
 }
