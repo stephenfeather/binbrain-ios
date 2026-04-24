@@ -1017,7 +1017,7 @@ final class SuggestionReviewViewModel {
 
             return PhotoSuggestionOutcome(
                 label: originalLabel,
-                category: item.originalCategory,
+                category: item.originalCategory?.lowercased(),
                 confidence: item.confidence,
                 bbox: item.bbox,
                 shownAt: shownAt,

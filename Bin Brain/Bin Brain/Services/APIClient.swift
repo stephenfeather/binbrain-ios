@@ -616,7 +616,9 @@ final class APIClient {
         binId: String?
     ) async throws -> UpsertItemResponse {
         var json: [String: Any] = ["name": name]
-        if let category { json["category"] = category }
+        // Server upserts items by fingerprint lower(name)|lower(category).
+        // Lowercase here so callers don't have to remember.
+        if let category { json["category"] = category.lowercased() }
         if let binId { json["bin_id"] = binId }
         if let confidence { json["confidence"] = confidence }
         if let quantity { json["quantity"] = quantity }
@@ -765,7 +767,7 @@ final class APIClient {
             "class_name": className,
             "source": "vision_llm"
         ]
-        if let category { payload["category"] = category }
+        if let category { payload["category"] = category.lowercased() }
         let body = try JSONEncoder().encode(payload)
         return try await request(
             path: "/classes/confirm",
