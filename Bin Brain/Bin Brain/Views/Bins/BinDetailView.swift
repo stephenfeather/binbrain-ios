@@ -96,6 +96,17 @@ struct BinDetailView: View {
             .navigationTitle(BinsListViewModel.displayName(for: binId))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Picker("Sort", selection: $sortOrder) {
+                            Label("Name", systemImage: "textformat").tag(SortOrder.name)
+                            Label("Confidence", systemImage: "checkmark.seal").tag(SortOrder.confidence)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    .accessibilityLabel("Sort items")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         cameraTapCount += 1
                         showCamera = true
@@ -103,6 +114,7 @@ struct BinDetailView: View {
                         Image(systemName: "camera")
                     }
                     .accessibilityLabel("Take photo")
+                    .sensoryFeedback(.success, trigger: cameraTapCount)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -111,25 +123,6 @@ struct BinDetailView: View {
                         Image(systemName: "square.and.pencil")
                     }
                     .accessibilityLabel("Add manually")
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    Picker("Sort", selection: $sortOrder) {
-                        Text("Name").tag(SortOrder.name)
-                        Text("Confidence").tag(SortOrder.confidence)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 200)
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    Button {
-                        cameraTapCount += 1
-                        showCamera = true
-                    } label: {
-                        Image(systemName: "camera.fill")
-                            .font(.title2)
-                    }
-                    .accessibilityLabel("Scan item into this bin")
-                    .sensoryFeedback(.success, trigger: cameraTapCount)
                 }
             }
             .task {
