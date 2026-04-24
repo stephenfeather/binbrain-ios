@@ -65,6 +65,12 @@ struct BinDetailView: View {
     @State private var reviewViewModel = SuggestionReviewViewModel()
     @State private var captureProxy = CaptureProxy()
     @State private var capturedPhotoData: Data?
+    /// Camera telemetry captured alongside `capturedPhotoData`. Retained so a
+    /// retry after an /ingest failure can re-submit with the original metadata.
+    @State private var capturedCameraContext: CameraCaptureContext?
+    /// Non-nil when /ingest (or /suggest) failed after the user had already
+    /// navigated to the preliminary review screen. Drives the retry alert.
+    @State private var ingestErrorMessage: String?
     /// True once preliminary on-device chips have been loaded and navigation
     /// to `.review` happened early (Mode A). Drives how `onComplete` merges.
     @State private var navigatedOnPreliminary = false
@@ -234,6 +240,7 @@ struct BinDetailView: View {
                         }
                         guard let rawData = oriented.jpegData(compressionQuality: 1.0) else { return }
                         capturedPhotoData = rawData
+                        capturedCameraContext = cameraContext
                         // Swift2_012 — seed VM-durable binId from the view's
                         // stable `let binId` before navigating to analysis.
                         reviewViewModel.binId = binId
@@ -393,14 +400,41 @@ struct BinDetailView: View {
         }
         // Same fix as BinsListView: observe phase on the visible view, not the background AnalysisProgressView.
         .onChange(of: analysisViewModel.phase) { _, newPhase in
-            guard case .complete = newPhase, navigatedOnPreliminary else { return }
-            reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-            reviewViewModel.applyServerSuggestions(
-                analysisViewModel.suggestions,
-                photoId: analysisViewModel.lastPhotoId,
-                visionModel: analysisViewModel.lastVisionModel,
-                promptVersion: analysisViewModel.lastPromptVersion
-            )
+            guard navigatedOnPreliminary else { return }
+            switch newPhase {
+            case .complete:
+                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
+                reviewViewModel.applyServerSuggestions(
+                    analysisViewModel.suggestions,
+                    photoId: analysisViewModel.lastPhotoId,
+                    visionModel: analysisViewModel.lastVisionModel,
+                    promptVersion: analysisViewModel.lastPromptVersion
+                )
+            case .failed(let message):
+                // The review screen owns the alert because the parent owns the
+                // API call — without this hook the user would be stuck on a
+                // permanent "Working…" spinner with no way to resubmit.
+                ingestErrorMessage = message
+            default:
+                break
+            }
+        }
+        .alert(
+            "Analysis Failed",
+            isPresented: Binding(
+                get: { ingestErrorMessage != nil },
+                set: { if !$0 { ingestErrorMessage = nil } }
+            ),
+            presenting: ingestErrorMessage
+        ) { _ in
+            Button("Retry") { retryIngest() }
+            Button("Cancel", role: .cancel) {
+                ingestErrorMessage = nil
+                catalogingPath = []
+                showCamera = false
+            }
+        } message: { message in
+            Text(message)
         }
     }
 
@@ -433,8 +467,28 @@ struct BinDetailView: View {
         catalogingSession.reset()
         captureProxy.action = nil
         capturedPhotoData = nil
+        capturedCameraContext = nil
+        ingestErrorMessage = nil
         currentModelIndex = 0
         navigatedOnPreliminary = false
+    }
+
+    private func retryIngest() {
+        guard let data = capturedPhotoData else { return }
+        ingestErrorMessage = nil
+        Task {
+            let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
+            await analysisViewModel.run(
+                jpegData: data,
+                binId: binId,
+                apiClient: apiClient,
+                sessionId: sessionId,
+                sessionManager: sessionManager,
+                context: modelContext,
+                cameraContext: capturedCameraContext,
+                userBehavior: catalogingSession.snapshot()
+            )
+        }
     }
 
     // MARK: - Content
