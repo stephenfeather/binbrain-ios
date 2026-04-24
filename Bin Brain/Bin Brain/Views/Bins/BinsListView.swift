@@ -117,6 +117,15 @@ struct BinsListView: View {
                         scannerViewModel.qrDetected(code)
                     },
                     onPhotoCapture: { image, cameraContext in
+                        // Debounce: a second shutter tap that lands before
+                        // SwiftUI pushes the analysis destination would push
+                        // a duplicate, producing two stacked quality-gate
+                        // screens. Drop captures that arrive after the path
+                        // has already advanced.
+                        guard catalogingPath.isEmpty else {
+                            logger.debug("onPhotoCapture ignored — catalogingPath already advanced")
+                            return
+                        }
                         logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public) orientation: \(image.imageOrientation.rawValue, privacy: .public)")
                         // Normalize EXIF orientation before JPEG encoding. jpegData(compressionQuality:)
                         // does not reliably embed the EXIF orientation tag, so a landscape capture
@@ -201,6 +210,7 @@ struct BinsListView: View {
                                 .shadow(radius: 4)
                         }
                         .accessibilityLabel("Take photo")
+                        .disabled(!catalogingPath.isEmpty)
                         .padding(.bottom, 50)
                     }
                 }

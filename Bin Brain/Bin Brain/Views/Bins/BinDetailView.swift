@@ -216,6 +216,12 @@ struct BinDetailView: View {
                     showShutterButton: .constant(true),
                     onQRCode: { _ in },
                     onPhotoCapture: { image, cameraContext in
+                        // Debounce: a second shutter tap that lands before
+                        // SwiftUI pushes the analysis destination would push
+                        // a duplicate, producing two stacked quality-gate
+                        // screens. Drop captures that arrive after the path
+                        // has already advanced.
+                        guard catalogingPath.isEmpty else { return }
                         let oriented: UIImage
                         if image.imageOrientation != .up {
                             let fmt = UIGraphicsImageRendererFormat()
@@ -269,6 +275,7 @@ struct BinDetailView: View {
                             .shadow(radius: 4)
                     }
                     .accessibilityLabel("Take photo")
+                    .disabled(!catalogingPath.isEmpty)
                     .padding(.bottom, 50)
                 }
             }
