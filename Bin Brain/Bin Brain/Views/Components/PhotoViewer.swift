@@ -14,41 +14,53 @@ struct PhotoViewer: View {
 
     let photoId: Int
     let apiClient: APIClient
+    /// Bin items whose `sourcePhotoId` matches `photoId` are listed at the
+    /// bottom of the viewer. Pass the hosting bin's full item list; the view
+    /// does the filtering.
+    var items: [BinItemRecord] = []
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
 
+    private var connectedItems: [BinItemRecord] {
+        items.filter { $0.sourcePhotoId == photoId }
+    }
+
     var body: some View {
         NavigationStack {
-            GeometryReader { geometry in
-                AuthenticatedAsyncImage(photoId: photoId, apiClient: apiClient) { phase in
-                    switch phase {
-                    case .success(let uiImage):
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .scaleEffect(scale)
-                            .offset(offset)
-                            .gesture(magnificationGesture)
-                            .gesture(dragGesture)
-                            .onTapGesture(count: 2) { doubleTap() }
+            ZStack(alignment: .bottom) {
+                GeometryReader { geometry in
+                    AuthenticatedAsyncImage(photoId: photoId, apiClient: apiClient) { phase in
+                        switch phase {
+                        case .success(let uiImage):
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .scaleEffect(scale)
+                                .offset(offset)
+                                .gesture(magnificationGesture)
+                                .gesture(dragGesture)
+                                .onTapGesture(count: 2) { doubleTap() }
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        case .failure:
+                            VStack(spacing: 12) {
+                                Image(systemName: "photo.badge.exclamationmark")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.secondary)
+                                Text("Failed to load photo")
+                                    .foregroundStyle(.secondary)
+                            }
                             .frame(width: geometry.size.width, height: geometry.size.height)
-                    case .failure:
-                        VStack(spacing: 12) {
-                            Image(systemName: "photo.badge.exclamationmark")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
-                            Text("Failed to load photo")
-                                .foregroundStyle(.secondary)
+                        case .loading:
+                            ProgressView()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
                         }
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                    case .loading:
-                        ProgressView()
-                            .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                 }
+
+                bottomPanel
             }
             .background(Color.black)
             .ignoresSafeArea()
@@ -67,6 +79,51 @@ struct PhotoViewer: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
         }
+    }
+
+    // MARK: - Bottom Panel
+
+    private var bottomPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !connectedItems.isEmpty {
+                Text("Items in this photo (\(connectedItems.count))")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(connectedItems, id: \.itemId) { item in
+                            HStack(spacing: 6) {
+                                Text("•").foregroundStyle(.white.opacity(0.6))
+                                Text(item.name)
+                                    .foregroundStyle(.white)
+                                if let category = item.category, !category.isEmpty {
+                                    Text("· \(category)")
+                                        .foregroundStyle(.white.opacity(0.6))
+                                }
+                                Spacer()
+                            }
+                            .font(.footnote)
+                        }
+                    }
+                }
+                .frame(maxHeight: 140)
+            }
+            Text("Photo ID: \(photoId)")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityLabel("Photo ID \(photoId)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 28)
+        .background(
+            LinearGradient(
+                colors: [Color.black.opacity(0), Color.black.opacity(0.75)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     // MARK: - Gestures

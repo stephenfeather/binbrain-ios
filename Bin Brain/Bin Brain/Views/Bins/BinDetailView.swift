@@ -160,7 +160,11 @@ struct BinDetailView: View {
                 set: { if !$0 { selectedPhotoId = nil } }
             )) {
                 if let id = selectedPhotoId {
-                    PhotoViewer(photoId: id, apiClient: apiClient)
+                    PhotoViewer(
+                        photoId: id,
+                        apiClient: apiClient,
+                        items: viewModel.bin?.items ?? []
+                    )
                 }
             }
             .sheet(isPresented: Binding(
