@@ -161,7 +161,8 @@ struct BinDetailView: View {
             )) {
                 if let id = selectedPhotoId {
                     PhotoViewer(
-                        photoId: id,
+                        photos: viewModel.bin?.photos ?? [],
+                        initialPhotoId: id,
                         apiClient: apiClient,
                         items: viewModel.bin?.items ?? []
                     )
