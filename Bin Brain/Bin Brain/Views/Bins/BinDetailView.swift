@@ -90,25 +90,21 @@ struct BinDetailView: View {
             .navigationTitle(BinsListViewModel.displayName(for: binId))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    // Finding #17 — the + now offers both entry points. Take Photo
-                    // reuses the existing camera cataloging flow (already scoped to
-                    // this bin's binId, so QR scanning is skipped).
-                    Menu {
-                        Button {
-                            cameraTapCount += 1
-                            showCamera = true
-                        } label: {
-                            Label("Take Photo", systemImage: "camera")
-                        }
-                        Button {
-                            showAddItem = true
-                        } label: {
-                            Label("Add Manually", systemImage: "square.and.pencil")
-                        }
+                    Button {
+                        cameraTapCount += 1
+                        showCamera = true
                     } label: {
-                        Image(systemName: "plus")
+                        Image(systemName: "camera")
                     }
-                    .accessibilityLabel("Add item")
+                    .accessibilityLabel("Take photo")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showAddItem = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .accessibilityLabel("Add manually")
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Picker("Sort", selection: $sortOrder) {
