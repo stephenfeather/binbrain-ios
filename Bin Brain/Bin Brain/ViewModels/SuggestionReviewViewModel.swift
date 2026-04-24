@@ -116,6 +116,15 @@ final class SuggestionReviewViewModel {
     /// Whether a confirm or retry operation is currently in progress.
     private(set) var isConfirming: Bool = false
 
+    /// Map from `EditableSuggestion.id` (the suggestion's position in the
+    /// presented list) to the server-assigned `item_id` returned by the
+    /// successful `upsertItem` call for that suggestion. Populated inside
+    /// `confirm(...)` and `retryRemaining(...)` as each upsert lands. Consumed
+    /// by `fireOutcomesIfReady` so the `/outcomes` payload carries `item_id`
+    /// per `.accepted` / `.edited` decision, letting the server write the
+    /// link row directly instead of having to reverse-resolve by label.
+    private var confirmedItemIds: [Int: Int] = [:]
+
     /// True while the server's `/suggest` call is in flight after preliminary
     /// on-device chips have been loaded. Set by `loadPreliminaryClassifications`
     /// (and therefore `loadPreliminaryFromOnDevice`); cleared by
@@ -428,6 +437,7 @@ final class SuggestionReviewViewModel {
         duplicateAssociationCount = 0
         confirmationErrorMessage = nil
         confirmationInfoMessage = nil
+        confirmedItemIds = [:]
         let includedIndices = editableSuggestions.indices.filter { editableSuggestions[$0].included }
         let taughtIndices = includedIndices.filter { editableSuggestions[$0].teach }
         let confirmID = suggestionReviewSignposter.makeSignpostID()
@@ -458,6 +468,7 @@ final class SuggestionReviewViewModel {
                     confidence: confidence,
                     binId: binId
                 )
+                confirmedItemIds[s.id] = upsert.itemId
                 suggestionReviewSignposter.emitEvent(
                     "upsert_done",
                     id: confirmID,
@@ -818,6 +829,7 @@ final class SuggestionReviewViewModel {
         promptVersion = nil
         shownAt = nil
         isAwaitingServerResponse = false
+        confirmedItemIds = [:]
     }
 
     /// Applies any supplied outcomes-telemetry context values and stamps
@@ -935,6 +947,7 @@ final class SuggestionReviewViewModel {
         shownAt: Date,
         editable: [EditableSuggestion],
         confirmedIds: Set<Int>,
+        itemIdsByLocal: [Int: Int] = [:],
         threeStateEnabled: Bool = false
     ) -> [PhotoSuggestionOutcome] {
         editable.compactMap { item in
@@ -994,6 +1007,14 @@ final class SuggestionReviewViewModel {
                 return nil
             }
 
+            let resolvedItemId: Int?
+            switch decision {
+            case .accepted, .edited:
+                resolvedItemId = itemIdsByLocal[item.id]
+            case .rejected, .ignored:
+                resolvedItemId = nil
+            }
+
             return PhotoSuggestionOutcome(
                 label: originalLabel,
                 category: item.originalCategory,
@@ -1001,7 +1022,8 @@ final class SuggestionReviewViewModel {
                 bbox: item.bbox,
                 shownAt: shownAt,
                 decision: decision,
-                editedToLabel: editedTo
+                editedToLabel: editedTo,
+                itemId: resolvedItemId
             )
         }
     }
@@ -1031,6 +1053,7 @@ final class SuggestionReviewViewModel {
             shownAt: shownAt,
             editable: editableSuggestions,
             confirmedIds: confirmedIds,
+            itemIdsByLocal: confirmedItemIds,
             threeStateEnabled: threeStateEnabled
         )
         let request = PhotoSuggestionOutcomesRequest(
@@ -1107,6 +1130,7 @@ final class SuggestionReviewViewModel {
                     confidence: confidence,
                     binId: binId
                 )
+                confirmedItemIds[s.id] = upsert.itemId
                 _ = try await apiClient.associateItem(
                     binId: binId,
                     itemId: upsert.itemId,

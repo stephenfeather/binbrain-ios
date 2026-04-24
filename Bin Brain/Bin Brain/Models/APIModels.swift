@@ -468,6 +468,12 @@ struct PhotoSuggestionOutcome: Encodable, Equatable {
     let decision: Decision
     /// Required when `decision == .edited`; the final label the user chose. Nil for all other decisions.
     let editedToLabel: String?
+    /// Server `item_id` produced by the `upsertItem` call during confirm, for
+    /// `.accepted` and `.edited` decisions. The server stores this directly on
+    /// `photo_suggestion_outcomes.item_id` so `GET /bins/{bin_id}` can
+    /// populate `source_photo_id` on each item via the existing LATERAL join.
+    /// `nil` for `.rejected` / `.ignored` (no item was created or linked).
+    let itemId: Int?
 
     enum CodingKeys: String, CodingKey {
         case label
@@ -477,6 +483,7 @@ struct PhotoSuggestionOutcome: Encodable, Equatable {
         case shownAt = "shown_at"
         case decision
         case editedToLabel = "edited_to_label"
+        case itemId = "item_id"
     }
 }
 

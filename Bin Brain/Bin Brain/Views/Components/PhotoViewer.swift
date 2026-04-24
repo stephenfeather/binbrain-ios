@@ -85,10 +85,14 @@ struct PhotoViewer: View {
 
     private var bottomPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !connectedItems.isEmpty {
-                Text("Items in this photo (\(connectedItems.count))")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.8))
+            Text("Items in this photo (\(connectedItems.count))")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.8))
+            if connectedItems.isEmpty {
+                Text("No items linked to this photo yet.")
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.6))
+            } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(connectedItems, id: \.itemId) { item in
