@@ -104,6 +104,55 @@ final class APIClient {
         self.keychain = keychain
     }
 
+    // MARK: - Tracing
+
+    /// Lets a `tracedRequest` body emit a custom terminal-event payload
+    /// (e.g. `status=missing_api_key retryCount=3`) before re-throwing the
+    /// real error. Caught only by `tracedRequest`; `underlying` is rethrown.
+    private struct TracedRequestFailure: Error {
+        let payload: String
+        let underlying: Error
+    }
+
+    /// Wraps `body` with `OSSignposter` begin / result / end ceremony.
+    /// Emits `initialEvent(id)`, runs `body`, then emits `resultEventName`
+    /// with `successPayload(result)` on return or `failurePayload()` on
+    /// throw (or `TracedRequestFailure.payload` if the body throws one).
+    /// Always closes the interval and re-throws so observable signpost
+    /// output matches the original hand-rolled scaffolding verbatim.
+    private func tracedRequest<T>(
+        interval intervalName: StaticString,
+        resultEvent resultEventName: StaticString,
+        initialEvent: (OSSignpostID) -> Void = { _ in },
+        successPayload: (T) -> String = { _ in "status=success" },
+        failurePayload: () -> String = { "status=failure" },
+        body: (OSSignpostID) async throws -> T
+    ) async throws -> T {
+        let id = apiSignposter.makeSignpostID()
+        let interval = apiSignposter.beginInterval(intervalName, id: id)
+        initialEvent(id)
+        // Compute payload + outcome up front so the emit/end pair runs once.
+        // `payload` is bound to a local because `OSLogMessage` captures
+        // arguments via `@escaping @autoclosure`, which can't pull from a
+        // non-escaping closure parameter directly.
+        let payload: String
+        let outcome: Result<T, Error>
+        do {
+            let value = try await body(id)
+            payload = successPayload(value)
+            outcome = .success(value)
+        } catch let custom as TracedRequestFailure {
+            payload = custom.payload
+            outcome = .failure(custom.underlying)
+        } catch {
+            payload = failurePayload()
+            outcome = .failure(error)
+        }
+        apiSignposter.emitEvent(resultEventName, id: id, "\(payload, privacy: .public)")
+        apiSignposter.endInterval(intervalName, interval)
+        return try outcome.get()
+    }
+
     // MARK: - Public API
 
     /// Returns the URL for serving a photo file, optionally resized.
@@ -277,13 +326,6 @@ final class APIClient {
         sessionId: UUID? = nil,
         retryCount: Int = 0
     ) async throws -> IngestResponse {
-        let ingestID = apiSignposter.makeSignpostID()
-        let ingestInterval = apiSignposter.beginInterval("ingest", id: ingestID)
-        apiSignposter.emitEvent(
-            "ingest",
-            id: ingestID,
-            "binId=\(binId, privacy: .public) size=\(jpegData.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
-        )
         var fields = ["bin_id": binId]
         if let deviceMetadata {
             fields["device_metadata"] = deviceMetadata
@@ -301,8 +343,18 @@ final class APIClient {
         if retryCount > 0 {
             extraHeaders["X-Client-Retry-Count"] = "\(retryCount)"
         }
-        do {
-            let response: IngestResponse = try await request(
+        return try await tracedRequest(
+            interval: "ingest",
+            resultEvent: "ingest_result",
+            initialEvent: { id in
+                apiSignposter.emitEvent(
+                    "ingest",
+                    id: id,
+                    "binId=\(binId, privacy: .public) size=\(jpegData.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
+                )
+            }
+        ) { _ in
+            try await request(
                 path: "/ingest",
                 method: "POST",
                 body: body,
@@ -310,21 +362,6 @@ final class APIClient {
                 timeout: 30,
                 extraHeaders: extraHeaders
             )
-            apiSignposter.emitEvent(
-                "ingest_result",
-                id: ingestID,
-                "status=\("success", privacy: .public)"
-            )
-            apiSignposter.endInterval("ingest", ingestInterval)
-            return response
-        } catch {
-            apiSignposter.emitEvent(
-                "ingest_result",
-                id: ingestID,
-                "status=\("failure", privacy: .public)"
-            )
-            apiSignposter.endInterval("ingest", ingestInterval)
-            throw error
         }
     }
 
@@ -419,36 +456,24 @@ final class APIClient {
         // Finding #18 — cold qwen3-vl model load has been observed at 149 s on
         // device. 180 s covers the cold path plus warmup jitter without letting
         // a truly hung server hang the UI indefinitely.
-        let suggestID = apiSignposter.makeSignpostID()
-        let suggestInterval = apiSignposter.beginInterval("suggest_request", id: suggestID)
-        apiSignposter.emitEvent(
-            "suggest_request",
-            id: suggestID,
-            "photoId=\(photoId, privacy: .public)"
-        )
-        do {
-            let response: PhotoSuggestResponse = try await request(
+        try await tracedRequest(
+            interval: "suggest_request",
+            resultEvent: "suggest_result",
+            initialEvent: { id in
+                apiSignposter.emitEvent(
+                    "suggest_request",
+                    id: id,
+                    "photoId=\(photoId, privacy: .public)"
+                )
+            }
+        ) { _ in
+            try await request(
                 path: "/photos/\(String(photoId).urlPathComponentEncoded)/suggest",
                 method: "GET",
                 body: nil,
                 contentType: nil,
                 timeout: 180
             )
-            apiSignposter.emitEvent(
-                "suggest_result",
-                id: suggestID,
-                "status=\("success", privacy: .public)"
-            )
-            apiSignposter.endInterval("suggest_request", suggestInterval)
-            return response
-        } catch {
-            apiSignposter.emitEvent(
-                "suggest_result",
-                id: suggestID,
-                "status=\("failure", privacy: .public)"
-            )
-            apiSignposter.endInterval("suggest_request", suggestInterval)
-            throw error
         }
     }
 
@@ -473,36 +498,25 @@ final class APIClient {
         retryCount: Int = 0
     ) async throws -> PhotoSuggestionOutcomesResponse {
         let body = try JSONEncoder.binBrain.encode(request)
-        let outcomesID = apiSignposter.makeSignpostID()
-        let outcomesInterval = apiSignposter.beginInterval("outcomes_post", id: outcomesID)
-        apiSignposter.emitEvent(
-            "outcomes_post",
-            id: outcomesID,
-            "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
-        )
-        do {
-            let response: PhotoSuggestionOutcomesResponse = try await self.request(
+        return try await tracedRequest(
+            interval: "outcomes_post",
+            resultEvent: "outcomes_post_result",
+            initialEvent: { id in
+                apiSignposter.emitEvent(
+                    "outcomes_post",
+                    id: id,
+                    "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
+                )
+            },
+            failurePayload: { "status=failure retryCount=\(retryCount)" }
+        ) { _ in
+            try await self.request(
                 path: "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes",
                 method: "POST",
                 body: body,
                 contentType: "application/json",
                 timeout: 10
             )
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("success", privacy: .public)"
-            )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            return response
-        } catch {
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("failure", privacy: .public) retryCount=\(retryCount, privacy: .public)"
-            )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            throw error
         }
     }
 
@@ -531,78 +545,68 @@ final class APIClient {
         clientRetryCount: Int,
         idempotencyKey: UUID
     ) async throws -> Int {
-        let outcomesID = apiSignposter.makeSignpostID()
-        let outcomesInterval = apiSignposter.beginInterval("outcomes_post", id: outcomesID)
-        apiSignposter.emitEvent(
-            "outcomes_post",
-            id: outcomesID,
-            "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
-        )
-        guard hasAPIKey else {
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("missing_api_key", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+        try await tracedRequest(
+            interval: "outcomes_post",
+            resultEvent: "outcomes_post_result",
+            initialEvent: { id in
+                apiSignposter.emitEvent(
+                    "outcomes_post",
+                    id: id,
+                    "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
+                )
+            },
+            successPayload: { http in
+                "status=\(http) retryCount=\(clientRetryCount)"
+            }
+        ) { id in
+            guard hasAPIKey else {
+                throw TracedRequestFailure(
+                    payload: "status=missing_api_key retryCount=\(clientRetryCount)",
+                    underlying: APIClientError.missingAPIKey
+                )
+            }
+            let urlString = baseURL + "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes"
+            guard let url = URL(string: urlString) else {
+                throw TracedRequestFailure(
+                    payload: "status=invalid_url retryCount=\(clientRetryCount)",
+                    underlying: APIClientError.invalidURL(urlString)
+                )
+            }
+            var urlRequest = URLRequest(url: url, timeoutInterval: 10)
+            urlRequest.httpMethod = "POST"
+            urlRequest.httpBody = body
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue("\(max(clientRetryCount, 0))", forHTTPHeaderField: "X-Client-Retry-Count")
+            urlRequest.setValue(idempotencyKey.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
+            let shouldAttach = shouldAttachKey(requiresAuth: true, probe: false)
+            if let apiKey, shouldAttach {
+                urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+            }
+            emitAuthAttachDecision(
+                id: id,
+                requiresAuth: true,
+                attached: shouldAttach && hasAPIKey,
+                probe: false
             )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            throw APIClientError.missingAPIKey
-        }
-        let urlString = baseURL + "/photos/\(String(photoId).urlPathComponentEncoded)/outcomes"
-        guard let url = URL(string: urlString) else {
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("invalid_url", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
-            )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            throw APIClientError.invalidURL(urlString)
-        }
-        var urlRequest = URLRequest(url: url, timeoutInterval: 10)
-        urlRequest.httpMethod = "POST"
-        urlRequest.httpBody = body
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("\(max(clientRetryCount, 0))", forHTTPHeaderField: "X-Client-Retry-Count")
-        urlRequest.setValue(idempotencyKey.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
-        let shouldAttach = shouldAttachKey(requiresAuth: true, probe: false)
-        if let apiKey, shouldAttach {
-            urlRequest.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
-        }
-        emitAuthAttachDecision(
-            id: outcomesID,
-            requiresAuth: true,
-            attached: shouldAttach && hasAPIKey,
-            probe: false
-        )
 
-        let response: URLResponse
-        do {
-            apiSignposter.emitEvent("request_sent", id: outcomesID)
-            (_, response) = try await session.data(for: urlRequest)
-        } catch {
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("network_failure", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
-            )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            throw error
+            let response: URLResponse
+            do {
+                apiSignposter.emitEvent("request_sent", id: id)
+                (_, response) = try await session.data(for: urlRequest)
+            } catch {
+                throw TracedRequestFailure(
+                    payload: "status=network_failure retryCount=\(clientRetryCount)",
+                    underlying: error
+                )
+            }
+            guard let http = response as? HTTPURLResponse else {
+                throw TracedRequestFailure(
+                    payload: "status=non_http_response retryCount=\(clientRetryCount)",
+                    underlying: APIClientError.unexpectedStatusCode(-1)
+                )
+            }
+            return http.statusCode
         }
-        guard let http = response as? HTTPURLResponse else {
-            apiSignposter.emitEvent(
-                "outcomes_post_result",
-                id: outcomesID,
-                "status=\("non_http_response", privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
-            )
-            apiSignposter.endInterval("outcomes_post", outcomesInterval)
-            throw APIClientError.unexpectedStatusCode(-1)
-        }
-        apiSignposter.emitEvent(
-            "outcomes_post_result",
-            id: outcomesID,
-            "status=\(http.statusCode, privacy: .public) retryCount=\(clientRetryCount, privacy: .public)"
-        )
-        apiSignposter.endInterval("outcomes_post", outcomesInterval)
-        return http.statusCode
     }
 
     /// Creates or upserts an item in the catalogue, optionally linking it to a bin.
