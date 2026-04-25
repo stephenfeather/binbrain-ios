@@ -289,7 +289,9 @@ nonisolated struct QualityGates: Sendable {
         let ciImage = CIImage(cgImage: cgImage)
         let context = CIContext(options: [.useSoftwareRenderer: true])
 
-        let histogramFilter = CIFilter(name: "CIAreaHistogram")!
+        guard let histogramFilter = CIFilter(name: "CIAreaHistogram") else {
+            return (0.5, nil)
+        }
         histogramFilter.setValue(ciImage, forKey: kCIInputImageKey)
         histogramFilter.setValue(CIVector(cgRect: ciImage.extent), forKey: "inputExtent")
         histogramFilter.setValue(256, forKey: "inputCount")
@@ -474,7 +476,23 @@ nonisolated struct QualityGates: Sendable {
                 // higher-contrast tags were the largest single object.
                 // TODO(Swift2_024-followup): expose a margin / crop-disable
                 // toggle if union proves insufficient in the wild.
-                let unionBox = Self.unionBoundingBox(of: salientObjects.map { $0.boundingBox })!
+                guard let unionBox = Self.unionBoundingBox(of: salientObjects.map { $0.boundingBox }) else {
+                    cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=\(salientObjects.count, privacy: .public) → union returned nil, treating as no objects")
+                    qualitySignposter.emitEvent(
+                        "vision_saliency_results",
+                        id: saliencyID,
+                        "objects=\(0, privacy: .public) coverage=\(0.0, privacy: .public)"
+                    )
+                    qualitySignposter.endInterval("vision_saliency", saliencyInterval)
+                    continuation.resume(returning: SaliencyAnalysis(
+                        status: .noObjects,
+                        objectCount: 0,
+                        coverage: 0,
+                        boundingBox: nil,
+                        failure: noObjectsFailure
+                    ))
+                    return
+                }
                 let coverage = Double(unionBox.width * unionBox.height)
                 cropDebugLogger.notice("[saliency] image=\(cgImage.width, privacy: .public)x\(cgImage.height, privacy: .public) objects=\(salientObjects.count, privacy: .public) union=(x=\(unionBox.origin.x, privacy: .public), y=\(unionBox.origin.y, privacy: .public), w=\(unionBox.width, privacy: .public), h=\(unionBox.height, privacy: .public)) coverage=\(coverage, privacy: .public)")
                 qualitySignposter.emitEvent(
