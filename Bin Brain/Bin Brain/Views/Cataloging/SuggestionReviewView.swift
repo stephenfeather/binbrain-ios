@@ -352,6 +352,8 @@ struct SuggestionReviewView: View {
 
             TextField("Category", text: suggestion.editedCategory)
                 .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .onChange(of: s.editedCategory) { _, _ in
                     viewModel.noteUserEdit(id: s.id)
                 }
