@@ -33,6 +33,12 @@ struct Bin_BrainApp: App {
     init() {
         let spid = appSignposter.makeSignpostID()
         let startupInterval = appSignposter.beginInterval("app_startup", id: spid)
+        // Install a tunable URLCache.shared BEFORE any request goes out so
+        // the very first photo fetch lands in the right cache. Server sends
+        // Cache-Control: immutable on /photos/{id}/file, so a generous disk
+        // budget cuts repeat thumbnail traffic and re-resize CPU.
+        PhotoCacheManager.applyFromUserDefaults()
+        appSignposter.emitEvent("app_startup", id: spid, "photo_cache_applied=\(true, privacy: .public)")
         // One-time migration of the API key out of UserDefaults into Keychain.
         // Idempotent — safe to run on every cold start.
         KeychainHelper.migrateAPIKeyFromUserDefaultsIfNeeded()

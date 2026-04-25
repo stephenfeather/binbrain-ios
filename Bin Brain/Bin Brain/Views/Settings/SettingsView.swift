@@ -37,6 +37,16 @@ struct SettingsView: View {
     @AppStorage(SuggestionReviewViewModel.outcomeModelEnabledDefaultsKey)
     private var outcomeModelEnabled: Bool = true
 
+    /// Disk cap (MB) for `URLCache.shared`. Server sends
+    /// `Cache-Control: immutable` on `/photos/{id}/file`, so the cache
+    /// actually pays for itself.
+    @AppStorage(PhotoCacheManager.userDefaultsKey)
+    private var photoDiskCacheMB: Int = PhotoCacheManager.defaultDiskCapacityMB
+
+    /// Tick that forces the "Cached: X MB" readout to refresh after a clear
+    /// (`URLCache.currentDiskUsage` is not @Observable).
+    @State private var cacheUsageRefreshTick: Int = 0
+
     // MARK: - Body
 
     var body: some View {
@@ -56,6 +66,7 @@ struct SettingsView: View {
             imageSizeSection
             searchSection
             catalogingSection
+            imageCacheSection
             sessionSection
             uploadQueueSection
             outcomeQueueSection
@@ -373,6 +384,63 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    @ViewBuilder
+    private var imageCacheSection: some View {
+        Section("Image Cache") {
+            Picker("Disk size", selection: Binding(
+                get: { photoDiskCacheMB },
+                set: { newValue in
+                    photoDiskCacheMB = newValue
+                    PhotoCacheManager.setDiskCapacity(mb: newValue)
+                    cacheUsageRefreshTick += 1
+                }
+            )) {
+                ForEach(PhotoCacheManager.availableDiskCapacityChoicesMB, id: \.self) { mb in
+                    Text(label(forCacheMB: mb)).tag(mb)
+                }
+            }
+
+            // Recompute on every view rebuild — the tick forces a refresh
+            // after Clear or a capacity change.
+            let _ = cacheUsageRefreshTick
+            HStack {
+                Text("Cached")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(cacheUsageReadout)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Clear cache", role: .destructive) {
+                PhotoCacheManager.clear()
+                cacheUsageRefreshTick += 1
+            }
+            .disabled(photoDiskCacheMB == 0 || PhotoCacheManager.currentDiskUsageBytes == 0)
+
+            Text("Photos are cached on disk so the bin grid renders instantly on revisit. Clearing forces every photo to be re-fetched.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func label(forCacheMB mb: Int) -> String {
+        if mb == 0 { return "Off" }
+        if mb >= 1000 { return String(format: "%.1f GB", Double(mb) / 1000.0) }
+        return "\(mb) MB"
+    }
+
+    private var cacheUsageReadout: String {
+        let used = PhotoCacheManager.currentDiskUsageBytes
+        let cap = PhotoCacheManager.diskCapacityBytes
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        let usedString = formatter.string(fromByteCount: Int64(used))
+        let capString = formatter.string(fromByteCount: Int64(cap))
+        return "\(usedString) of \(capString)"
     }
 
     @ViewBuilder
