@@ -382,7 +382,15 @@ final class APIClient {
             throw APIClientError.unexpectedStatusCode(-1)
         }
         if (200...299).contains(http.statusCode) {
-            return try? JSONDecoder.binBrain.decode(Session.self, from: data)
+            do {
+                return try JSONDecoder.binBrain.decode(Session.self, from: data)
+            } catch {
+                // Per global rule "Log errors, never swallow": surface decode
+                // failures to OSLog so we don't lose visibility on a server-side
+                // schema drift. Behavior preserved — caller still gets `nil`.
+                logger.error("DELETE \(path, privacy: .private) DECODE ERROR: status=\(http.statusCode, privacy: .public) \(error.localizedDescription, privacy: .private)")
+                return nil
+            }
         }
         if http.statusCode == 404 || http.statusCode == 410 {
             return nil
