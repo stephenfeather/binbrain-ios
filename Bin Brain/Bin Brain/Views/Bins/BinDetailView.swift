@@ -71,6 +71,21 @@ struct BinDetailView: View {
     /// Non-nil when /ingest (or /suggest) failed after the user had already
     /// navigated to the preliminary review screen. Drives the retry alert.
     @State private var ingestErrorMessage: String?
+    /// Most recent UPC/EAN (or other non-QR barcode) the live scanner has
+    /// detected during the photo step. Drives the on-screen overlay so the
+    /// user has the same kind of feedback the bin-QR scan gives them.
+    @State private var liveBarcodePayload: String?
+    @State private var liveBarcodeSymbology: String?
+
+    private var liveBarcode: BarcodeResult? {
+        liveBarcodePayload.map { payload in
+            BarcodeResult(
+                payload: payload,
+                symbology: liveBarcodeSymbology ?? "unknown",
+                boundingBox: nil
+            )
+        }
+    }
     /// True once preliminary on-device chips have been loaded and navigation
     /// to `.review` happened early (Mode A). Drives how `onComplete` merges.
     @State private var navigatedOnPreliminary = false
@@ -242,6 +257,11 @@ struct BinDetailView: View {
                         // Swift2_012 — seed VM-durable binId from the view's
                         // stable `let binId` before navigating to analysis.
                         reviewViewModel.binId = binId
+                        // Snapshot the live-scanned UPC at capture time so
+                        // /ingest's device_metadata.barcodes carries it even
+                        // when the captured frame itself doesn't show the
+                        // barcode (user moved between scan and shutter).
+                        let prescannedBarcode = liveBarcode
                         catalogingPath.append(.analysis)
                         Task {
                             // Swift2_019 — transparently open a session on
@@ -260,17 +280,42 @@ struct BinDetailView: View {
                                 sessionManager: sessionManager,
                                 context: modelContext,
                                 cameraContext: cameraContext,
-                                userBehavior: catalogingSession.snapshot()
+                                userBehavior: catalogingSession.snapshot(),
+                                prescannedBarcode: prescannedBarcode
                             )
                         }
                     },
                     onCaptureReady: { action in
                         captureProxy.action = action
-                    }
+                    },
+                    onBarcodeScanned: { payload, symbology in
+                        liveBarcodePayload = payload
+                        liveBarcodeSymbology = symbology
+                    },
+                    awaitsQR: false
                 )
                 .ignoresSafeArea()
 
                 VStack {
+                    if let payload = liveBarcodePayload {
+                        HStack(spacing: 8) {
+                            Image(systemName: "barcode.viewfinder")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(payload)
+                                    .font(.footnote.monospaced())
+                                if let sym = liveBarcodeSymbology {
+                                    Text(sym)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.top, 16)
+                        .accessibilityLabel("Detected barcode \(payload)")
+                    }
                     Spacer()
                     Button(action: { captureProxy.action?() }) {
                         Circle()
@@ -349,7 +394,8 @@ struct BinDetailView: View {
                         sessionId: sessionId,
                         sessionManager: sessionManager,
                         context: modelContext,
-                        userBehavior: catalogingSession.snapshot()
+                        userBehavior: catalogingSession.snapshot(),
+                        prescannedBarcode: liveBarcode
                     )
                 }
             },
@@ -467,6 +513,8 @@ struct BinDetailView: View {
         capturedPhotoData = nil
         capturedCameraContext = nil
         ingestErrorMessage = nil
+        liveBarcodePayload = nil
+        liveBarcodeSymbology = nil
         currentModelIndex = 0
         navigatedOnPreliminary = false
     }
@@ -484,7 +532,8 @@ struct BinDetailView: View {
                 sessionManager: sessionManager,
                 context: modelContext,
                 cameraContext: capturedCameraContext,
-                userBehavior: catalogingSession.snapshot()
+                userBehavior: catalogingSession.snapshot(),
+                prescannedBarcode: liveBarcode
             )
         }
     }

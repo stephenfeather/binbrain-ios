@@ -55,6 +55,18 @@ struct ScannerView: UIViewControllerRepresentable {
     /// to trigger `capturePhoto()` when the shutter button is tapped.
     var onCaptureReady: (@MainActor @escaping () -> Void) -> Void = { _ in }
 
+    /// Called for each non-QR barcode detected (UPC, EAN, Code128, DataMatrix)
+    /// once the QR-handshake gate has cleared. Receives `(payload, symbology
+    /// raw value)`. Default is a no-op so existing call sites are unaffected.
+    var onBarcodeScanned: (String, String) -> Void = { _, _ in }
+
+    /// When `true` (default) the scanner waits for a QR detection before
+    /// surfacing any other barcode via `onBarcodeScanned`. When `false`
+    /// (e.g. inside `BinDetailView`, where the bin id is already known),
+    /// non-QR barcodes are surfaced from frame 1 — the bin-QR handshake is
+    /// skipped entirely.
+    var awaitsQR: Bool = true
+
     // MARK: - UIViewControllerRepresentable
 
     func makeCoordinator() -> Coordinator {
@@ -68,7 +80,9 @@ struct ScannerView: UIViewControllerRepresentable {
         }
 
         let scanner = DataScannerViewController(
-            recognizedDataTypes: [.barcode(symbologies: [.qr])],
+            recognizedDataTypes: [
+                .barcode(symbologies: [.qr, .upce, .ean8, .ean13, .code128, .dataMatrix])
+            ],
             qualityLevel: .accurate,
             recognizesMultipleItems: false,
             isHighFrameRateTrackingEnabled: false,
@@ -77,6 +91,10 @@ struct ScannerView: UIViewControllerRepresentable {
         )
         scanner.delegate = context.coordinator
         context.coordinator.scanner = scanner
+        // When the bin id is already known the QR-handshake gate is skipped
+        // so the very first non-QR barcode (e.g. a UPC on the item) is
+        // surfaced through `onBarcodeScanned`.
+        context.coordinator.hasDeliveredQR = !awaitsQR
 
         // Wrap in a plain UIViewController to isolate the scanner
         // from SwiftUI's color environment (prevents yellow tint).
@@ -150,7 +168,15 @@ struct ScannerView: UIViewControllerRepresentable {
         // MARK: - Properties
 
         var parent: ScannerView
-        private var hasDeliveredQR = false
+        /// Tracks whether the bin-QR handshake has cleared. Once `true`,
+        /// non-QR barcodes (UPC, EAN, etc.) start surfacing through
+        /// `onBarcodeScanned`. Pre-set to `true` by `makeUIViewController`
+        /// when `awaitsQR == false` (i.e. BinDetailView's photo step).
+        var hasDeliveredQR = false
+        /// Most recent payload delivered to `onBarcodeScanned`. Tracked so a
+        /// continuously-tracked barcode does not re-fire the callback every
+        /// frame — only when the visible payload actually changes.
+        private var lastDeliveredBarcodePayload: String?
         weak var scanner: DataScannerViewController?
 
         /// AVCapturePhoto stashed from the most recent `didCapturePhoto`
@@ -189,15 +215,25 @@ struct ScannerView: UIViewControllerRepresentable {
             didAdd addedItems: [RecognizedItem],
             allItems: [RecognizedItem]
         ) {
-            guard !hasDeliveredQR else { return }
             for item in addedItems {
-                if case .barcode(let barcode) = item,
-                   let payload = barcode.payloadStringValue {
+                guard case .barcode(let barcode) = item,
+                      let payload = barcode.payloadStringValue else { continue }
+                let symbology = barcode.observation.symbology
+                if !hasDeliveredQR {
+                    // QR-handshake gate. We accept any payload here on
+                    // the assumption that the user is aiming at a bin QR;
+                    // a stray UPC could trip this, but the existing flow
+                    // also accepted any first-seen barcode and the parent
+                    // performs its own validation on the bin id.
                     hasDeliveredQR = true
                     parent.onQRCode(payload)
                     parent.showShutterButton = true
                     return
                 }
+                if symbology == .qr { continue }
+                if payload == lastDeliveredBarcodePayload { continue }
+                lastDeliveredBarcodePayload = payload
+                parent.onBarcodeScanned(payload, symbology.rawValue)
             }
         }
 

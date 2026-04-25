@@ -135,7 +135,7 @@ struct SaliencyContext: Codable, Equatable {
 
 /// Top-level metadata sidecar sent alongside the photo upload.
 struct DeviceMetadata: Codable, Equatable {
-    let deviceProcessing: DeviceProcessing
+    var deviceProcessing: DeviceProcessing
 
     enum CodingKeys: String, CodingKey {
         case deviceProcessing = "device_processing"
@@ -156,8 +156,11 @@ struct DeviceProcessing: Codable, Equatable {
     let qualityScores: QualityScores
     /// OCR text recognized in the image.
     let ocr: [OCRResult]
-    /// Barcodes detected in the image.
-    let barcodes: [BarcodeResult]
+    /// Barcodes detected in the image, optionally augmented with payloads
+    /// the live `DataScannerViewController` decoded before the user pressed
+    /// the shutter (so a UPC the user aimed at but did not retain in-frame
+    /// still ships with `/ingest`).
+    var barcodes: [BarcodeResult]
     /// Image classifications from Vision.
     let classifications: [ClassificationResult]
     /// Structured saliency analysis context and crop decision.

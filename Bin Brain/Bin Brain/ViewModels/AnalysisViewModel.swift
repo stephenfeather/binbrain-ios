@@ -163,7 +163,7 @@ final class AnalysisViewModel {
     ///   - userBehavior: Optional cataloging-session supervision snapshot
     ///     (retake_count, quality_bypass_count). Forwarded into
     ///     `ImagePipeline.process` so it lands in `device_metadata.user_behavior`.
-    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil, userBehavior: UserBehaviorContext? = nil) async {
+    func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
         lastCameraContext = cameraContext
@@ -228,7 +228,19 @@ final class AnalysisViewModel {
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
-            let jsonData = try JSONEncoder().encode(result.deviceMetadata)
+            // Merge any pre-shutter live-scanner barcode into the metadata
+            // sidecar so /ingest sees the UPC even when the captured frame
+            // does not contain it (user moves between scan and shutter).
+            var deviceMetadata = result.deviceMetadata
+            if let prescannedBarcode {
+                let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
+                    $0.payload == prescannedBarcode.payload
+                }
+                if !alreadyPresent {
+                    deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
+                }
+            }
+            let jsonData = try JSONEncoder().encode(deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch let error as PipelineError {
             switch error {
@@ -342,7 +354,7 @@ final class AnalysisViewModel {
     ///     taken AFTER the bypass tap was recorded. When supplied, replaces
     ///     the stored snapshot from the original `run(...)` so the bypass
     ///     count reflects reality.
-    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, userBehavior: UserBehaviorContext? = nil) async {
+    func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
         // after tapping "Upload Anyway".
@@ -377,7 +389,16 @@ final class AnalysisViewModel {
             uploadData = result.optimizedImageData
             preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
             preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
-            let jsonData = try JSONEncoder().encode(result.deviceMetadata)
+            var deviceMetadata = result.deviceMetadata
+            if let prescannedBarcode {
+                let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
+                    $0.payload == prescannedBarcode.payload
+                }
+                if !alreadyPresent {
+                    deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
+                }
+            }
+            let jsonData = try JSONEncoder().encode(deviceMetadata)
             metadataString = String(data: jsonData, encoding: .utf8)
         } catch {
             // Graceful degradation: upload original without metadata.
