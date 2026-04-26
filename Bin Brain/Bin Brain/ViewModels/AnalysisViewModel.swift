@@ -551,6 +551,8 @@ final class AnalysisViewModel {
     /// 2. Transitions `phase` to `.failed("Analysis interrupted — tap to retry")` on the main actor.
     /// 3. Ends the background task grant (idempotent via `-1` sentinel).
     ///
+    /// - Note: Must be called from `@MainActor` to avoid data races on the
+    ///   background-task box between the `defer` block and the OS expiration handler.
     /// - Parameters:
     ///   - name: The background-task name passed to `BackgroundTaskRunning.begin`.
     ///   - onExpiry: Additional work to perform when the OS fires the expiration
@@ -564,12 +566,14 @@ final class AnalysisViewModel {
     ) async -> T {
         let bgBox = BGTaskBox()
         let runner = backgroundTask
-        bgBox.id = runner.begin(name: name) { [weak self] in
+        bgBox.id = runner.begin(name: name) {
             onExpiry()
+            let id = bgBox.id
+            bgBox.id = -1
             Task { @MainActor [weak self] in
                 self?.phase = .failed("Analysis interrupted — tap to retry")
+                if id != -1 { runner.end(id) }
             }
-            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
         }
         defer {
             if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }

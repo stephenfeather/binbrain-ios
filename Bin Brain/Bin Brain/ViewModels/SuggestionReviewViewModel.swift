@@ -286,7 +286,7 @@ final class SuggestionReviewViewModel {
     ///
     /// - Complexity: O(n).
     var ignoredCount: Int {
-        editableSuggestions.filter { $0.outcomeState == .ignored }.count
+        editableSuggestions.lazy.filter { $0.outcomeState == .ignored }.count
     }
 
     /// Title for the Confirm button. `"Confirm"` when nothing is ignored or
