@@ -285,64 +285,14 @@ struct BinDetailView: View {
     // MARK: - Analysis View
 
     private var analysisView: some View {
-        AnalysisProgressView(
-            viewModel: coordinator.analysisViewModel,
-            onComplete: { suggestions in
-                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
-                if coordinator.navigatedOnPreliminary {
-                    coordinator.reviewViewModel.applyServerSuggestions(
-                        suggestions,
-                        photoId: coordinator.analysisViewModel.lastPhotoId,
-                        visionModel: coordinator.analysisViewModel.lastVisionModel,
-                        promptVersion: coordinator.analysisViewModel.lastPromptVersion
-                    )
-                } else {
-                    coordinator.reviewViewModel.loadSuggestions(
-                        suggestions,
-                        photoId: coordinator.analysisViewModel.lastPhotoId,
-                        visionModel: coordinator.analysisViewModel.lastVisionModel,
-                        promptVersion: coordinator.analysisViewModel.lastPromptVersion
-                    )
-                    coordinator.path.append(.review)
-                }
-            },
-            onRetry: {
-                // Finding #4-UX-2: "Retake Photo" must return to the camera so
-                // the user can capture a fresh frame.
-                coordinator.catalogingSession.recordRetake()
-                coordinator.analysisViewModel.reset()
-                coordinator.navigatedOnPreliminary = false
-                coordinator.capturedPhotoData = nil
-                coordinator.path.removeAll()
-            },
-            onOverride: {
-                coordinator.catalogingSession.recordQualityBypass()
-                coordinator.startOverrideQualityGate(
-                    binId: binId,
-                    apiClient: apiClient,
-                    sessionManager: sessionManager,
-                    modelContext: modelContext
-                )
-            },
-            onPreliminaryReady: { classifications, ocr in
-                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
-                coordinator.reviewViewModel.loadPreliminaryFromOnDevice(
-                    classifications: classifications,
-                    ocr: ocr,
-                    topK: CatalogingCoordinator.preliminaryTopK
-                )
-                coordinator.navigatedOnPreliminary = true
-                coordinator.path.append(.review)
-            }
-        )
+        AnalysisStepView(coordinator: coordinator, binIdProvider: { binId })
     }
 
     // MARK: - Review View
 
     private var reviewView: some View {
-        return SuggestionReviewView(
-            viewModel: coordinator.reviewViewModel,
-            apiClient: apiClient,
+        ReviewStepView(
+            coordinator: coordinator,
             onDone: {
                 // Swift2_027 — pop the inner NavigationStack FIRST so the
                 // .analysis/.review pushes unwind before the fullScreenCover
@@ -353,40 +303,8 @@ struct BinDetailView: View {
                 coordinator.path = []
                 showCamera = false
                 Task { await viewModel.load(binId: binId, apiClient: apiClient) }
-            },
-            onRetryWithLargerModel: coordinator.nextModelAvailable ? {
-                coordinator.escalateModelAndReSuggest(apiClient: apiClient)
-            } : nil
-        )
-        // Swift2_018 — inject the durable outcomes queue + context so
-        // confirm() persists each outcomes POST instead of firing it as a
-        // one-shot detached Task. Both must be set before confirm() runs.
-        .onAppear {
-            coordinator.reviewViewModel.outcomeQueueManager = outcomeQueueManager
-            coordinator.reviewViewModel.outcomeQueueContext = modelContext
-        }
-        // Same fix as BinsListView: observe phase on the visible view, not the
-        // background AnalysisProgressView.
-        .onChange(of: coordinator.analysisViewModel.phase) { _, newPhase in
-            guard coordinator.navigatedOnPreliminary else { return }
-            switch newPhase {
-            case .complete:
-                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
-                coordinator.reviewViewModel.applyServerSuggestions(
-                    coordinator.analysisViewModel.suggestions,
-                    photoId: coordinator.analysisViewModel.lastPhotoId,
-                    visionModel: coordinator.analysisViewModel.lastVisionModel,
-                    promptVersion: coordinator.analysisViewModel.lastPromptVersion
-                )
-            case .failed(let message):
-                // The review screen owns the alert because the parent owns the
-                // API call — without this hook the user would be stuck on a
-                // permanent "Working…" spinner with no way to resubmit.
-                coordinator.ingestErrorMessage = message
-            default:
-                break
             }
-        }
+        )
         .alert(
             "Analysis Failed",
             isPresented: Binding(
