@@ -7,20 +7,6 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - BinDetailCaptureProxy
-
-/// Reference-type container for the scanner's capture action.
-private final class CaptureProxy {
-    var action: (() -> Void)?
-}
-
-// MARK: - BinCatalogingStep
-
-private enum BinCatalogingStep: Hashable {
-    case analysis
-    case review
-}
-
 // MARK: - BinDetailView
 
 /// The detail screen for a single storage bin.
@@ -58,43 +44,8 @@ struct BinDetailView: View {
     // Delete confirmation state
     @State private var itemToDelete: BinItemRecord?
 
-    // Cataloging flow state
-    @State private var catalogingPath: [BinCatalogingStep] = []
-    @State private var analysisViewModel = AnalysisViewModel()
-    @State private var catalogingSession = CatalogingSession()
-    @State private var reviewViewModel = SuggestionReviewViewModel()
-    @State private var captureProxy = CaptureProxy()
-    @State private var capturedPhotoData: Data?
-    /// Camera telemetry captured alongside `capturedPhotoData`. Retained so a
-    /// retry after an /ingest failure can re-submit with the original metadata.
-    @State private var capturedCameraContext: CameraCaptureContext?
-    /// Non-nil when /ingest (or /suggest) failed after the user had already
-    /// navigated to the preliminary review screen. Drives the retry alert.
-    @State private var ingestErrorMessage: String?
-    /// Most recent UPC/EAN (or other non-QR barcode) the live scanner has
-    /// detected during the photo step. Drives the on-screen overlay so the
-    /// user has the same kind of feedback the bin-QR scan gives them.
-    @State private var liveBarcodePayload: String?
-    @State private var liveBarcodeSymbology: String?
-
-    private var liveBarcode: BarcodeResult? {
-        liveBarcodePayload.map { payload in
-            BarcodeResult(
-                payload: payload,
-                symbology: liveBarcodeSymbology ?? "unknown",
-                boundingBox: nil
-            )
-        }
-    }
-    /// True once preliminary on-device chips have been loaded and navigation
-    /// to `.review` happened early (Mode A). Drives how `onComplete` merges.
-    @State private var navigatedOnPreliminary = false
-    /// Top-K chips to surface as preliminary (Mode A, Phase 1).
-    private static let preliminaryTopK = 10
-
-    // Model escalation
-    private static let modelEscalation = ["qwen3-vl:2b", "qwen3-vl:4b", "qwen3-vl:8b"]
-    @State private var currentModelIndex = 0
+    // Cataloging coordinator — owns all shared cataloging state and actions
+    @State private var coordinator = CatalogingCoordinator()
 
     // MARK: - Sort Order
 
@@ -160,7 +111,7 @@ struct BinDetailView: View {
             // horizontal size class changes on rotation (compact→regular on
             // large iPhones). fullScreenCover fills the whole screen regardless
             // of orientation, so the ScannerView + NavigationStack survive rotation.
-            .fullScreenCover(isPresented: $showCamera, onDismiss: resetCataloging) {
+            .fullScreenCover(isPresented: $showCamera, onDismiss: { coordinator.resetCataloging() }) {
                 cameraSheet
             }
             .fullScreenCover(isPresented: Binding(
@@ -229,7 +180,8 @@ struct BinDetailView: View {
 
     @ViewBuilder
     private var cameraSheet: some View {
-        NavigationStack(path: $catalogingPath) {
+        @Bindable var c = coordinator
+        NavigationStack(path: $c.path) {
             ZStack {
                 ScannerView(
                     showShutterButton: .constant(true),
@@ -240,7 +192,7 @@ struct BinDetailView: View {
                         // a duplicate, producing two stacked quality-gate
                         // screens. Drop captures that arrive after the path
                         // has already advanced.
-                        guard catalogingPath.isEmpty else { return }
+                        guard coordinator.path.isEmpty else { return }
                         let oriented: UIImage
                         if image.imageOrientation != .up {
                             let fmt = UIGraphicsImageRendererFormat()
@@ -252,58 +204,42 @@ struct BinDetailView: View {
                             oriented = image
                         }
                         guard let rawData = oriented.jpegData(compressionQuality: 1.0) else { return }
-                        capturedPhotoData = rawData
-                        capturedCameraContext = cameraContext
+                        coordinator.capturedPhotoData = rawData
+                        coordinator.capturedCameraContext = cameraContext
                         // Swift2_012 — seed VM-durable binId from the view's
                         // stable `let binId` before navigating to analysis.
-                        reviewViewModel.binId = binId
-                        // Snapshot the live-scanned UPC at capture time so
-                        // /ingest's device_metadata.barcodes carries it even
-                        // when the captured frame itself doesn't show the
-                        // barcode (user moved between scan and shutter).
-                        let prescannedBarcode = liveBarcode
-                        catalogingPath.append(.analysis)
-                        Task {
-                            // Swift2_019 — transparently open a session on
-                            // the first photo so the natural "open app, tap
-                            // shutter" flow still works. SessionManager
-                            // caches the id for subsequent captures and
-                            // auto-closes after 30 min of inactivity.
-                            // Swift2_019b — pass the manager so AnalysisViewModel
-                            // can invalidate + retry on 400 invalid_session.
-                            let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
-                            await analysisViewModel.run(
-                                jpegData: rawData,
-                                binId: binId,
-                                apiClient: apiClient,
-                                sessionId: sessionId,
-                                sessionManager: sessionManager,
-                                context: modelContext,
-                                cameraContext: cameraContext,
-                                userBehavior: catalogingSession.snapshot(),
-                                prescannedBarcode: prescannedBarcode
-                            )
-                        }
+                        coordinator.reviewViewModel.binId = binId
+                        coordinator.path.append(.analysis)
+                        // startAnalysis captures liveBarcode at call time (before
+                        // its internal Task) so the UPC snapshot is accurate even
+                        // if the user moved the camera between scan and shutter.
+                        coordinator.startAnalysis(
+                            binId: binId,
+                            apiClient: apiClient,
+                            sessionManager: sessionManager,
+                            modelContext: modelContext,
+                            cameraContext: cameraContext
+                        )
                     },
                     onCaptureReady: { action in
-                        captureProxy.action = action
+                        coordinator.captureProxy.action = action
                     },
                     onBarcodeScanned: { payload, symbology in
-                        liveBarcodePayload = payload
-                        liveBarcodeSymbology = symbology
+                        coordinator.liveBarcodePayload = payload
+                        coordinator.liveBarcodeSymbology = symbology
                     },
                     awaitsQR: false
                 )
                 .ignoresSafeArea()
 
                 VStack {
-                    if let payload = liveBarcodePayload {
+                    if let payload = coordinator.liveBarcodePayload {
                         HStack(spacing: 8) {
                             Image(systemName: "barcode.viewfinder")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(payload)
                                     .font(.footnote.monospaced())
-                                if let sym = liveBarcodeSymbology {
+                                if let sym = coordinator.liveBarcodeSymbology {
                                     Text(sym)
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
@@ -317,7 +253,7 @@ struct BinDetailView: View {
                         .accessibilityLabel("Detected barcode \(payload)")
                     }
                     Spacer()
-                    Button(action: { captureProxy.action?() }) {
+                    Button(action: { coordinator.captureProxy.action?() }) {
                         Circle()
                             .fill(Color.white)
                             .frame(width: 72, height: 72)
@@ -325,7 +261,7 @@ struct BinDetailView: View {
                             .shadow(radius: 4)
                     }
                     .accessibilityLabel("Take photo")
-                    .disabled(!catalogingPath.isEmpty)
+                    .disabled(!coordinator.path.isEmpty)
                     .padding(.bottom, 50)
                 }
             }
@@ -336,7 +272,7 @@ struct BinDetailView: View {
                     Button("Cancel") { showCamera = false }
                 }
             }
-            .navigationDestination(for: BinCatalogingStep.self) { step in
+            .navigationDestination(for: CatalogingStep.self) { step in
                 switch step {
                 case .analysis:
                     analysisView
@@ -351,63 +287,53 @@ struct BinDetailView: View {
 
     private var analysisView: some View {
         AnalysisProgressView(
-            viewModel: analysisViewModel,
+            viewModel: coordinator.analysisViewModel,
             onComplete: { suggestions in
-                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-                if navigatedOnPreliminary {
-                    reviewViewModel.applyServerSuggestions(
+                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
+                if coordinator.navigatedOnPreliminary {
+                    coordinator.reviewViewModel.applyServerSuggestions(
                         suggestions,
-                        photoId: analysisViewModel.lastPhotoId,
-                        visionModel: analysisViewModel.lastVisionModel,
-                        promptVersion: analysisViewModel.lastPromptVersion
+                        photoId: coordinator.analysisViewModel.lastPhotoId,
+                        visionModel: coordinator.analysisViewModel.lastVisionModel,
+                        promptVersion: coordinator.analysisViewModel.lastPromptVersion
                     )
                 } else {
-                    reviewViewModel.loadSuggestions(
+                    coordinator.reviewViewModel.loadSuggestions(
                         suggestions,
-                        photoId: analysisViewModel.lastPhotoId,
-                        visionModel: analysisViewModel.lastVisionModel,
-                        promptVersion: analysisViewModel.lastPromptVersion
+                        photoId: coordinator.analysisViewModel.lastPhotoId,
+                        visionModel: coordinator.analysisViewModel.lastVisionModel,
+                        promptVersion: coordinator.analysisViewModel.lastPromptVersion
                     )
-                    catalogingPath.append(.review)
+                    coordinator.path.append(.review)
                 }
             },
             onRetry: {
                 // Finding #4-UX-2: "Retake Photo" must return to the camera so
-                // the user can capture a fresh frame. The previous implementation
-                // re-ran analysis on the SAME (still-blurry) photo.
-                catalogingSession.recordRetake()
-                analysisViewModel.reset()
-                navigatedOnPreliminary = false
-                capturedPhotoData = nil
-                catalogingPath.removeAll()
+                // the user can capture a fresh frame.
+                coordinator.catalogingSession.recordRetake()
+                coordinator.analysisViewModel.reset()
+                coordinator.navigatedOnPreliminary = false
+                coordinator.capturedPhotoData = nil
+                coordinator.path.removeAll()
             },
             onOverride: {
-                catalogingSession.recordQualityBypass()
-                Task {
-                    guard let data = capturedPhotoData else { return }
-                    navigatedOnPreliminary = false
-                    let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
-                    await analysisViewModel.overrideQualityGate(
-                        jpegData: data,
-                        binId: binId,
-                        apiClient: apiClient,
-                        sessionId: sessionId,
-                        sessionManager: sessionManager,
-                        context: modelContext,
-                        userBehavior: catalogingSession.snapshot(),
-                        prescannedBarcode: liveBarcode
-                    )
-                }
+                coordinator.catalogingSession.recordQualityBypass()
+                coordinator.startOverrideQualityGate(
+                    binId: binId,
+                    apiClient: apiClient,
+                    sessionManager: sessionManager,
+                    modelContext: modelContext
+                )
             },
             onPreliminaryReady: { classifications, ocr in
-                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-                reviewViewModel.loadPreliminaryFromOnDevice(
+                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
+                coordinator.reviewViewModel.loadPreliminaryFromOnDevice(
                     classifications: classifications,
                     ocr: ocr,
-                    topK: Self.preliminaryTopK
+                    topK: CatalogingCoordinator.preliminaryTopK
                 )
-                navigatedOnPreliminary = true
-                catalogingPath.append(.review)
+                coordinator.navigatedOnPreliminary = true
+                coordinator.path.append(.review)
             }
         )
     }
@@ -415,9 +341,9 @@ struct BinDetailView: View {
     // MARK: - Review View
 
     private var reviewView: some View {
-        let _ = print("[BIND] reviewView binId=\(binId) vmBinId=\(reviewViewModel.binId)")
+        let _ = print("[BIND] reviewView binId=\(binId) vmBinId=\(coordinator.reviewViewModel.binId)")
         return SuggestionReviewView(
-            viewModel: reviewViewModel,
+            viewModel: coordinator.reviewViewModel,
             apiClient: apiClient,
             onDone: {
                 // Swift2_027 — pop the inner NavigationStack FIRST so the
@@ -425,40 +351,40 @@ struct BinDetailView: View {
                 // tears down. resetCataloging() (cover's onDismiss) also
                 // clears the path, but it runs *after* the cover has finished
                 // dismissing — too late to prevent SwiftUI rendering a blank
-                // intermediate frame with just the parent's back arrow when
-                // the user taps Dismiss on a preliminary-only result.
-                catalogingPath = []
+                // intermediate frame.
+                coordinator.path = []
                 showCamera = false
                 Task { await viewModel.load(binId: binId, apiClient: apiClient) }
             },
-            onRetryWithLargerModel: nextModelAvailable ? {
-                escalateModelAndReSuggest()
+            onRetryWithLargerModel: coordinator.nextModelAvailable ? {
+                coordinator.escalateModelAndReSuggest(apiClient: apiClient)
             } : nil
         )
         // Swift2_018 — inject the durable outcomes queue + context so
         // confirm() persists each outcomes POST instead of firing it as a
         // one-shot detached Task. Both must be set before confirm() runs.
         .onAppear {
-            reviewViewModel.outcomeQueueManager = outcomeQueueManager
-            reviewViewModel.outcomeQueueContext = modelContext
+            coordinator.reviewViewModel.outcomeQueueManager = outcomeQueueManager
+            coordinator.reviewViewModel.outcomeQueueContext = modelContext
         }
-        // Same fix as BinsListView: observe phase on the visible view, not the background AnalysisProgressView.
-        .onChange(of: analysisViewModel.phase) { _, newPhase in
-            guard navigatedOnPreliminary else { return }
+        // Same fix as BinsListView: observe phase on the visible view, not the
+        // background AnalysisProgressView.
+        .onChange(of: coordinator.analysisViewModel.phase) { _, newPhase in
+            guard coordinator.navigatedOnPreliminary else { return }
             switch newPhase {
             case .complete:
-                reviewViewModel.photoData = analysisViewModel.lastUploadedPhotoData
-                reviewViewModel.applyServerSuggestions(
-                    analysisViewModel.suggestions,
-                    photoId: analysisViewModel.lastPhotoId,
-                    visionModel: analysisViewModel.lastVisionModel,
-                    promptVersion: analysisViewModel.lastPromptVersion
+                coordinator.reviewViewModel.photoData = coordinator.analysisViewModel.lastUploadedPhotoData
+                coordinator.reviewViewModel.applyServerSuggestions(
+                    coordinator.analysisViewModel.suggestions,
+                    photoId: coordinator.analysisViewModel.lastPhotoId,
+                    visionModel: coordinator.analysisViewModel.lastVisionModel,
+                    promptVersion: coordinator.analysisViewModel.lastPromptVersion
                 )
             case .failed(let message):
                 // The review screen owns the alert because the parent owns the
                 // API call — without this hook the user would be stuck on a
                 // permanent "Working…" spinner with no way to resubmit.
-                ingestErrorMessage = message
+                coordinator.ingestErrorMessage = message
             default:
                 break
             }
@@ -466,75 +392,26 @@ struct BinDetailView: View {
         .alert(
             "Analysis Failed",
             isPresented: Binding(
-                get: { ingestErrorMessage != nil },
-                set: { if !$0 { ingestErrorMessage = nil } }
+                get: { coordinator.ingestErrorMessage != nil },
+                set: { if !$0 { coordinator.ingestErrorMessage = nil } }
             ),
-            presenting: ingestErrorMessage
+            presenting: coordinator.ingestErrorMessage
         ) { _ in
-            Button("Retry") { retryIngest() }
+            Button("Retry") {
+                coordinator.retryIngest(
+                    binId: binId,
+                    apiClient: apiClient,
+                    sessionManager: sessionManager,
+                    modelContext: modelContext
+                )
+            }
             Button("Cancel", role: .cancel) {
-                ingestErrorMessage = nil
-                catalogingPath = []
+                coordinator.ingestErrorMessage = nil
+                coordinator.path = []
                 showCamera = false
             }
         } message: { message in
             Text(message)
-        }
-    }
-
-    // MARK: - Cataloging Helpers
-
-    private var nextModelAvailable: Bool {
-        currentModelIndex + 1 < Self.modelEscalation.count
-    }
-
-    private func escalateModelAndReSuggest() {
-        guard nextModelAvailable else { return }
-        currentModelIndex += 1
-        let nextModel = Self.modelEscalation[currentModelIndex]
-        // Pop back to analysis screen, select the larger model, re-suggest
-        catalogingPath = [.analysis]
-        reviewViewModel = SuggestionReviewViewModel()
-        Task {
-            do {
-                _ = try await apiClient.selectModel(nextModel)
-            } catch {
-                // selectModel failed — still try suggest with current model
-            }
-            await analysisViewModel.reSuggest(apiClient: apiClient)
-        }
-    }
-
-    private func resetCataloging() {
-        catalogingPath = []
-        analysisViewModel.reset()
-        catalogingSession.reset()
-        captureProxy.action = nil
-        capturedPhotoData = nil
-        capturedCameraContext = nil
-        ingestErrorMessage = nil
-        liveBarcodePayload = nil
-        liveBarcodeSymbology = nil
-        currentModelIndex = 0
-        navigatedOnPreliminary = false
-    }
-
-    private func retryIngest() {
-        guard let data = capturedPhotoData else { return }
-        ingestErrorMessage = nil
-        Task {
-            let sessionId = try? await sessionManager.activeSessionId(apiClient: apiClient)
-            await analysisViewModel.run(
-                jpegData: data,
-                binId: binId,
-                apiClient: apiClient,
-                sessionId: sessionId,
-                sessionManager: sessionManager,
-                context: modelContext,
-                cameraContext: capturedCameraContext,
-                userBehavior: catalogingSession.snapshot(),
-                prescannedBarcode: liveBarcode
-            )
         }
     }
 
@@ -652,10 +529,7 @@ struct BinDetailView: View {
             .padding(.vertical, 8)
             // Swift2_025 — declaring the LazyHStack as a scroll target lets
             // `.scrollTargetBehavior(.viewAligned)` raise this horizontal
-            // scroll's gesture priority over the ancestor `.refreshable`, so a
-            // sideways swipe on the photo strip no longer flickers the
-            // pull-to-refresh indicator. Side benefit: thumbnails snap to
-            // alignment on release, which reads as more deliberate.
+            // scroll's gesture priority over the ancestor `.refreshable`.
             .scrollTargetLayout()
         }
         .frame(height: 116)
@@ -757,4 +631,3 @@ private struct AddItemSheet: View {
         }
     }
 }
-
