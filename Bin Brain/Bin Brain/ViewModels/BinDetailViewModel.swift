@@ -102,7 +102,6 @@ final class BinDetailViewModel {
             )
             await load(binId: binId, apiClient: apiClient)
         } catch {
-            self.error = error.localizedDescription
             throw error
         }
     }

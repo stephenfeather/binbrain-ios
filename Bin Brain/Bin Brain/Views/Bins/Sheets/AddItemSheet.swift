@@ -35,11 +35,14 @@ struct AddItemSheet: View {
         trimmedCategory.isEmpty ? nil : trimmedCategory
     }
 
-    /// Parses `quantityText` using the current locale's decimal separator.
+    /// The parsed numeric value of `quantityText`, locale-aware.
     ///
-    /// - Note: Not O(1) — creates a `NumberFormatter` on each access and invokes
-    ///   the parser. Called from both `body` (to drive `saveDisabled`) and `save()`.
-    ///   Caching via `onChange(of: quantityText)` is out of scope for this change.
+    /// Evaluated only in `save()`; the UI's Save button uses `trimmedName`/`isLoading`
+    /// for its disabled state and never reads this property.
+    ///
+    /// Non-O(1): allocates a `NumberFormatter` and parses the text on each access.
+    /// Caching (e.g. via `.onChange(of: quantityText)`) is out of scope for this
+    /// iteration since the access pattern is single-shot at Save.
     private var quantityValue: Double? {
         guard !quantityText.isEmpty else { return nil }
         let f = NumberFormatter()
