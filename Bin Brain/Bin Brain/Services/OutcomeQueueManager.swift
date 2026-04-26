@@ -264,8 +264,8 @@ final class OutcomeQueueManager {
             return
         }
         var reclaimed = 0
-        let sendingRows = all.filter { $0.status == .sending }.count
-        for row in all where row.status == .sending {
+        let sending = all.filter { $0.status == .sending }
+        for row in sending {
             // Swift2_018c / SEC-26-2 — bounded reclaim per launch.
             // Stops a runaway crash-loop from re-firing every orphaned
             // row through the network at relaunch. Remaining rows wait
@@ -282,7 +282,7 @@ final class OutcomeQueueManager {
         signposter.emitEvent(
             "reclaimOrphanedSendingRows_counts",
             id: reclaimID,
-            "totalScanned=\(all.count, privacy: .public) sendingRows=\(sendingRows, privacy: .public) reclaimed=\(reclaimed, privacy: .public) capHit=\(self.lastReclaimCapHit, privacy: .public)"
+            "totalScanned=\(all.count, privacy: .public) sendingRows=\(sending.count, privacy: .public) reclaimed=\(reclaimed, privacy: .public) capHit=\(self.lastReclaimCapHit, privacy: .public)"
         )
         if reclaimed > 0 {
             save(context, changedCount: reclaimed, reason: "reclaimOrphanedSendingRows")
