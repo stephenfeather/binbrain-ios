@@ -7,22 +7,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Helpers
-
-/// Returns `true` when `data` is non-nil and decodable as a `UIImage`.
-///
-/// Pure function — no side effects. Exposed at file scope so tests can drive
-/// it without constructing a view (matching the `formatMetricValue` pattern).
-///
-/// TODO(post-Swift2_010): remove `shouldShowPhoto` — no production callers
-/// after decode moved to `SuggestionReviewViewModel.pinnedImage`. A dedicated
-/// cleanup task should drop this helper AND its tests at
-/// `SuggestionReviewViewModelTests.swift` (`testShouldShowPhoto*`).
-func shouldShowPhoto(_ data: Data?) -> Bool {
-    guard let data else { return false }
-    return UIImage(data: data) != nil
-}
-
 // MARK: - SuggestionReviewView
 
 /// Review screen where the user edits and confirms AI-suggested items.

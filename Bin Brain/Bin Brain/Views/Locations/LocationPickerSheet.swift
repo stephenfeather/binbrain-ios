@@ -100,14 +100,12 @@ struct LocationPickerSheet: View {
     // MARK: - Private
 
     private func loadLocations() async {
-        isLoading = true
-        error = nil
-        do {
-            locations = try await apiClient.listLocations()
-        } catch {
-            self.error = error.localizedDescription
-        }
-        isLoading = false
+        await runLoadingRequest(
+            setLoading: { isLoading = $0 },
+            setError:   { error = $0 },
+            onSuccess:  { locations = $0 },
+            work:       { try await apiClient.listLocations() }
+        )
     }
 
     private func assign(locationId: Int?, locationName: String?) async {

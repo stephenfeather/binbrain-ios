@@ -38,14 +38,12 @@ final class BinDetailViewModel {
     ///   - binId: The alphanumeric bin identifier (e.g. `BIN-0001`).
     ///   - apiClient: The `APIClient` instance to use for the request.
     func load(binId: String, apiClient: APIClient) async {
-        isLoading = true
-        error = nil
-        do {
-            bin = try await apiClient.getBin(binId)
-        } catch {
-            self.error = error.localizedDescription
-        }
-        isLoading = false
+        await runLoadingRequest(
+            setLoading: { [weak self] in self?.isLoading = $0 },
+            setError:   { [weak self] in self?.error = $0 },
+            onSuccess:  { [weak self] in self?.bin = $0 },
+            work:       { try await apiClient.getBin(binId) }
+        )
     }
 
     /// Removes an item from this bin, then reloads the bin contents.

@@ -923,24 +923,6 @@ final class SuggestionReviewViewModelTests: XCTestCase {
                       "All requests must carry the VM-held binId 'BIN-0003'; got \(receivedBinIds)")
     }
 
-    // MARK: - Swift2_005 Step 4: shouldShowPhoto
-
-    func testShouldShowPhotoReturnsFalseForNil() {
-        XCTAssertFalse(shouldShowPhoto(nil),
-                       "shouldShowPhoto must return false when data is nil")
-    }
-
-    func testShouldShowPhotoReturnsFalseForNonImageData() {
-        XCTAssertFalse(shouldShowPhoto(Data("not-a-jpeg".utf8)),
-                       "shouldShowPhoto must return false for non-decodable data")
-    }
-
-    func testShouldShowPhotoReturnsTrueForValidJPEG() throws {
-        let jpeg = try XCTUnwrap(makeMinimalJPEG(), "failed to synthesize test JPEG")
-        XCTAssertTrue(shouldShowPhoto(jpeg),
-                      "shouldShowPhoto must return true for valid JPEG bytes")
-    }
-
     /// Builds a minimal valid 1×1 JPEG.
     private func makeMinimalJPEG() -> Data? {
         let colorSpace = CGColorSpaceCreateDeviceRGB()

@@ -263,17 +263,20 @@ final class OutcomeQueueManager {
             logger.error("[OUTCOMES] reclaim fetch failed: \(error.localizedDescription, privacy: .private)")
             return
         }
+        var sendingCount = 0
         var reclaimed = 0
-        let sendingRows = all.filter { $0.status == .sending }.count
         for row in all where row.status == .sending {
+            sendingCount += 1
             // Swift2_018c / SEC-26-2 — bounded reclaim per launch.
             // Stops a runaway crash-loop from re-firing every orphaned
             // row through the network at relaunch. Remaining rows wait
             // for the NEXT launch.
             if reclaimed >= Self.maxReclaimPerLaunch {
-                lastReclaimCapHit = true
-                logger.warning("[OUTCOMES] reclaim cap hit — \(reclaimed, privacy: .public) rows reclaimed in one launch; possible crash loop")
-                break
+                if !lastReclaimCapHit {
+                    lastReclaimCapHit = true
+                    logger.warning("[OUTCOMES] reclaim cap hit — \(reclaimed, privacy: .public) rows reclaimed in one launch; possible crash loop")
+                }
+                continue
             }
             row.status = .pending
             reclaimed += 1
@@ -282,7 +285,7 @@ final class OutcomeQueueManager {
         signposter.emitEvent(
             "reclaimOrphanedSendingRows_counts",
             id: reclaimID,
-            "totalScanned=\(all.count, privacy: .public) sendingRows=\(sendingRows, privacy: .public) reclaimed=\(reclaimed, privacy: .public) capHit=\(self.lastReclaimCapHit, privacy: .public)"
+            "totalScanned=\(all.count, privacy: .public) sendingRows=\(sendingCount, privacy: .public) reclaimed=\(reclaimed, privacy: .public) capHit=\(self.lastReclaimCapHit, privacy: .public)"
         )
         if reclaimed > 0 {
             save(context, changedCount: reclaimed, reason: "reclaimOrphanedSendingRows")
