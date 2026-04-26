@@ -104,7 +104,9 @@ final class CatalogingCoordinator {
         currentModelIndex += 1
         let nextModel = Self.modelEscalation[currentModelIndex]
         path = [.analysis]
+        let currentBinId = reviewViewModel.binId
         reviewViewModel = SuggestionReviewViewModel()
+        reviewViewModel.binId = currentBinId
         Task {
             do { _ = try await apiClient.selectModel(nextModel) }
             catch { /* selectModel failed — still try suggest with current model */ }
