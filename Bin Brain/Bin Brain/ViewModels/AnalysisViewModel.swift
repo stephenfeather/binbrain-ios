@@ -171,20 +171,15 @@ final class AnalysisViewModel {
         preliminaryClassifications = []
         preliminaryOCR = []
 
-        // Boxes allow mutation from the synchronously-called expiration handler.
+        // Box allows mutation from the synchronously-called expiration handler.
         final class WorkTaskBox: @unchecked Sendable {
             var task: Task<Void, Never>?
         }
-        final class BGTaskBox: @unchecked Sendable {
-            var identifier: Int = -1 // sentinel for "released"
-        }
-
         let workBox = WorkTaskBox()
-        let bgBox = BGTaskBox()
-        let runner = self.backgroundTask
 
-        // Begin background task covering the entire pipeline + upload + suggest flow.
-        bgBox.identifier = runner.begin(name: "BinBrainAnalysis") { [weak self] in
+        // Finding #15 — withBackgroundTask guarantees end fires on EVERY terminal
+        // path (success, early return, thrown error, quality-gate failure).
+        await withBackgroundTask(name: "BinBrainAnalysis", onExpiry: { [workBox] in
             workBox.task?.cancel()
 
             let content = UNMutableNotificationContent()
@@ -196,147 +191,130 @@ final class AnalysisViewModel {
                 trigger: nil
             )
             UNUserNotificationCenter.current().add(request)
+        }) {
 
-            Task { @MainActor [weak self] in
-                self?.phase = .failed("Analysis interrupted — tap to retry")
-            }
+            // MARK: Pipeline (Stages 1-3)
 
-            if bgBox.identifier != -1 {
-                runner.end(bgBox.identifier)
-                bgBox.identifier = -1
-            }
-        }
+            phase = .processingImage
 
-        // Finding #15 — defer guarantees the grant is released on EVERY terminal
-        // path (success, early return, thrown error, quality-gate failure).
-        defer {
-            if bgBox.identifier != -1 {
-                runner.end(bgBox.identifier)
-                bgBox.identifier = -1
-            }
-        }
+            var uploadData: Data
+            var metadataString: String?
 
-        // MARK: Pipeline (Stages 1-3)
-
-        phase = .processingImage
-
-        var uploadData: Data
-        var metadataString: String?
-
-        do {
-            let result = try await pipeline.process(jpegData, cameraContext: cameraContext, userBehavior: userBehavior)
-            uploadData = result.optimizedImageData
-            preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
-            preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
-            // Merge any pre-shutter live-scanner barcode into the metadata
-            // sidecar so /ingest sees the UPC even when the captured frame
-            // does not contain it (user moves between scan and shutter).
-            var deviceMetadata = result.deviceMetadata
-            if let prescannedBarcode {
-                let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
-                    $0.payload == prescannedBarcode.payload
+            do {
+                let result = try await pipeline.process(jpegData, cameraContext: cameraContext, userBehavior: userBehavior)
+                uploadData = result.optimizedImageData
+                preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
+                preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
+                // Merge any pre-shutter live-scanner barcode into the metadata
+                // sidecar so /ingest sees the UPC even when the captured frame
+                // does not contain it (user moves between scan and shutter).
+                var deviceMetadata = result.deviceMetadata
+                if let prescannedBarcode {
+                    let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
+                        $0.payload == prescannedBarcode.payload
+                    }
+                    if !alreadyPresent {
+                        deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
+                    }
                 }
-                if !alreadyPresent {
-                    deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
+                let jsonData = try JSONEncoder().encode(deviceMetadata)
+                metadataString = String(data: jsonData, encoding: .utf8)
+            } catch let error as PipelineError {
+                switch error {
+                case .qualityGateFailed(let failure):
+                    lastQualityFailure = failure
+                    // Finding #4-UX: keep the raw bytes so the rejection screen
+                    // can render a thumbnail of what the camera actually captured.
+                    lastRejectedPhotoData = jpegData
+                    phase = .qualityFailed(failure.message)
+                    return
+                case .invalidImageData:
+                    // Graceful degradation: upload original bytes without pipeline processing.
+                    uploadData = jpegData
+                    metadataString = nil
                 }
-            }
-            let jsonData = try JSONEncoder().encode(deviceMetadata)
-            metadataString = String(data: jsonData, encoding: .utf8)
-        } catch let error as PipelineError {
-            switch error {
-            case .qualityGateFailed(let failure):
-                lastQualityFailure = failure
-                // Finding #4-UX: keep the raw bytes so the rejection screen
-                // can render a thumbnail of what the camera actually captured.
-                lastRejectedPhotoData = jpegData
-                phase = .qualityFailed(failure.message)
-                return
-            case .invalidImageData:
-                // Graceful degradation: upload original bytes without pipeline processing.
+            } catch {
+                // Graceful degradation: pipeline internal error → upload original without metadata.
+                // Matches the old compress() contract of never-failing.
                 uploadData = jpegData
                 metadataString = nil
             }
-        } catch {
-            // Graceful degradation: pipeline internal error → upload original without metadata.
-            // Matches the old compress() contract of never-failing.
-            uploadData = jpegData
-            metadataString = nil
-        }
 
-        // MARK: Ingest
+            // MARK: Ingest
 
-        lastUploadedPhotoData = uploadData
-        phase = .uploading
+            lastUploadedPhotoData = uploadData
+            phase = .uploading
 
-        let ingestResponse: IngestResponse
-        do {
-            ingestResponse = try await Self.ingestWithSessionRecovery(
-                jpegData: uploadData,
-                binId: binId,
-                deviceMetadata: metadataString,
-                sessionId: sessionId,
-                sessionManager: sessionManager,
-                apiClient: apiClient
-            )
-        } catch {
-            phase = .failed(error.localizedDescription)
-            return
-        }
-
-        guard let firstPhoto = ingestResponse.photos.first else {
-            phase = .failed("No photo returned from server")
-            return
-        }
-        let photoId = firstPhoto.photoId
-        lastPhotoId = photoId
-
-        phase = .analysing
-
-        // MARK: Suggest
-
-        let suggestTask = Task { try await apiClient.suggest(photoId: photoId) }
-        workBox.task = Task { [suggestTask] in _ = try? await suggestTask.value }
-
-        // Persist pending analysis in case of background task expiry.
-        if let context {
-            let entry = PendingAnalysis(photoId: photoId, binId: binId)
-            context.insert(entry)
+            let ingestResponse: IngestResponse
             do {
-                try context.save()
+                ingestResponse = try await Self.ingestWithSessionRecovery(
+                    jpegData: uploadData,
+                    binId: binId,
+                    deviceMetadata: metadataString,
+                    sessionId: sessionId,
+                    sessionManager: sessionManager,
+                    apiClient: apiClient
+                )
             } catch {
-                logger.error("Failed to persist PendingAnalysis for photoId '\(photoId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
+                phase = .failed(error.localizedDescription)
+                return
             }
-        }
 
-        do {
-            let suggestResponse = try await suggestTask.value
-            suggestions = suggestResponse.suggestions
-            lastVisionModel = suggestResponse.model
-            lastPromptVersion = suggestResponse.promptVersion
-            phase = .complete
+            guard let firstPhoto = ingestResponse.photos.first else {
+                phase = .failed("No photo returned from server")
+                return
+            }
+            let photoId = firstPhoto.photoId
+            lastPhotoId = photoId
 
-            // Clean up the pending analysis entry on success.
+            phase = .analysing
+
+            // MARK: Suggest
+
+            let suggestTask = Task { try await apiClient.suggest(photoId: photoId) }
+            workBox.task = Task { [suggestTask] in _ = try? await suggestTask.value }
+
+            // Persist pending analysis in case of background task expiry.
             if let context {
-                let all: [PendingAnalysis]
-                do {
-                    all = try context.fetch(FetchDescriptor<PendingAnalysis>())
-                } catch {
-                    logger.error("Failed to fetch PendingAnalysis for cleanup: \(error.localizedDescription, privacy: .private)")
-                    all = []
-                }
-                for entry in all where entry.photoId == photoId {
-                    context.delete(entry)
-                }
+                let entry = PendingAnalysis(photoId: photoId, binId: binId)
+                context.insert(entry)
                 do {
                     try context.save()
                 } catch {
-                    logger.error("Failed to save after PendingAnalysis cleanup: \(error.localizedDescription, privacy: .private)")
+                    logger.error("Failed to persist PendingAnalysis for photoId '\(photoId, privacy: .private)': \(error.localizedDescription, privacy: .private)")
                 }
             }
-        } catch is CancellationError {
-            // Expiration handler already set phase to .failed — do not overwrite.
-        } catch {
-            phase = .failed(error.localizedDescription)
+
+            do {
+                let suggestResponse = try await suggestTask.value
+                suggestions = suggestResponse.suggestions
+                lastVisionModel = suggestResponse.model
+                lastPromptVersion = suggestResponse.promptVersion
+                phase = .complete
+
+                // Clean up the pending analysis entry on success.
+                if let context {
+                    let all: [PendingAnalysis]
+                    do {
+                        all = try context.fetch(FetchDescriptor<PendingAnalysis>())
+                    } catch {
+                        logger.error("Failed to fetch PendingAnalysis for cleanup: \(error.localizedDescription, privacy: .private)")
+                        all = []
+                    }
+                    for entry in all where entry.photoId == photoId {
+                        context.delete(entry)
+                    }
+                    do {
+                        try context.save()
+                    } catch {
+                        logger.error("Failed to save after PendingAnalysis cleanup: \(error.localizedDescription, privacy: .private)")
+                    }
+                }
+            } catch is CancellationError {
+                // Expiration handler already set phase to .failed — do not overwrite.
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -358,90 +336,79 @@ final class AnalysisViewModel {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
         // after tapping "Upload Anyway".
-        final class BGTaskBox: @unchecked Sendable { var id: Int = -1 }
-        let bgBox = BGTaskBox()
-        let runner = self.backgroundTask
-        bgBox.id = runner.begin(name: "BinBrainAnalysisOverride") { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.phase = .failed("Analysis interrupted — tap to retry")
+        await withBackgroundTask(name: "BinBrainAnalysisOverride") {
+            let originalFailure = lastQualityFailure
+            lastQualityFailure = nil
+            lastRejectedPhotoData = nil
+            if let userBehavior {
+                lastUserBehavior = userBehavior
             }
-            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
-        }
-        defer {
-            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
-        }
+            preliminaryClassifications = []
+            preliminaryOCR = []
+            phase = .processingImage
 
-        let originalFailure = lastQualityFailure
-        lastQualityFailure = nil
-        lastRejectedPhotoData = nil
-        if let userBehavior {
-            lastUserBehavior = userBehavior
-        }
-        preliminaryClassifications = []
-        preliminaryOCR = []
-        phase = .processingImage
+            var uploadData: Data
+            var metadataString: String?
 
-        var uploadData: Data
-        var metadataString: String?
-
-        do {
-            let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: originalFailure, cameraContext: lastCameraContext, userBehavior: lastUserBehavior)
-            uploadData = result.optimizedImageData
-            preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
-            preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
-            var deviceMetadata = result.deviceMetadata
-            if let prescannedBarcode {
-                let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
-                    $0.payload == prescannedBarcode.payload
+            do {
+                let result = try await pipeline.processSkippingQualityGates(jpegData, originalFailure: originalFailure, cameraContext: lastCameraContext, userBehavior: lastUserBehavior)
+                uploadData = result.optimizedImageData
+                preliminaryClassifications = result.deviceMetadata.deviceProcessing.classifications
+                preliminaryOCR = result.deviceMetadata.deviceProcessing.ocr
+                var deviceMetadata = result.deviceMetadata
+                if let prescannedBarcode {
+                    let alreadyPresent = deviceMetadata.deviceProcessing.barcodes.contains {
+                        $0.payload == prescannedBarcode.payload
+                    }
+                    if !alreadyPresent {
+                        deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
+                    }
                 }
-                if !alreadyPresent {
-                    deviceMetadata.deviceProcessing.barcodes.append(prescannedBarcode)
-                }
+                let jsonData = try JSONEncoder().encode(deviceMetadata)
+                metadataString = String(data: jsonData, encoding: .utf8)
+            } catch {
+                // Graceful degradation: upload original without metadata.
+                uploadData = jpegData
+                metadataString = nil
             }
-            let jsonData = try JSONEncoder().encode(deviceMetadata)
-            metadataString = String(data: jsonData, encoding: .utf8)
-        } catch {
-            // Graceful degradation: upload original without metadata.
-            uploadData = jpegData
-            metadataString = nil
-        }
 
-        // Reuse the main run() flow for upload + suggest by setting state and calling ingest directly.
-        lastUploadedPhotoData = uploadData
-        phase = .uploading
+            // Reuse the main run() flow for upload + suggest by setting state and calling ingest directly.
+            lastUploadedPhotoData = uploadData
+            phase = .uploading
 
-        let ingestResponse: IngestResponse
-        do {
-            ingestResponse = try await Self.ingestWithSessionRecovery(
-                jpegData: uploadData,
-                binId: binId,
-                deviceMetadata: metadataString,
-                sessionId: sessionId,
-                sessionManager: sessionManager,
-                apiClient: apiClient
-            )
-        } catch {
-            phase = .failed(error.localizedDescription)
-            return
-        }
+            let ingestResponse: IngestResponse
+            do {
+                ingestResponse = try await Self.ingestWithSessionRecovery(
+                    jpegData: uploadData,
+                    binId: binId,
+                    deviceMetadata: metadataString,
+                    sessionId: sessionId,
+                    sessionManager: sessionManager,
+                    apiClient: apiClient
+                )
+            } catch {
+                phase = .failed(error.localizedDescription)
+                return
+            }
 
-        guard let firstPhoto = ingestResponse.photos.first else {
-            phase = .failed("No photo returned from server")
-            return
-        }
-        let photoId = firstPhoto.photoId
-        lastPhotoId = photoId
+            guard let firstPhoto = ingestResponse.photos.first else {
+                phase = .failed("No photo returned from server")
+                return
+            }
+            let photoId = firstPhoto.photoId
+            lastPhotoId = photoId
 
-        phase = .analysing
+            phase = .analysing
 
-        do {
-            let suggestResponse = try await apiClient.suggest(photoId: photoId)
-            suggestions = suggestResponse.suggestions
-            lastVisionModel = suggestResponse.model
-            lastPromptVersion = suggestResponse.promptVersion
-            phase = .complete
-        } catch {
-            phase = .failed(error.localizedDescription)
+            do {
+                let suggestResponse = try await apiClient.suggest(photoId: photoId)
+                suggestions = suggestResponse.suggestions
+                lastVisionModel = suggestResponse.model
+                lastPromptVersion = suggestResponse.promptVersion
+                phase = .complete
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -460,30 +427,19 @@ final class AnalysisViewModel {
         // Finding #19 — reSuggest hits /suggest which can run 149 s+ on cold
         // model loads. Without BG task protection the OS kills us if the user
         // backgrounds mid-wait.
-        final class BGTaskBox: @unchecked Sendable { var id: Int = -1 }
-        let bgBox = BGTaskBox()
-        let runner = self.backgroundTask
-        bgBox.id = runner.begin(name: "BinBrainAnalysisReSuggest") { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.phase = .failed("Analysis interrupted — tap to retry")
+        await withBackgroundTask(name: "BinBrainAnalysisReSuggest") {
+            phase = .analysing
+            suggestions = []
+
+            do {
+                let response = try await apiClient.suggest(photoId: photoId)
+                suggestions = response.suggestions
+                lastVisionModel = response.model
+                lastPromptVersion = response.promptVersion
+                phase = .complete
+            } catch {
+                phase = .failed(error.localizedDescription)
             }
-            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
-        }
-        defer {
-            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
-        }
-
-        phase = .analysing
-        suggestions = []
-
-        do {
-            let response = try await apiClient.suggest(photoId: photoId)
-            suggestions = response.suggestions
-            lastVisionModel = response.model
-            lastPromptVersion = response.promptVersion
-            phase = .complete
-        } catch {
-            phase = .failed(error.localizedDescription)
         }
     }
 
@@ -570,5 +526,54 @@ final class AnalysisViewModel {
                 retryCount: 1
             )
         }
+    }
+
+    // MARK: - Background Task Helper
+
+    /// Mutable box holding a background-task identifier.
+    ///
+    /// Needs to be a reference type so the expiration handler and the `defer`
+    /// block share the same sentinel value. `@unchecked Sendable` because the
+    /// OS expiration handler may execute on any thread; callers guard against
+    /// concurrent mutation with the `-1` sentinel pattern.
+    private final class BGTaskBox: @unchecked Sendable {
+        var id: Int = -1
+    }
+
+    /// Wraps `body` in a named UIApplication background-task grant.
+    ///
+    /// Calls `backgroundTask.begin(name:expirationHandler:)` before executing
+    /// `body`, and guarantees `backgroundTask.end(_:)` fires on every terminal
+    /// path — success, early return, and OS expiry.
+    ///
+    /// On OS expiry the handler:
+    /// 1. Calls `onExpiry()` for site-specific extra work (e.g. cancel in-flight tasks, post notifications).
+    /// 2. Transitions `phase` to `.failed("Analysis interrupted — tap to retry")` on the main actor.
+    /// 3. Ends the background task grant (idempotent via `-1` sentinel).
+    ///
+    /// - Parameters:
+    ///   - name: The background-task name passed to `BackgroundTaskRunning.begin`.
+    ///   - onExpiry: Additional work to perform when the OS fires the expiration
+    ///               handler. Runs before the phase transition. Defaults to a no-op.
+    ///   - body: The async body to execute under the background-task grant.
+    /// - Returns: The value produced by `body`.
+    private func withBackgroundTask<T>(
+        name: String,
+        onExpiry: @escaping @Sendable () -> Void = {},
+        body: () async -> T
+    ) async -> T {
+        let bgBox = BGTaskBox()
+        let runner = backgroundTask
+        bgBox.id = runner.begin(name: name) { [weak self] in
+            onExpiry()
+            Task { @MainActor [weak self] in
+                self?.phase = .failed("Analysis interrupted — tap to retry")
+            }
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
+        }
+        defer {
+            if bgBox.id != -1 { runner.end(bgBox.id); bgBox.id = -1 }
+        }
+        return await body()
     }
 }
