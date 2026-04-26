@@ -99,7 +99,7 @@ struct BinsListView: View {
                         // screens. Drop captures that arrive after the path
                         // has already advanced.
                         guard coordinator.path.isEmpty else {
-                            logger.debug("onPhotoCapture ignored — catalogingPath already advanced")
+                            logger.debug("onPhotoCapture ignored — coordinator.path already advanced")
                             return
                         }
                         logger.debug("onPhotoCapture called, image: \(image.size.width, privacy: .public)x\(image.size.height, privacy: .public) orientation: \(image.imageOrientation.rawValue, privacy: .public)")

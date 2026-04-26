@@ -123,6 +123,7 @@ final class CatalogingCoordinator {
         path = []
         analysisViewModel.reset()
         catalogingSession.reset()
+        reviewViewModel = SuggestionReviewViewModel()
         captureProxy.action = nil
         capturedPhotoData = nil
         capturedCameraContext = nil

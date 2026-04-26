@@ -54,7 +54,6 @@ struct BinDetailView: View {
     // MARK: - Body
 
     var body: some View {
-        let _ = print("[BIND] body binId=\(binId)")
         content
             // Swift2_022 G-1 — route the nav-bar title through the display-
             // name mapping so the reserved sentinel renders as "Binless"
@@ -341,7 +340,6 @@ struct BinDetailView: View {
     // MARK: - Review View
 
     private var reviewView: some View {
-        let _ = print("[BIND] reviewView binId=\(binId) vmBinId=\(coordinator.reviewViewModel.binId)")
         return SuggestionReviewView(
             viewModel: coordinator.reviewViewModel,
             apiClient: apiClient,
