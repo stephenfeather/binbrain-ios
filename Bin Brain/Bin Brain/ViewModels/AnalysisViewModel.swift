@@ -163,6 +163,7 @@ final class AnalysisViewModel {
     ///   - userBehavior: Optional cataloging-session supervision snapshot
     ///     (retake_count, quality_bypass_count). Forwarded into
     ///     `ImagePipeline.process` so it lands in `device_metadata.user_behavior`.
+    @MainActor
     func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
@@ -173,7 +174,8 @@ final class AnalysisViewModel {
 
         // Box allows mutation from the synchronously-called expiration handler.
         final class WorkTaskBox: @unchecked Sendable {
-            var task: Task<Void, Never>?
+            nonisolated(unsafe) var task: Task<Void, Never>?
+            nonisolated(unsafe) var suggestTask: Task<PhotoSuggestResponse, Error>?
         }
         let workBox = WorkTaskBox()
 
@@ -181,6 +183,7 @@ final class AnalysisViewModel {
         // path (success, early return, thrown error, quality-gate failure).
         await withBackgroundTask(name: "BinBrainAnalysis", onExpiry: { [workBox] in
             workBox.task?.cancel()
+            workBox.suggestTask?.cancel()
 
             let content = UNMutableNotificationContent()
             content.title = "Analysis interrupted"
@@ -272,6 +275,7 @@ final class AnalysisViewModel {
             // MARK: Suggest
 
             let suggestTask = Task { try await apiClient.suggest(photoId: photoId) }
+            workBox.suggestTask = suggestTask
             workBox.task = Task { [suggestTask] in _ = try? await suggestTask.value }
 
             // Persist pending analysis in case of background task expiry.
@@ -332,6 +336,7 @@ final class AnalysisViewModel {
     ///     taken AFTER the bypass tap was recorded. When supplied, replaces
     ///     the stored snapshot from the original `run(...)` so the bypass
     ///     count reflects reality.
+    @MainActor
     func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
@@ -418,6 +423,7 @@ final class AnalysisViewModel {
     /// Requires a prior successful `run()` that set `lastPhotoId`.
     ///
     /// - Parameter apiClient: The `APIClient` instance to use for the suggest call.
+    @MainActor
     func reSuggest(apiClient: APIClient) async {
         guard let photoId = lastPhotoId else {
             phase = .failed("No photo to re-analyse")
@@ -559,6 +565,7 @@ final class AnalysisViewModel {
     ///               handler. Runs before the phase transition. Defaults to a no-op.
     ///   - body: The async body to execute under the background-task grant.
     /// - Returns: The value produced by `body`.
+    @MainActor
     private func withBackgroundTask<T>(
         name: String,
         onExpiry: @escaping @Sendable () -> Void = {},

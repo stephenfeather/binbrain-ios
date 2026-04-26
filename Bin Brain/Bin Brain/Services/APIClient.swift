@@ -586,7 +586,7 @@ final class APIClient {
             emitAuthAttachDecision(
                 id: id,
                 requiresAuth: true,
-                attached: shouldAttach && hasAPIKey,
+                attached: shouldAttach && apiKey != nil,
                 probe: false
             )
 
