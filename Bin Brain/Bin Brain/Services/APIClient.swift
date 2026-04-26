@@ -508,6 +508,7 @@ final class APIClient {
                     "photoId=\(photoId, privacy: .public) size=\(body.count, privacy: .public) retryCount=\(retryCount, privacy: .public)"
                 )
             },
+            successPayload: { _ in "status=success retryCount=\(retryCount)" },
             failurePayload: { "status=failure retryCount=\(retryCount)" }
         ) { _ in
             try await self.request(

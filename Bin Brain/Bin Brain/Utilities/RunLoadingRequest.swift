@@ -34,11 +34,12 @@ func runLoadingRequest<T>(
 ) async {
     setLoading(true)
     setError(nil)
+    defer { setLoading(false) }
     do {
         let value = try await work()
         onSuccess(value)
     } catch {
+        if error is CancellationError { return }
         setError(error.localizedDescription)
     }
-    setLoading(false)
 }

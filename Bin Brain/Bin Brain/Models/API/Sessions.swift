@@ -7,7 +7,7 @@ import Foundation
 
 // MARK: - Sessions
 
-/// A server-minted cataloging session. `Swift2_019` — the client requests one
+/// A server-minted cataloging session. The client requests one
 /// from `POST /sessions`, plumbs `session_id` through every photo ingest, and
 /// closes it via `DELETE /sessions/{session_id}` when the user is done or the
 /// 30-min idle timer fires.

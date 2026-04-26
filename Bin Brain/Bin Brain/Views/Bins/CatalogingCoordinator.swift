@@ -4,8 +4,11 @@
 // Shared cataloging state and actions used by BinDetailView and BinsListView.
 // Centralises the ~210 LOC of duplicated plumbing so neither view owns it.
 
+import OSLog
 import SwiftUI
 import SwiftData
+
+private let logger = Logger(subsystem: "com.binbrain.app", category: "CatalogingCoordinator")
 
 // MARK: - CatalogingStep
 
@@ -104,12 +107,15 @@ final class CatalogingCoordinator {
         currentModelIndex += 1
         let nextModel = Self.modelEscalation[currentModelIndex]
         path = [.analysis]
+        navigatedOnPreliminary = false
         let currentBinId = reviewViewModel.binId
         reviewViewModel = SuggestionReviewViewModel()
         reviewViewModel.binId = currentBinId
         Task {
             do { _ = try await apiClient.selectModel(nextModel) }
-            catch { /* selectModel failed — still try suggest with current model */ }
+            catch {
+                logger.error("selectModel(\(nextModel, privacy: .public)) failed: \(error.localizedDescription, privacy: .public); falling through to reSuggest with current model")
+            }
             await analysisViewModel.reSuggest(apiClient: apiClient)
         }
     }
@@ -218,6 +224,11 @@ final class CatalogingCoordinator {
     // MARK: - Private
 
     private func resolveSessionId(apiClient: APIClient, sessionManager: SessionManager) async -> UUID? {
-        try? await sessionManager.activeSessionId(apiClient: apiClient)
+        do {
+            return try await sessionManager.activeSessionId(apiClient: apiClient)
+        } catch {
+            logger.error("activeSessionId failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 }
