@@ -70,17 +70,16 @@ final class BinsListViewModel {
     ///
     /// - Parameter apiClient: The `APIClient` instance to use for the request.
     func load(apiClient: APIClient) async {
-        isLoading = true
-        error = nil
-        do {
-            let fetched = try await apiClient.listBins()
-            // listBins() already sorts alphanumerically client-side; pin the
-            // sentinel to the top without disturbing the rest of that order.
-            bins = Self.pinSentinelFirst(fetched)
-        } catch {
-            self.error = error.localizedDescription
-        }
-        isLoading = false
+        await runLoadingRequest(
+            setLoading: { [weak self] in self?.isLoading = $0 },
+            setError:   { [weak self] in self?.error = $0 },
+            onSuccess:  { [weak self] fetched in
+                // listBins() already sorts alphanumerically client-side; pin
+                // the sentinel to the top without disturbing that order.
+                self?.bins = BinsListViewModel.pinSentinelFirst(fetched)
+            },
+            work: { try await apiClient.listBins() }
+        )
     }
 
     /// Soft-deletes a bin via `DELETE /bins/{id}` and refreshes the list.

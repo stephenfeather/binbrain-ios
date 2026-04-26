@@ -37,14 +37,12 @@ final class LocationsListViewModel {
     ///
     /// - Parameter apiClient: The `APIClient` instance to use for the request.
     func load(apiClient: APIClient) async {
-        isLoading = true
-        error = nil
-        do {
-            locations = try await apiClient.listLocations()
-        } catch {
-            self.error = error.localizedDescription
-        }
-        isLoading = false
+        await runLoadingRequest(
+            setLoading: { [weak self] in self?.isLoading = $0 },
+            setError:   { [weak self] in self?.error = $0 },
+            onSuccess:  { [weak self] in self?.locations = $0 },
+            work:       { try await apiClient.listLocations() }
+        )
     }
 
     /// Creates a new location, then reloads the list.
