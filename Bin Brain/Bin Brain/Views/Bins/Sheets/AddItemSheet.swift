@@ -23,13 +23,6 @@ struct AddItemSheet: View {
 
     // MARK: - Helpers
 
-    private static let quantityFormatter: NumberFormatter = {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.locale = .current
-        return f
-    }()
-
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespaces)
     }
@@ -42,9 +35,17 @@ struct AddItemSheet: View {
         trimmedCategory.isEmpty ? nil : trimmedCategory
     }
 
+    /// Parses `quantityText` using the current locale's decimal separator.
+    ///
+    /// - Note: Not O(1) — creates a `NumberFormatter` on each access and invokes
+    ///   the parser. Called from both `body` (to drive `saveDisabled`) and `save()`.
+    ///   Caching via `onChange(of: quantityText)` is out of scope for this change.
     private var quantityValue: Double? {
         guard !quantityText.isEmpty else { return nil }
-        return Self.quantityFormatter.number(from: quantityText)?.doubleValue
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = .current
+        return f.number(from: quantityText)?.doubleValue
             ?? Double(quantityText)
     }
 
@@ -104,19 +105,17 @@ struct AddItemSheet: View {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
-
-        let errorBefore = viewModel.error
-        await viewModel.addItem(
-            name: trimmedName,
-            category: categoryValue,
-            quantity: quantityValue,
-            binId: binId,
-            apiClient: apiClient
-        )
-        if viewModel.error != nil && viewModel.error != errorBefore {
-            errorMessage = viewModel.error
-        } else {
+        do {
+            try await viewModel.addItem(
+                name: trimmedName,
+                category: categoryValue,
+                quantity: quantityValue,
+                binId: binId,
+                apiClient: apiClient
+            )
             isPresented = false
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }
