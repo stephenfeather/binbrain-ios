@@ -21,7 +21,14 @@ protocol BackgroundTaskRunning: AnyObject, Sendable {
 }
 
 /// Production impl — routes directly to `UIApplication.shared`.
+///
+/// `begin` and `end` call `UIApplication.shared` synchronously, so the Swift
+/// compiler infers them (and the class) as `@MainActor`. The `init()` is
+/// explicitly `nonisolated` so instances can be created as stored-property
+/// defaults and in test contexts without requiring a main-actor hop.
 final class UIApplicationBackgroundTaskRunner: BackgroundTaskRunning, @unchecked Sendable {
+    nonisolated init() {}
+
     func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> Int {
         let raw = UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expirationHandler)
         return raw.rawValue

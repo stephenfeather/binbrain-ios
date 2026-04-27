@@ -41,6 +41,7 @@ enum AnalysisPhase: Equatable {
 /// Call `run(jpegData:binId:apiClient:)` to start the full workflow.
 /// Phase changes are observable; bind to `phase` in `AnalysisProgressView`.
 @Observable
+@MainActor
 final class AnalysisViewModel {
 
     // MARK: - State
@@ -125,7 +126,7 @@ final class AnalysisViewModel {
 
     // MARK: - Initializer
 
-    init(backgroundTask: BackgroundTaskRunning = UIApplicationBackgroundTaskRunner()) {
+    nonisolated init(backgroundTask: BackgroundTaskRunning = UIApplicationBackgroundTaskRunner()) {
         self.backgroundTask = backgroundTask
     }
 
@@ -163,7 +164,6 @@ final class AnalysisViewModel {
     ///   - userBehavior: Optional cataloging-session supervision snapshot
     ///     (retake_count, quality_bypass_count). Forwarded into
     ///     `ImagePipeline.process` so it lands in `device_metadata.user_behavior`.
-    @MainActor
     func run(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, cameraContext: CameraCaptureContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         lastQualityFailure = nil
         lastRejectedPhotoData = nil
@@ -336,7 +336,6 @@ final class AnalysisViewModel {
     ///     taken AFTER the bypass tap was recorded. When supplied, replaces
     ///     the stored snapshot from the original `run(...)` so the bypass
     ///     count reflects reality.
-    @MainActor
     func overrideQualityGate(jpegData: Data, binId: String, apiClient: APIClient, sessionId: UUID? = nil, sessionManager: SessionManager? = nil, context: ModelContext? = nil, userBehavior: UserBehaviorContext? = nil, prescannedBarcode: BarcodeResult? = nil) async {
         // Finding #19 — same BG task protection as run() so the #18 180 s
         // /suggest window doesn't get OS-killed if the user backgrounds
@@ -423,7 +422,6 @@ final class AnalysisViewModel {
     /// Requires a prior successful `run()` that set `lastPhotoId`.
     ///
     /// - Parameter apiClient: The `APIClient` instance to use for the suggest call.
-    @MainActor
     func reSuggest(apiClient: APIClient) async {
         guard let photoId = lastPhotoId else {
             phase = .failed("No photo to re-analyse")
@@ -557,15 +555,16 @@ final class AnalysisViewModel {
     /// 2. Transitions `phase` to `.failed("Analysis interrupted — tap to retry")` on the main actor.
     /// 3. Ends the background task grant (idempotent via `-1` sentinel).
     ///
-    /// - Note: Must be called from `@MainActor` to avoid data races on the
-    ///   background-task box between the `defer` block and the OS expiration handler.
+    /// - Note: Inherits `@MainActor` isolation from the class; the `defer` block
+    ///   and `body` run on the main actor. The expiration handler is invoked by
+    ///   the OS on an arbitrary thread and explicitly hops back via
+    ///   `Task { @MainActor [weak self] in ... }`.
     /// - Parameters:
     ///   - name: The background-task name passed to `BackgroundTaskRunning.begin`.
     ///   - onExpiry: Additional work to perform when the OS fires the expiration
     ///               handler. Runs before the phase transition. Defaults to a no-op.
     ///   - body: The async body to execute under the background-task grant.
     /// - Returns: The value produced by `body`.
-    @MainActor
     private func withBackgroundTask<T>(
         name: String,
         onExpiry: @escaping @Sendable () -> Void = {},
