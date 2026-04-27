@@ -80,7 +80,10 @@ final class BinDetailViewModel {
 
     /// Upserts a new item into the bin, then reloads the bin contents.
     ///
-    /// On failure, sets `error`. The subsequent `load` call manages the loading indicator.
+    /// Throws if the upsert itself fails, giving the caller an unambiguous
+    /// success/failure signal. The subsequent `load` call manages its own
+    /// loading state; if the reload fails after a successful upsert, `addItem`
+    /// returns normally (the upsert already succeeded).
     ///
     /// - Parameters:
     ///   - name: Item name (required).
@@ -88,7 +91,7 @@ final class BinDetailViewModel {
     ///   - quantity: Optional quantity.
     ///   - binId: Bin to associate the item with.
     ///   - apiClient: API client for network calls.
-    func addItem(name: String, category: String?, quantity: Double?, binId: String, apiClient: APIClient) async {
+    func addItem(name: String, category: String?, quantity: Double?, binId: String, apiClient: APIClient) async throws {
         do {
             _ = try await apiClient.upsertItem(
                 name: name,
@@ -99,7 +102,7 @@ final class BinDetailViewModel {
             )
             await load(binId: binId, apiClient: apiClient)
         } catch {
-            self.error = error.localizedDescription
+            throw error
         }
     }
 }

@@ -178,7 +178,7 @@ final class BinDetailViewModelTests: XCTestCase {
 
     // MARK: - Test 5: addItem calls upsert and reloads
 
-    func testAddItemCallsUpsertAndReloads() async {
+    func testAddItemCallsUpsertAndReloads() async throws {
         let client = makeMockAPIClient { [self] request in
             if request.url?.path.contains("/items") == true {
                 return (mockResponse(statusCode: 200, for: request), upsertSuccessJSON)
@@ -187,7 +187,7 @@ final class BinDetailViewModelTests: XCTestCase {
             return (mockResponse(statusCode: 200, for: request), getBinSuccessJSON)
         }
 
-        await sut.addItem(
+        try await sut.addItem(
             name: "Widget",
             category: "Hardware",
             quantity: 5.0,
